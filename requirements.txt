@@ -1,0 +1,12 @@
+pandas
+numpy
+statsforecast
+sqlalchemy
+psycopg2-binary
+python-dotenv
+jupyter
+matplotlib
+scikit-learn
+fastapi
+uvicorn[standard]
+plotly
