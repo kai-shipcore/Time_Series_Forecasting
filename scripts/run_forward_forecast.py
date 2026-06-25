@@ -6,9 +6,10 @@ Full pipeline on every run:
   ingest → clean → profile → backtest (CV) → select → refit on ALL data → predict forward → write to DB
 
 Run whenever new data arrives (weekly cron or manually):
-  python3 scripts/run_forward_forecast.py
+  python3 scripts/run_forward_forecast.py           # pulls fresh data from DB
+  python3 scripts/run_forward_forecast.py --skip-ingest  # reuse existing sales_clean.parquet
 """
-import sys, time, copy
+import sys, time, copy, argparse
 from datetime import date
 from pathlib import Path
 ROOT = Path(__file__).parent.parent
@@ -20,6 +21,8 @@ from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
 from config import FREQUENCY, TEST_WEEKS, TRIM_TRAILING_WEEKS, USE_SEASONAL_ADJUSTMENT
+from src.ingest import ingest
+from src.clean import clean
 from src.profile import profile
 from src.backtest import backtest, _trim_to_train_start
 from src.selector import select
@@ -169,8 +172,22 @@ PROCESSED_DIR = ROOT / "data" / "processed"
 
 
 def main():
-    # Load from processed parquet — the DB only holds recent weeks, not full history.
-    # Re-run src/ingest.py + src/clean.py separately when you need to refresh the base data.
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--skip-ingest", action="store_true",
+                        help="Skip DB pull and reuse existing sales_clean.parquet")
+    args = parser.parse_args()
+
+    if not args.skip_ingest:
+        print("── Step 0: Ingest fresh data from DB ───────────────────────────")
+        raw = ingest()
+        print(f"  {len(raw):,} rows | {raw['link_master_sku'].nunique():,} SKUs"
+              f" | {raw['order_date'].min().date()} → {raw['order_date'].max().date()}")
+        weekly = clean(raw)
+        print(f"  Cleaned → {len(weekly):,} weekly rows saved to sales_clean.parquet")
+        print()
+    else:
+        print("── Step 0: Skipped ingest (--skip-ingest) ──────────────────────")
+
     print("── Step 1: Load processed data ─────────────────────────────────")
     weekly = pd.read_parquet(PROCESSED_DIR / "sales_clean.parquet")
     weekly["ds"] = pd.to_datetime(weekly["ds"])

@@ -82,6 +82,10 @@ async def get_forecast(
         train.insert(0, "unique_id", sku_id)
         train = train[train["ds"] <= cutoff_ts].copy()
 
+        # Apply ramp-up trimming — same as the weekly batch job
+        _, _, detected_train_start = _classify_sku(train)
+        train = train[train["ds"] >= detected_train_start].reset_index(drop=True)
+
         use_deseas = USE_SEASONAL_ADJUSTMENT and meta_bucket == "smooth" and meta_hist_len != "short"
         fit_data = deseasonalize(train[["unique_id", "ds", "y"]]) if use_deseas else train[["unique_id", "ds", "y"]]
 
@@ -225,8 +229,8 @@ async def get_forecast(
     })
 
 
-def _classify_sku(train: pd.DataFrame) -> tuple[str, str]:
-    """Return (bucket, history_length) for a single-SKU training DataFrame.
+def _classify_sku(train: pd.DataFrame) -> tuple[str, str, pd.Timestamp]:
+    """Return (bucket, history_length, train_start) for a single-SKU training DataFrame.
     Inlines src/profile.py logic to avoid writing sku_profiles.csv."""
     from src.profile import (
         _detect_ramp_up, _history_length,
@@ -253,7 +257,7 @@ def _classify_sku(train: pd.DataFrame) -> tuple[str, str]:
     hist_len = _history_length(active_weeks)
     if bucket == "intermittent" and hist_len == "short":
         hist_len = "full"  # no short model set for intermittent
-    return bucket, hist_len
+    return bucket, hist_len, train_start
 
 
 def _pick_cols(
@@ -322,8 +326,11 @@ async def run_backtest(
     elif history_weeks > 0:
         train = train.tail(history_weeks).reset_index(drop=True)
 
-    # ── Profile ───────────────────────────────────────────────────────────
-    bucket, hist_len = _classify_sku(train)
+    # ── Profile + ramp-up trimming ────────────────────────────────────────
+    bucket, hist_len, detected_train_start = _classify_sku(train)
+    # Apply ramp-up trimming unless caller already specified an explicit start
+    if not train_start and history_weeks == 0:
+        train = train[train["ds"] >= detected_train_start].reset_index(drop=True)
 
     # ── Build model list ──────────────────────────────────────────────────
     try:
@@ -400,23 +407,30 @@ async def run_backtest(
     completed = [p for p in predictions if p["actual"] is not None]
     pi_weeks = [p for p in completed if p["yhat_lo"] is not None]
 
-    # MAE
-    mae = round(sum(abs(p["yhat"] - p["actual"]) for p in completed) / len(completed)) if completed else None
+    total_actual   = sum(p["actual"] for p in completed)
+    total_yhat     = sum(p["yhat"]   for p in completed)
+    total_abs_err  = sum(abs(p["yhat"] - p["actual"]) for p in completed)
 
-    # WAPE = sum(|e|) / sum(actual) — robust to zero-actual weeks, volume-weighted
-    total_actual = sum(p["actual"] for p in completed)
-    total_error  = sum(abs(p["yhat"] - p["actual"]) for p in completed)
-    wape = round(total_error / total_actual * 100) if total_actual > 0 else None
+    # Per-week MAE
+    mae = round(total_abs_err / len(completed)) if completed else None
 
-    # MASE = forecast MAE / in-sample naive MAE (naive = last week's value)
+    # Horizon WAPE: |sum(yhat) - sum(actual)| / sum(actual)
+    # Measures total demand accuracy over the full horizon — errors that cancel
+    # across weeks don't count against the model, matching our model selection metric.
+    horizon_wape = round(abs(total_yhat - total_actual) / total_actual * 100) if total_actual > 0 else None
+
+    # Horizon bias: positive = over-forecast, negative = under-forecast
+    horizon_bias = round((total_yhat - total_actual) / total_actual * 100) if total_actual > 0 else None
+
+    # MASE = per-week MAE / in-sample naive MAE
     train_y = train.sort_values("ds")["y"].values
     mae_naive = float(np.mean(np.abs(np.diff(train_y)))) if len(train_y) > 1 else None
     mase = (
-        round(total_error / len(completed) / mae_naive, 2)
+        round(total_abs_err / len(completed) / mae_naive, 2)
         if (completed and mae_naive and mae_naive > 0) else None
     )
 
-    # P70 coverage
+    # P70 coverage (per-week — what fraction of individual weeks fell inside the band)
     coverage = (
         round(sum(1 for p in pi_weeks if p["yhat_lo"] <= p["actual"] <= p["yhat_hi"]) / len(pi_weeks) * 100)
         if pi_weeks else None
@@ -425,13 +439,15 @@ async def run_backtest(
     return JSONResponse({
         "predictions": predictions,
         "actuals_context": actuals_context,
+        "horizon_wape": horizon_wape,
+        "horizon_bias": horizon_bias,
         "mae": mae,
-        "wape": wape,
         "mase": mase,
         "coverage": coverage,
         "model_used": model_used,
         "bucket": bucket,
         "history_length": hist_len,
+        "train_start": str(detected_train_start.date()),
         "training_weeks": len(train),
         "completed_weeks": len(completed),
     })
