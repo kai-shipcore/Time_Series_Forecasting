@@ -13,7 +13,7 @@ MEAN_INTERMITTENT_CUTOFF = 3.0  # used for ramp-up detection only (not classific
 RECENT_WEEKS             = 13
 RECENT_ZERO_PCT_UPGRADE  = 0.15  # if recent zero_pct below this AND mean ≥ threshold → promote to smooth/short
 RECENT_MEAN_UPGRADE      = 3.0   # recent weekly mean must be ≥ this to promote
-RECENT_MEAN_DOWNGRADE    = 1.0   # if recent weekly mean below this → demote to intermittent
+RECENT_MEAN_DOWNGRADE    = 2.0   # if recent weekly mean below this → demote to intermittent
 
 # Ramp-up detection
 RAMP_UP_RATIO = 3.0          # second-half mean must be this many times the first-half mean
