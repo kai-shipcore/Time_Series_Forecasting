@@ -74,6 +74,121 @@ def read_latest_forecast(sku_id: str) -> pd.DataFrame:
     return df
 
 
+def read_segments(weeks: int = 10) -> dict:
+    """Return SKU counts and demand totals per segment for the last N complete weeks.
+
+    Forecasted SKUs (smooth) come from fc_forward_forecasts.
+    Everything else in the snapshot is treated as intermittent.
+    """
+    engine = get_engine()
+
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_monday = today - pd.Timedelta(days=days_back)
+    period_start = last_monday - pd.Timedelta(weeks=weeks)
+
+    with engine.connect() as conn:
+        # Latest segment classification for every forecasted SKU
+        forecast_df = pd.read_sql(text(f"""
+            SELECT DISTINCT unique_id, bucket, history_length
+            FROM {_TABLE}
+            WHERE forecast_date = (SELECT MAX(forecast_date) FROM {_TABLE})
+        """), conn)
+
+        # All SKUs ever seen — so dormant SKUs (no recent sales) still count
+        all_skus_df = pd.read_sql(text("""
+            SELECT DISTINCT link_master_sku
+            FROM shipcore.fc_velocity_link_snapshot
+        """), conn)
+
+        # Demand per SKU for the last N complete weeks
+        demand_df = pd.read_sql(text("""
+            SELECT link_master_sku, SUM(link_qty) AS demand
+            FROM shipcore.fc_velocity_link_snapshot
+            WHERE order_date > :start
+            GROUP BY link_master_sku
+        """), conn, params={"start": period_start})
+
+    # Start from full SKU universe, attach recent demand (0 for dormant SKUs)
+    merged = all_skus_df.merge(demand_df, on="link_master_sku", how="left")
+    merged["demand"] = merged["demand"].fillna(0).astype(int)
+
+    # Join segment classification — SKUs not in forecast table are intermittent
+    merged = merged.merge(
+        forecast_df, left_on="link_master_sku", right_on="unique_id", how="left"
+    )
+
+    def _segment(row):
+        if pd.isna(row["bucket"]) or row["bucket"] == "low_volume":
+            return "intermittent"
+        if row["history_length"] == "short":
+            return "smooth_short"
+        return "smooth_full"
+
+    merged["segment"] = merged.apply(_segment, axis=1)
+
+    total_skus   = len(merged)
+    total_demand = int(merged["demand"].sum())
+
+    _DEFS = [
+        ("smooth_full",  "Smooth",              "StatsForecast"),
+        ("smooth_short", "Smooth / Short history", "V1"),
+        ("intermittent", "Intermittent",         "Restock policy"),
+    ]
+
+    segments = []
+    for key, name, method in _DEFS:
+        sub = merged[merged["segment"] == key]
+        demand = int(sub["demand"].sum())
+        segments.append({
+            "segment":    key,
+            "name":       name,
+            "method":     method,
+            "sku_count":  len(sub),
+            "demand":     demand,
+            "demand_pct": round(demand / total_demand * 100, 1) if total_demand > 0 else 0.0,
+        })
+
+    forecasted = merged[merged["segment"].isin({"smooth_full", "smooth_short"})]
+
+    # ── Pareto curve ──────────────────────────────────────────────────────────
+    sorted_skus = merged.sort_values("demand", ascending=False).reset_index(drop=True)
+    n_skus = len(sorted_skus)
+    total_d = float(sorted_skus["demand"].sum())
+    sorted_skus["sku_pct"] = (sorted_skus.index + 1) / n_skus * 100
+    sorted_skus["cum_d_pct"] = (sorted_skus["demand"].cumsum() / total_d * 100) if total_d > 0 else 0.0
+
+    pareto_x = sorted_skus["sku_pct"].round(2).tolist()
+    pareto_y = sorted_skus["cum_d_pct"].round(2).tolist()
+
+    n_fcast = len(forecasted)
+    pareto_annotation = None
+    if 0 < n_fcast <= n_skus:
+        ann_idx = n_fcast - 1
+        pareto_annotation = {
+            "sku_pct":    round(pareto_x[ann_idx], 1),
+            "demand_pct": round(pareto_y[ann_idx], 1),
+        }
+
+    return {
+        "total_skus":       total_skus,
+        "forecasted_skus":  len(forecasted),
+        "forecasted_pct":   round(len(forecasted) / total_skus * 100, 1) if total_skus > 0 else 0.0,
+        "total_demand":     total_demand,
+        "forecasted_demand": int(forecasted["demand"].sum()),
+        "forecasted_demand_pct": round(forecasted["demand"].sum() / total_demand * 100, 1) if total_demand > 0 else 0.0,
+        "weeks":        weeks,
+        "period_start": str(period_start.date()),
+        "period_end":   str(last_monday.date()),
+        "segments":     segments,
+        "pareto": {
+            "x":          pareto_x,
+            "y":          pareto_y,
+            "annotation": pareto_annotation,
+        },
+    }
+
+
 def read_actuals(sku_id: str, n_weeks: int | None = 26, start_date: str | None = None) -> pd.DataFrame:
     """Pull weekly actuals. Pass start_date (YYYY-MM-DD) to anchor from a fixed date; otherwise tail n_weeks."""
     engine = get_engine()
