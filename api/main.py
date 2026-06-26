@@ -10,11 +10,12 @@ import plotly.graph_objects as go
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
 from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS
-from src.db import read_latest_forecast, read_actuals
+from src.db import read_latest_forecast, read_actuals, read_segments, get_engine
 from src.models import get_models
 from src.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
@@ -215,13 +216,14 @@ async def get_forecast(
     return JSONResponse({
         "chart": fig.to_json(),
         "meta": {
-            "sku_id":        sku_id,
-            "bucket":        bucket,
-            "model":         model_used,
-            "confidence":    confidence,
-            "forecast_date": forecast_date,
-            "has_pi":        bool(has_pi),
-            "forward_weeks": len(forecast),
+            "sku_id":         sku_id,
+            "bucket":         bucket,
+            "history_length": meta_hist_len,
+            "model":          model_used,
+            "confidence":     confidence,
+            "forecast_date":  forecast_date,
+            "has_pi":         bool(has_pi),
+            "forward_weeks":  len(forecast),
         },
         "forecastDates":  forecast["ds"].dt.strftime("%Y-%m-%d").tolist(),
         "forecastValues": forecast["yhat"].round().clip(lower=0).astype(int).tolist(),
@@ -451,6 +453,105 @@ async def run_backtest(
         "training_weeks": len(train),
         "completed_weeks": len(completed),
     })
+
+
+@app.get("/segmentation")
+async def get_segmentation():
+    """Aggregate the latest forward forecasts into segment-level metrics.
+
+    Segments:
+      smooth / full or medium history  → StatsForecast
+      smooth / short history           → V1
+      intermittent                     → Restock Policy
+      low_volume                       → Not Forecasted
+    """
+    engine = get_engine()
+    sql_segments = """
+        WITH latest_dates AS (
+            SELECT unique_id, MAX(forecast_date) AS latest_date
+            FROM shipcore.fc_forward_forecasts
+            GROUP BY unique_id
+        ),
+        weekly_ranked AS (
+            SELECT f.unique_id, f.bucket, f.history_length, f.yhat,
+                   ROW_NUMBER() OVER (PARTITION BY f.unique_id ORDER BY f.ds) AS week_num
+            FROM shipcore.fc_forward_forecasts f
+            INNER JOIN latest_dates ld
+                ON f.unique_id = ld.unique_id AND f.forecast_date = ld.latest_date
+        ),
+        sku_10w AS (
+            SELECT unique_id, bucket, history_length, SUM(yhat) AS yhat_10w
+            FROM weekly_ranked
+            WHERE week_num <= 10
+            GROUP BY unique_id, bucket, history_length
+        )
+        SELECT bucket, history_length, COUNT(*) AS sku_count, SUM(yhat_10w) AS volume_10w
+        FROM sku_10w
+        GROUP BY bucket, history_length
+        ORDER BY bucket, history_length
+    """
+    sql_total = "SELECT COUNT(DISTINCT link_master_sku) AS total FROM shipcore.fc_velocity_link_snapshot"
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql_segments)).fetchall()
+        total_skus = int(conn.execute(text(sql_total)).scalar() or 0)
+
+    # Map DB rows to canonical segment ids
+    def _segment_id(bucket: str, history_length: str) -> str:
+        if bucket == "smooth":
+            return "smooth_short" if history_length == "short" else "smooth_full"
+        return bucket  # "intermittent" | "low_volume"
+
+    SEGMENT_META = {
+        "smooth_full":  {"name": "Smooth / Full History",  "method": "StatsForecast",  "forecasted": True},
+        "smooth_short": {"name": "Smooth / Short History", "method": "V1",             "forecasted": True},
+        "intermittent": {"name": "Intermittent",           "method": "Restock Policy", "forecasted": False},
+        "low_volume":   {"name": "Low Volume",             "method": "Not Forecasted", "forecasted": False},
+    }
+
+    # Accumulate per segment
+    agg: dict[str, dict] = {sid: {"sku_count": 0, "volume_10w": 0.0} for sid in SEGMENT_META}
+    for bucket, history_length, sku_count, volume_10w in rows:
+        sid = _segment_id(str(bucket), str(history_length))
+        if sid in agg:
+            agg[sid]["sku_count"] += int(sku_count)
+            agg[sid]["volume_10w"] += float(volume_10w or 0)
+
+    total_volume = sum(v["volume_10w"] for v in agg.values())
+    forecasted_skus   = sum(v["sku_count"]  for sid, v in agg.items() if SEGMENT_META[sid]["forecasted"])
+    forecasted_volume = sum(v["volume_10w"] for sid, v in agg.items() if SEGMENT_META[sid]["forecasted"])
+
+    def _pct(n: float, d: float) -> float:
+        return round(n / d * 100, 1) if d else 0.0
+
+    segments = []
+    for sid, meta in SEGMENT_META.items():
+        v = agg[sid]
+        segments.append({
+            "id":         sid,
+            "name":       meta["name"],
+            "method":     meta["method"],
+            "forecasted": meta["forecasted"],
+            "sku_count":  v["sku_count"],
+            "volume_10w": round(v["volume_10w"]),
+            "volume_pct": _pct(v["volume_10w"], total_volume),
+        })
+
+    return {
+        "total_skus":          total_skus,
+        "forecasted_skus":     forecasted_skus,
+        "forecast_sku_pct":    _pct(forecasted_skus, total_skus),
+        "total_volume_10w":    round(total_volume),
+        "covered_volume_10w":  round(forecasted_volume),
+        "covered_volume_pct":  _pct(forecasted_volume, total_volume),
+        "segments":            segments,
+    }
+
+
+@app.get("/segments")
+async def get_segments(
+    weeks: int = Query(default=10, ge=1, le=52, description="Number of completed weeks to sum demand over"),
+):
+    return JSONResponse(read_segments(weeks))
 
 
 @app.get("/health")

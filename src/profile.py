@@ -9,14 +9,20 @@ ZERO_PCT_INTERMITTENT = 0.30   # SKUs with ≥30% zero weeks → intermittent (h
 CV_THRESHOLD = 1.5
 MEAN_INTERMITTENT_CUTOFF = 3.0  # used for ramp-up detection only (not classification)
 
+# Recent-activity overrides (last 13 complete weeks)
+RECENT_WEEKS             = 13
+RECENT_ZERO_PCT_UPGRADE  = 0.15  # if recent zero_pct below this AND mean ≥ threshold → promote to smooth/short
+RECENT_MEAN_UPGRADE      = 3.0   # recent weekly mean must be ≥ this to promote
+RECENT_MEAN_DOWNGRADE    = 1.0   # if recent weekly mean below this → demote to intermittent
+
 # Ramp-up detection
 RAMP_UP_RATIO = 3.0          # second-half mean must be this many times the first-half mean
 RAMP_UP_MIN_DEMAND = MEAN_INTERMITTENT_CUTOFF  # ramp-up only meaningful above the intermittent threshold
 
 # History length thresholds (weeks)
-# < SHORT  → no full seasonal cycle, non-seasonal models only
-# SHORT–MEDIUM → one cycle, seasonal models are candidates but shaky
-# > MEDIUM → 2+ cycles, full seasonal model set
+# < SHORT  → too little history; V1/simple rolling rate only
+# SHORT–MEDIUM → one seasonal cycle; seasonal models are candidates but shaky
+# > MEDIUM → 2+ cycles; full seasonal model set
 SHORT_HISTORY_WEEKS = 52
 MEDIUM_HISTORY_WEEKS = 104
 
@@ -110,6 +116,38 @@ def profile(df: pd.DataFrame) -> pd.DataFrame:
 
     profiles["bucket"] = profiles.apply(classify, axis=1)
     profiles["history_length"] = profiles["active_weeks"].apply(_history_length)
+
+    # ── Recent-activity overrides ─────────────────────────────────────────────
+    recent_dates = sorted(df["ds"].unique())[-RECENT_WEEKS:]
+    recent_df    = df[df["ds"].isin(recent_dates)]
+    recent_stats = (
+        recent_df.groupby("unique_id")["y"]
+        .agg(recent_mean="mean", recent_zero_pct=lambda y: (y == 0).mean())
+        .reset_index()
+    )
+    profiles = profiles.merge(recent_stats, on="unique_id", how="left")
+
+    # Promote: intermittent → smooth/short if recent 13 weeks look smooth
+    upgrade = (
+        (profiles["bucket"] == "intermittent") &
+        (profiles["recent_zero_pct"] < RECENT_ZERO_PCT_UPGRADE) &
+        (profiles["recent_mean"] >= RECENT_MEAN_UPGRADE)
+    )
+    n_up = upgrade.sum()
+    profiles.loc[upgrade, "bucket"]         = "smooth"
+    profiles.loc[upgrade, "history_length"] = "short"
+    profiles.loc[upgrade, "train_start"]    = recent_dates[0]
+
+    # Demote: smooth/low_volume → intermittent if recently dormant
+    downgrade = (
+        profiles["bucket"].isin({"smooth", "low_volume"}) &
+        (profiles["recent_mean"] < RECENT_MEAN_DOWNGRADE)
+    )
+    n_down = downgrade.sum()
+    profiles.loc[downgrade, "bucket"] = "intermittent"
+
+    if n_up or n_down:
+        print(f"  Recent-activity overrides: +{n_up} promoted to smooth/short, -{n_down} demoted to intermittent")
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     profiles.to_csv(PROCESSED_DIR / "sku_profiles.csv", index=False)
