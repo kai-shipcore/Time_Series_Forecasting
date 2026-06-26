@@ -15,7 +15,7 @@ from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
 from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS
-from src.db import read_latest_forecast, read_actuals, read_segments, get_engine
+from src.db import read_latest_forecast, read_actuals, read_segments, get_engine, get_global_start
 from src.models import get_models
 from src.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
@@ -45,7 +45,8 @@ async def get_forecast(
     if forecast.empty:
         raise HTTPException(status_code=404, detail=f"No forecast found for SKU '{sku_id}'")
 
-    actuals = read_actuals(sku_id, n_weeks=weeks if weeks > 0 else None, start_date=start or None)
+    pad = get_global_start() if weeks == 0 and not start else None
+    actuals = read_actuals(sku_id, n_weeks=weeks if weeks > 0 else None, start_date=start or None, pad_from=pad)
     if actuals.empty:
         raise HTTPException(status_code=404, detail=f"No sales history found for SKU '{sku_id}'")
 
@@ -552,6 +553,82 @@ async def get_segments(
     weeks: int = Query(default=10, ge=1, le=52, description="Number of completed weeks to sum demand over"),
 ):
     return JSONResponse(read_segments(weeks))
+
+
+@app.get("/segment-detail/{segment}")
+async def get_segment_detail(
+    segment: str,
+    weeks: int = Query(default=10, ge=1, le=52, description="Forecast weeks to sum (from latest forecast date)"),
+):
+    """Return per-SKU rows for a given segment (smooth_full | smooth_short | intermittent)."""
+    if segment == "smooth_full":
+        where = "f.bucket = 'smooth' AND f.history_length IN ('full', 'medium')"
+    elif segment == "smooth_short":
+        where = "f.bucket = 'smooth' AND f.history_length = 'short'"
+    elif segment == "intermittent":
+        where = "f.bucket NOT IN ('smooth')"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown segment '{segment}'")
+
+    engine = get_engine()
+    sql = f"""
+        WITH latest_dates AS (
+            SELECT unique_id, MAX(forecast_date) AS latest_date
+            FROM shipcore.fc_forward_forecasts
+            GROUP BY unique_id
+        ),
+        ranked AS (
+            SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
+                   f.yhat, f.yhat_hi, f.confidence,
+                   ROW_NUMBER() OVER (PARTITION BY f.unique_id ORDER BY f.ds) AS week_num
+            FROM shipcore.fc_forward_forecasts f
+            INNER JOIN latest_dates ld
+                ON f.unique_id = ld.unique_id AND f.forecast_date = ld.latest_date
+            WHERE {where}
+        ),
+        sku_agg AS (
+            SELECT unique_id, bucket, history_length, selected_model, confidence,
+                   SUM(yhat)    FILTER (WHERE week_num <= :weeks) AS yhat_total,
+                   SUM(yhat_hi) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
+            FROM ranked
+            GROUP BY unique_id, bucket, history_length, selected_model, confidence
+        )
+        SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
+               ROUND(COALESCE(a.yhat_total, 0)) AS yhat_total,
+               CASE WHEN a.yhat_hi_total IS NOT NULL THEN ROUND(a.yhat_hi_total) END AS yhat_hi_total
+        FROM sku_agg a
+        ORDER BY a.yhat_total DESC NULLS LAST
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql), {"weeks": weeks}).fetchall()
+
+    # Load sku_profiles for active_weeks (used by smooth_short graduation calc)
+    profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
+    active_weeks_map: dict[str, int] = {}
+    if profiles_path.exists():
+        prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks"])
+        active_weeks_map = dict(zip(prof["unique_id"], prof["active_weeks"].astype(int)))
+
+    SHORT_THRESHOLD = 52
+
+    skus = []
+    for r in rows:
+        uid = r[0]
+        aw = active_weeks_map.get(uid)
+        weeks_to_grad = max(0, SHORT_THRESHOLD - aw) if aw is not None else None
+        skus.append({
+            "unique_id":        uid,
+            "bucket":           r[1],
+            "history_length":   r[2],
+            "selected_model":   r[3],
+            "confidence":       r[4],
+            "yhat_total":       int(r[5]) if r[5] is not None else 0,
+            "yhat_hi_total":    int(r[6]) if r[6] is not None else None,
+            "active_weeks":     aw,
+            "weeks_to_graduation": weeks_to_grad,
+        })
+
+    return JSONResponse({"segment": segment, "weeks": weeks, "skus": skus})
 
 
 @app.get("/health")

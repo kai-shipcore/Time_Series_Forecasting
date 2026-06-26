@@ -12,7 +12,7 @@ MEAN_INTERMITTENT_CUTOFF = 3.0  # used for ramp-up detection only (not classific
 # Recent-activity overrides (last 13 complete weeks)
 RECENT_WEEKS             = 13
 RECENT_ZERO_PCT_UPGRADE  = 0.15  # if recent zero_pct below this AND mean ≥ threshold → promote to smooth/short
-RECENT_MEAN_UPGRADE      = 3.0   # recent weekly mean must be ≥ this to promote
+RECENT_MEAN_UPGRADE      = 2.0   # recent weekly mean must be ≥ this to promote
 RECENT_MEAN_DOWNGRADE    = 2.0   # if recent weekly mean below this → demote to intermittent
 
 # Ramp-up detection
@@ -36,6 +36,8 @@ def _history_length(active_weeks: int) -> str:
 
 
 def _trend_slope(y: np.ndarray) -> float:
+    if len(y) < 2:
+        return 0.0
     x = np.arange(len(y))
     slope, _ = np.polyfit(x, y, 1)
     return slope
@@ -57,7 +59,13 @@ def _detect_ramp_up(grp: pd.DataFrame) -> tuple[bool, float, pd.Timestamp]:
         return False, 0.0, grp["ds"].iloc[0]
 
     ratio = second_half_mean / first_half_mean if first_half_mean > 0 else np.inf
-    is_ramp_up = ratio >= RAMP_UP_RATIO and second_half_mean >= RAMP_UP_MIN_DEMAND
+    # When first half is all zeros, any sustained second-half demand is a ramp-up —
+    # but require second_half_mean >= 2.0 to exclude truly sparse intermittent SKUs.
+    zero_first_half = first_half_mean == 0
+    is_ramp_up = ratio >= RAMP_UP_RATIO and (
+        (zero_first_half and second_half_mean >= 2.0) or
+        (not zero_first_half and second_half_mean >= RAMP_UP_MIN_DEMAND)
+    )
 
     if not is_ramp_up:
         return False, float(second_half_mean), grp["ds"].iloc[0]
@@ -68,6 +76,11 @@ def _detect_ramp_up(grp: pd.DataFrame) -> tuple[bool, float, pd.Timestamp]:
     active = rolling >= threshold
     first_active_idx = active.idxmax() if active.any() else grp.index[0]
     train_start = grp.loc[first_active_idx, "ds"]
+
+    # Require at least 13 active weeks after train_start; otherwise trimming isn't useful
+    weeks_remaining = (grp["ds"].iloc[-1] - train_start).days / 7
+    if weeks_remaining < 13:
+        return False, float(second_half_mean), grp["ds"].iloc[0]
 
     return True, float(second_half_mean), train_start
 
@@ -137,6 +150,7 @@ def profile(df: pd.DataFrame) -> pd.DataFrame:
     profiles.loc[upgrade, "bucket"]         = "smooth"
     profiles.loc[upgrade, "history_length"] = "short"
     profiles.loc[upgrade, "train_start"]    = recent_dates[0]
+    profiles.loc[upgrade, "active_weeks"]   = RECENT_WEEKS
 
     # Demote: smooth/low_volume → intermittent if recently dormant
     downgrade = (

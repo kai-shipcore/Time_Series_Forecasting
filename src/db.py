@@ -189,14 +189,35 @@ def read_segments(weeks: int = 10) -> dict:
     }
 
 
-def read_actuals(sku_id: str, n_weeks: int | None = 26, start_date: str | None = None) -> pd.DataFrame:
-    """Pull weekly actuals. Pass start_date (YYYY-MM-DD) to anchor from a fixed date; otherwise tail n_weeks."""
+_GLOBAL_START: str | None = None
+
+def get_global_start() -> str:
+    """Return the earliest order_date across all SKUs, cached for the process lifetime."""
+    global _GLOBAL_START
+    if _GLOBAL_START is None:
+        engine = get_engine()
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT MIN(order_date) FROM shipcore.fc_velocity_link_snapshot"))
+            row = result.scalar()
+        _GLOBAL_START = str(row) if row else "2024-06-17"
+    return _GLOBAL_START
+
+
+def read_actuals(
+    sku_id: str,
+    n_weeks: int | None = 26,
+    start_date: str | None = None,
+    pad_from: str | None = None,
+) -> pd.DataFrame:
+    """Pull weekly actuals.
+
+    - start_date: anchor from a fixed date (overrides n_weeks).
+    - pad_from: extend the series back to this date with 0s for missing weeks.
+    """
     engine = get_engine()
-    if start_date:
-        start_ts = pd.Timestamp(start_date)
-        # W-MON periods END on Monday, so the period labeled start_date spans the 6 days before it too.
-        # Fetch 6 days earlier so the first period is complete, then filter after grouping.
-        fetch_from = (start_ts - pd.Timedelta(days=6)).strftime("%Y-%m-%d")
+    fetch_anchor = pad_from or start_date
+    if fetch_anchor:
+        fetch_from = (pd.Timestamp(fetch_anchor) - pd.Timedelta(days=6)).strftime("%Y-%m-%d")
         query = """
             SELECT order_date, link_qty
             FROM shipcore.fc_velocity_link_snapshot
@@ -214,19 +235,34 @@ def read_actuals(sku_id: str, n_weeks: int | None = 26, start_date: str | None =
     with engine.connect() as conn:
         raw = pd.read_sql(text(query), conn, params=params)
 
-    if raw.empty:
+    if raw.empty and not pad_from:
         return pd.DataFrame(columns=["ds", "y"])
 
-    raw["order_date"] = pd.to_datetime(raw["order_date"])
-    weekly = (
-        raw.groupby(pd.Grouper(key="order_date", freq="W-MON"))["link_qty"]
-        .sum()
-        .reset_index()
-        .rename(columns={"order_date": "ds", "link_qty": "y"})
-        .sort_values("ds")
-        .reset_index(drop=True)
-    )
-    if start_date is not None:
+    if not raw.empty:
+        raw["order_date"] = pd.to_datetime(raw["order_date"])
+        weekly = (
+            raw.groupby(pd.Grouper(key="order_date", freq="W-MON"))["link_qty"]
+            .sum()
+            .reset_index()
+            .rename(columns={"order_date": "ds", "link_qty": "y"})
+            .sort_values("ds")
+            .reset_index(drop=True)
+        )
+    else:
+        weekly = pd.DataFrame(columns=["ds", "y"])
+
+    if pad_from:
+        # Build a complete weekly grid from pad_from to today, fill gaps with 0
+        today = pd.Timestamp.today().normalize()
+        full_idx = pd.date_range(start=pd.Timestamp(pad_from), end=today, freq="W-MON")
+        weekly = (
+            weekly.set_index("ds")
+            .reindex(full_idx, fill_value=0)
+            .reset_index()
+            .rename(columns={"index": "ds"})
+        )
+        weekly["y"] = weekly["y"].fillna(0).astype(int)
+    elif start_date is not None:
         weekly = weekly[weekly["ds"] >= pd.Timestamp(start_date)].reset_index(drop=True)
     elif n_weeks is not None:
         weekly = weekly.tail(n_weeks).reset_index(drop=True)
