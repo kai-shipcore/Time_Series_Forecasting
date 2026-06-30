@@ -692,9 +692,11 @@ async def get_segment_detail(
         return await _segment_detail_intermittent(weeks, product_types=pts)
 
     if segment == "smooth_full":
-        where = "f.bucket = 'smooth' AND f.history_length IN ('full', 'medium')"
+        where_forward  = "f.bucket = 'smooth' AND f.history_length IN ('full', 'medium')"
+        where_backtest = "f.bucket = 'smooth'"   # re-classify by active_weeks in Python
     elif segment == "smooth_short":
-        where = "f.bucket = 'smooth' AND f.history_length = 'short'"
+        where_forward  = "f.bucket = 'smooth' AND f.history_length = 'short'"
+        where_backtest = "f.bucket = 'smooth'"   # re-classify by active_weeks in Python
     else:
         raise HTTPException(status_code=400, detail=f"Unknown segment '{segment}'")
 
@@ -731,13 +733,14 @@ async def get_segment_detail(
         horizon_start, horizon_end, horizon_weeks = horizon[0], horizon[1], int(horizon[2])
 
         # Evaluate this run's predictions against actual demand in the same weeks.
+        # Fetch all smooth SKUs; segment membership is re-derived in Python by active_weeks_at_eval.
         sql = f"""
             WITH ranked AS (
                 SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
                        f.yhat, f.yhat_hi, f.confidence
                 FROM {fcast_table} f
                 WHERE f.forecast_date = :eval_date
-                  AND {where}
+                  AND {where_backtest}
                   AND {pt_fcast}
             ),
             sku_agg AS (
@@ -788,7 +791,7 @@ async def get_segment_detail(
                 FROM {fcast_table} f
                 INNER JOIN latest_dates ld
                     ON f.unique_id = ld.unique_id AND f.forecast_date = ld.latest_date
-                WHERE {where}
+                WHERE {where_forward}
                   AND {pt_fcast}
             ),
             sku_agg AS (
@@ -822,36 +825,20 @@ async def get_segment_detail(
     SHORT_THRESHOLD = 52
     MIN_HISTORY_WEEKS = 20
 
-    # active_weeks: in backtest mode use history as of forecast_date; in forward use current profiles
-    if mode == "backtest" and segment == "smooth_short":
-        uid_list = [r[0] for r in rows]
-        active_weeks_map: dict[str, int] = {}
-        if uid_list:
-            with engine.connect() as conn:
-                # Use full current demand history for ramp-up detection — more data
-                # gives a more reliable train_start. active_weeks is then measured
-                # from that stable train_start back to eval_date.
-                demand_rows = conn.execute(text("""
-                    SELECT link_master_sku,
-                           DATE_TRUNC('week', order_date::timestamp)::date AS week_start,
-                           SUM(link_qty) AS y
-                    FROM shipcore.fc_velocity_link_snapshot
-                    WHERE link_master_sku IN :uids
-                    GROUP BY link_master_sku, DATE_TRUNC('week', order_date::timestamp)::date
-                    ORDER BY link_master_sku, week_start
-                """), {"uids": tuple(uid_list)}).fetchall()
-            demand_df = pd.DataFrame(demand_rows, columns=["unique_id", "ds", "y"])
-            demand_df["ds"] = pd.to_datetime(demand_df["ds"])
+    # active_weeks: always derived from sku_profiles.csv train_start (same pipeline/zero-filled data).
+    # In backtest mode for any smooth segment, measure train_start → eval_date to get history
+    # available at forecast time. This re-derives segment membership retroactively, overriding
+    # whatever history_length was stored in the DB at eval_date.
+    profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
+    active_weeks_map: dict[str, int] = {}
+    if profiles_path.exists():
+        if mode == "backtest" and segment in ("smooth_full", "smooth_short"):
+            prof = pd.read_csv(profiles_path, usecols=["unique_id", "train_start"])
             eval_dt = pd.Timestamp(eval_date)
-            for uid, grp in demand_df.groupby("unique_id"):
-                grp = grp.sort_values("ds").reset_index(drop=True)
-                _, _, train_start = _detect_ramp_up(grp)
-                aw = max(0, (eval_dt - train_start).days // 7)
-                active_weeks_map[uid] = aw
-    else:
-        profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
-        active_weeks_map = {}
-        if profiles_path.exists():
+            for _, row in prof.iterrows():
+                ts = pd.Timestamp(row["train_start"])
+                active_weeks_map[row["unique_id"]] = max(0, (eval_dt - ts).days // 7)
+        else:
             prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks"])
             active_weeks_map = dict(zip(prof["unique_id"], prof["active_weeks"].astype(int)))
 
@@ -859,9 +846,14 @@ async def get_segment_detail(
     for r in rows:
         uid = r[0]
         aw = active_weeks_map.get(uid)
-        # In backtest for smooth_short, exclude SKUs that had too little history at forecast time
-        if mode == "backtest" and segment == "smooth_short" and (aw is None or aw < MIN_HISTORY_WEEKS):
-            continue
+        if mode == "backtest" and segment in ("smooth_full", "smooth_short"):
+            # Re-classify by active_weeks at eval_date, ignoring history_length stored in DB.
+            if aw is None or aw < MIN_HISTORY_WEEKS:
+                continue  # too little history at eval_date — exclude entirely
+            if segment == "smooth_full" and aw < SHORT_THRESHOLD:
+                continue  # was short at eval_date — belongs in smooth_short
+            if segment == "smooth_short" and aw >= SHORT_THRESHOLD:
+                continue  # was full at eval_date — belongs in smooth_full
         weeks_to_grad = max(0, SHORT_THRESHOLD - aw) if aw is not None else None
         skus.append({
             "unique_id":        uid,
