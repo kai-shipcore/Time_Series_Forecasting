@@ -68,12 +68,11 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p "${{ secrets.DEPLOY_PORT || 22 }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Upload release files
         run: |
           rsync -az --delete \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT || 22 }}" \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT || 22 }} -o StrictHostKeyChecking=accept-new" \
             --exclude ".git/" \
             --exclude ".github/" \
             --exclude ".venv/" \
@@ -84,7 +83,7 @@ jobs:
 
       - name: Install dependencies and restart service
         run: |
-          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
           set -euo pipefail
           cd "${{ secrets.DEPLOY_PATH }}"
 
