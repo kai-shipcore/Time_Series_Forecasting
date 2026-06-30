@@ -12,12 +12,6 @@ This project deploys from GitHub Actions when code is pushed to `main`.
 
 In the repository, open **Settings > Secrets and variables > Actions**.
 
-Add this repository variable:
-
-| Type | Name | Value |
-| --- | --- | --- |
-| Variable | `ENABLE_DEPLOY` | `true` |
-
 Add these repository secrets:
 
 | Type | Name | Example |
