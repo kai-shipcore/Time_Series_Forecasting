@@ -1,0 +1,107 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Test API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python modules
+        run: python -m compileall api src scripts config.py
+
+      - name: Smoke test FastAPI app
+        run: |
+          python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 &
+          SERVER_PID=$!
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health; then
+              kill "$SERVER_PID"
+              wait "$SERVER_PID" || true
+              exit 0
+            fi
+            sleep 1
+          done
+          kill "$SERVER_PID" || true
+          wait "$SERVER_PID" || true
+          exit 1
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.DEPLOY_PORT || 22 }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload release files
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT || 22 }}" \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            --exclude ".venv/" \
+            --exclude ".env" \
+            --exclude "__pycache__/" \
+            --exclude ".pytest_cache/" \
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Install dependencies and restart service
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd "${{ secrets.DEPLOY_PATH }}"
+
+          if [ ! -d .venv ]; then
+            python3 -m venv .venv
+          fi
+
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+          if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^coverland-forecast-api\.service'; then
+            sudo systemctl restart coverland-forecast-api
+          elif command -v systemctl >/dev/null 2>&1 && systemctl --user list-unit-files | grep -q '^coverland-forecast-api\.service'; then
+            systemctl --user restart coverland-forecast-api
+          else
+            pkill -f 'uvicorn api.main:app' || true
+            nohup .venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
+          fi
+          EOF
