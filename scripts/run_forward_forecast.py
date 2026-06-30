@@ -10,7 +10,7 @@ Run whenever new data arrives (weekly cron or manually):
   python3 scripts/run_forward_forecast.py --skip-ingest  # reuse existing sales_clean.parquet
 """
 import sys, time, copy, argparse
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -29,7 +29,7 @@ from src.selector import select
 from src.models import get_models
 from src.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
-from src.db import write_forward_forecasts
+from src.db import write_forward_forecasts, write_forecast_history
 
 FORWARD_WEEKS      = 13
 CONFORMAL_LEVEL    = 70
@@ -77,6 +77,7 @@ def refit_and_forecast(
     weekly: pd.DataFrame,
     profiles: pd.DataFrame,
     selection: pd.DataFrame,
+    horizon_weeks: int = FORWARD_WEEKS,
 ) -> pd.DataFrame:
     """Refit selected models on ALL trimmed data; predict FORWARD_WEEKS ahead."""
     all_weeks  = sorted(weekly["ds"].unique())
@@ -111,21 +112,21 @@ def refit_and_forecast(
             model_min  = 20 if bucket == "smooth" else 8
             min_series = train_g.groupby("unique_id")["ds"].count().min()
             n_windows  = max(0, min(CONFORMAL_N_WINDOWS,
-                                    (min_series - model_min) // FORWARD_WEEKS))
+                                    (min_series - model_min) // horizon_weeks))
             use_pi = n_windows >= 1
 
             t0     = time.time()
             models = copy.deepcopy(_dedupe_models(bucket, hist))
 
             if use_pi:
-                pi    = ConformalIntervals(h=FORWARD_WEEKS, n_windows=n_windows)
+                pi    = ConformalIntervals(h=horizon_weeks, n_windows=n_windows)
                 sf    = StatsForecast(models=models, freq=FREQUENCY, n_jobs=-1)
-                fcast = sf.forecast(df=fit_data, h=FORWARD_WEEKS,
+                fcast = sf.forecast(df=fit_data, h=horizon_weeks,
                                     level=[CONFORMAL_LEVEL], prediction_intervals=pi)
             else:
                 sf    = StatsForecast(models=models, freq=FREQUENCY, n_jobs=-1)
                 sf.fit(fit_data)
-                fcast = sf.predict(h=FORWARD_WEEKS)
+                fcast = sf.predict(h=horizon_weeks)
 
             fcast["ds"] = pd.to_datetime(fcast["ds"])
             if use_deseas:
@@ -175,7 +176,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-ingest", action="store_true",
                         help="Skip DB pull and reuse existing sales_clean.parquet")
+    parser.add_argument("--horizon", type=int, default=FORWARD_WEEKS,
+                        help="Forecast horizon in weeks")
     args = parser.parse_args()
+    horizon_weeks = args.horizon
 
     if not args.skip_ingest:
         print("── Step 0: Ingest fresh data from DB ───────────────────────────")
@@ -205,7 +209,7 @@ def main():
     selection = select(weekly, profiles)
 
     print("\n── Step 4: Refit on full data + forward forecast ───────────────")
-    print(f"  Horizon: {FORWARD_WEEKS} weeks ahead")
+    print(f"  Horizon: {horizon_weeks} weeks ahead")
     # Find the last fully completed week. W-MON labels each week with the Monday
     # it ends on, so the last complete week = the most recent Monday before today.
     # If today IS Monday, that Monday is just starting so we go back 7 days.
@@ -216,13 +220,15 @@ def main():
     dropped = weekly[weekly["ds"] > last_complete_monday]["ds"].nunique()
     print(f"  Training through {last_complete_monday.date()}"
           f"{f' (dropped {dropped} incomplete week(s))' if dropped else ''}")
-    forecasts = refit_and_forecast(weekly_capped, profiles, selection)
+    forecasts = refit_and_forecast(weekly_capped, profiles, selection, horizon_weeks=horizon_weeks)
     print(f"  {len(forecasts):,} rows | {forecasts['unique_id'].nunique()} SKUs")
 
     print("\n── Step 5: Write to DB ─────────────────────────────────────────")
-    forecasts["forecast_date"] = date.today()
+    run_date = datetime.now(timezone.utc)
+    forecasts["forecast_date"] = run_date.date()
     write_forward_forecasts(forecasts)
-    print(f"  Done — forecast_date={date.today()}")
+    print(f"  Done — forecast_date={run_date.date()}")
+    write_forecast_history(forecasts, run_date, horizon_weeks)
 
 
 if __name__ == "__main__":

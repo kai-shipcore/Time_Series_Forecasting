@@ -1,5 +1,8 @@
 import sys
 import copy
+import uuid
+import threading
+import subprocess
 from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -15,10 +18,21 @@ from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
 from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS
-from src.db import read_latest_forecast, read_actuals, read_segments, get_engine, get_global_start
+from src.db import read_latest_forecast, read_actuals, read_segments, get_engine, get_global_start, _product_type_where
+from src.profile import _detect_ramp_up
 from src.models import get_models
 from src.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
+
+_jobs: dict[str, dict] = {}
+
+
+def _parse_product_types(product_type: str) -> list[str] | None:
+    """Parse a comma-separated product_type param into a list, or None for 'All'."""
+    if product_type == "All":
+        return None
+    pts = [p.strip() for p in product_type.split(",") if p.strip()]
+    return pts if pts else None
 
 _CONFORMAL_LEVEL = 70
 _MAX_N_WINDOWS = 5
@@ -548,73 +562,306 @@ async def get_segmentation():
     }
 
 
+@app.get("/backtest-cycles")
+async def get_backtest_cycles(test: bool = Query(default=False)):
+    """Return forecast runs where every forecasted week has already passed.
+    Only these runs have complete actuals across the full horizon."""
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_monday = today - pd.Timedelta(days=days_back)
+    table = "shipcore.fc_forward_forecasts_test" if test else "shipcore.fc_forward_forecasts"
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT forecast_date,
+                   MIN(ds)                   AS horizon_start,
+                   MAX(ds)                   AS horizon_end,
+                   COUNT(DISTINCT ds)        AS horizon_weeks,
+                   COUNT(DISTINCT unique_id) AS sku_count
+            FROM {table}
+            GROUP BY forecast_date
+            HAVING MAX(ds) <= :last_monday
+            ORDER BY forecast_date DESC
+        """), {"last_monday": last_monday.date()}).fetchall()
+
+    return JSONResponse([
+        {
+            "forecast_date":  str(r[0]),
+            "horizon_start":  str(r[1]),
+            "horizon_end":    str(r[2]),
+            "horizon_weeks":  int(r[3]),
+            "sku_count":      int(r[4]),
+        }
+        for r in rows
+    ])
+
+
 @app.get("/segments")
 async def get_segments(
     weeks: int = Query(default=10, ge=1, le=52, description="Number of completed weeks to sum demand over"),
+    product_type: str = Query(default="All", description="Comma-separated product types, or 'All'"),
 ):
-    return JSONResponse(read_segments(weeks))
+    pts = None if product_type == "All" else [p.strip() for p in product_type.split(",") if p.strip()]
+    return JSONResponse(read_segments(weeks, product_types=pts))
+
+
+async def _segment_detail_intermittent(weeks: int, product_types: list[str] | None = None) -> JSONResponse:
+    """Compute intermittent SKU metrics purely from velocity data."""
+    engine = get_engine()
+
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_monday = today - pd.Timedelta(days=days_back)
+    recent_cutoff = last_monday - pd.Timedelta(weeks=weeks)
+
+    pt_filter = _product_type_where("v.link_master_sku", product_types)
+
+    sql = f"""
+        WITH smooth_skus AS (
+            SELECT DISTINCT unique_id
+            FROM shipcore.fc_forward_forecasts
+            WHERE bucket = 'smooth'
+              AND forecast_date = (SELECT MAX(forecast_date) FROM shipcore.fc_forward_forecasts)
+        ),
+        weekly AS (
+            SELECT
+                v.link_master_sku                                        AS unique_id,
+                DATE_TRUNC('week', v.order_date::timestamp)::date        AS week_start,
+                SUM(v.link_qty)                                          AS week_qty
+            FROM shipcore.fc_velocity_link_snapshot v
+            WHERE v.link_master_sku NOT IN (SELECT unique_id FROM smooth_skus)
+              AND {pt_filter}
+            GROUP BY v.link_master_sku, DATE_TRUNC('week', v.order_date::timestamp)::date
+        ),
+        metrics AS (
+            SELECT
+                unique_id,
+                SUM(CASE WHEN week_start > :recent_cutoff THEN week_qty ELSE 0 END)   AS units_recent,
+                MAX(CASE WHEN week_qty > 0 THEN week_start END)                        AS last_sale_week,
+                SUM(week_qty)                                                           AS total_units,
+                COUNT(CASE WHEN week_qty > 0 THEN 1 END)                               AS nonzero_weeks
+            FROM weekly
+            GROUP BY unique_id
+        )
+        SELECT
+            m.unique_id,
+            COALESCE(m.units_recent, 0)                                                        AS units_recent,
+            m.last_sale_week,
+            CASE WHEN m.last_sale_week IS NOT NULL
+                 THEN FLOOR((:today - m.last_sale_week) / 7.0)::int END                       AS weeks_since_last_sale,
+            CASE WHEN m.nonzero_weeks > 0
+                 THEN ROUND(m.total_units::numeric / m.nonzero_weeks, 1) END                  AS avg_units_per_event
+        FROM metrics m
+        ORDER BY weeks_since_last_sale DESC NULLS LAST, m.unique_id
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql), {
+            "recent_cutoff": recent_cutoff.date(),
+            "today": today.date(),
+        }).fetchall()
+
+    return JSONResponse({
+        "segment": "intermittent",
+        "weeks": weeks,
+        "skus": [
+            {
+                "unique_id":            r[0],
+                "units_recent":         int(r[1]) if r[1] is not None else 0,
+                "last_sale_week":       str(r[2]) if r[2] is not None else None,
+                "weeks_since_last_sale": int(r[3]) if r[3] is not None else None,
+                "avg_units_per_event":  float(r[4]) if r[4] is not None else None,
+            }
+            for r in rows
+        ],
+    })
 
 
 @app.get("/segment-detail/{segment}")
 async def get_segment_detail(
     segment: str,
-    weeks: int = Query(default=10, ge=1, le=52, description="Forecast weeks to sum (from latest forecast date)"),
+    weeks: int = Query(default=10, ge=1, le=52),
+    product_type: str = Query(default="All"),
+    mode: str = Query(default="forward", description="'forward' = latest forecast; 'backtest' = evaluate a completed forecast run"),
+    eval_date: str | None = Query(default=None, description="Backtest only: the forecast_date of the run to evaluate (YYYY-MM-DD)."),
+    test: bool = Query(default=False, description="Use fc_forward_forecasts_test instead of the live table."),
 ):
     """Return per-SKU rows for a given segment (smooth_full | smooth_short | intermittent)."""
+    pts = _parse_product_types(product_type)
+    if segment == "intermittent":
+        return await _segment_detail_intermittent(weeks, product_types=pts)
+
     if segment == "smooth_full":
         where = "f.bucket = 'smooth' AND f.history_length IN ('full', 'medium')"
     elif segment == "smooth_short":
         where = "f.bucket = 'smooth' AND f.history_length = 'short'"
-    elif segment == "intermittent":
-        where = "f.bucket NOT IN ('smooth')"
     else:
         raise HTTPException(status_code=400, detail=f"Unknown segment '{segment}'")
 
     engine = get_engine()
-    sql = f"""
-        WITH latest_dates AS (
-            SELECT unique_id, MAX(forecast_date) AS latest_date
-            FROM shipcore.fc_forward_forecasts
-            GROUP BY unique_id
-        ),
-        ranked AS (
-            SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
-                   f.yhat, f.yhat_hi, f.confidence,
-                   ROW_NUMBER() OVER (PARTITION BY f.unique_id ORDER BY f.ds) AS week_num
-            FROM shipcore.fc_forward_forecasts f
-            INNER JOIN latest_dates ld
-                ON f.unique_id = ld.unique_id AND f.forecast_date = ld.latest_date
-            WHERE {where}
-        ),
-        sku_agg AS (
-            SELECT unique_id, bucket, history_length, selected_model, confidence,
-                   SUM(yhat)    FILTER (WHERE week_num <= :weeks) AS yhat_total,
-                   SUM(yhat_hi) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
-            FROM ranked
-            GROUP BY unique_id, bucket, history_length, selected_model, confidence
-        )
-        SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
-               ROUND(COALESCE(a.yhat_total, 0)) AS yhat_total,
-               CASE WHEN a.yhat_hi_total IS NOT NULL THEN ROUND(a.yhat_hi_total) END AS yhat_hi_total
-        FROM sku_agg a
-        ORDER BY a.yhat_total DESC NULLS LAST
-    """
-    with engine.connect() as conn:
-        rows = conn.execute(text(sql), {"weeks": weeks}).fetchall()
 
-    # Load sku_profiles for active_weeks (used by smooth_short graduation calc)
-    profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
-    active_weeks_map: dict[str, int] = {}
-    if profiles_path.exists():
-        prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks"])
-        active_weeks_map = dict(zip(prof["unique_id"], prof["active_weeks"].astype(int)))
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_monday = today - pd.Timedelta(days=days_back)
+
+    fcast_table = "shipcore.fc_forward_forecasts_test" if test else "shipcore.fc_forward_forecasts"
+    pt_fcast = _product_type_where("f.unique_id",     pts)
+    pt_snap  = _product_type_where("link_master_sku", pts)
+
+    if mode == "backtest":
+        # Guard: caller must provide an eval_date from /backtest-cycles.
+        if not eval_date:
+            return JSONResponse({
+                "segment": segment, "weeks": 0, "mode": mode,
+                "period_start": "", "period_end": "", "skus": [],
+                "backtest_unavailable": True, "earliest_forecast": None,
+            })
+
+        # Resolve the horizon for this specific forecast run.
+        with engine.connect() as conn:
+            horizon = conn.execute(text(f"""
+                SELECT MIN(ds) AS h_start, MAX(ds) AS h_end, COUNT(DISTINCT ds) AS h_weeks
+                FROM {fcast_table}
+                WHERE forecast_date = :eval_date
+            """), {"eval_date": eval_date}).fetchone()
+
+        if not horizon or horizon[0] is None:
+            raise HTTPException(400, f"No forecast data found for {eval_date}")
+
+        horizon_start, horizon_end, horizon_weeks = horizon[0], horizon[1], int(horizon[2])
+
+        # Evaluate this run's predictions against actual demand in the same weeks.
+        sql = f"""
+            WITH ranked AS (
+                SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
+                       f.yhat, f.yhat_hi, f.confidence
+                FROM {fcast_table} f
+                WHERE f.forecast_date = :eval_date
+                  AND {where}
+                  AND {pt_fcast}
+            ),
+            sku_agg AS (
+                SELECT unique_id, bucket, history_length, selected_model, confidence,
+                       SUM(ROUND(GREATEST(yhat, 0)))                                         AS yhat_total,
+                       SUM(CASE WHEN yhat_hi IS NOT NULL THEN ROUND(GREATEST(yhat_hi, 0)) END) AS yhat_hi_total
+                FROM ranked
+                GROUP BY unique_id, bucket, history_length, selected_model, confidence
+            ),
+            demand AS (
+                SELECT link_master_sku, SUM(link_qty) AS demand_total
+                FROM shipcore.fc_velocity_link_snapshot
+                WHERE order_date >= :horizon_start
+                  AND order_date <= :horizon_end
+                  AND {pt_snap}
+                GROUP BY link_master_sku
+            )
+            SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
+                   COALESCE(a.yhat_total, 0)::int AS yhat_total,
+                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END AS yhat_hi_total,
+                   COALESCE(d.demand_total, 0) AS demand_total
+            FROM sku_agg a
+            LEFT JOIN demand d ON d.link_master_sku = a.unique_id
+            ORDER BY a.yhat_total DESC NULLS LAST
+        """
+        params = {
+            "eval_date":     eval_date,
+            "horizon_start": horizon_start,
+            "horizon_end":   horizon_end,
+        }
+        demand_start = pd.Timestamp(str(horizon_start))
+        demand_end   = pd.Timestamp(str(horizon_end))
+        weeks        = horizon_weeks
+    else:
+        demand_end   = last_monday
+        demand_start = demand_end - pd.Timedelta(weeks=weeks)
+        # Forward mode: latest forecast for the next N weeks, recent demand for context.
+        sql = f"""
+            WITH latest_dates AS (
+                SELECT unique_id, MAX(forecast_date) AS latest_date
+                FROM {fcast_table}
+                GROUP BY unique_id
+            ),
+            ranked AS (
+                SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
+                       f.yhat, f.yhat_hi, f.confidence,
+                       ROW_NUMBER() OVER (PARTITION BY f.unique_id ORDER BY f.ds) AS week_num
+                FROM {fcast_table} f
+                INNER JOIN latest_dates ld
+                    ON f.unique_id = ld.unique_id AND f.forecast_date = ld.latest_date
+                WHERE {where}
+                  AND {pt_fcast}
+            ),
+            sku_agg AS (
+                SELECT unique_id, bucket, history_length, selected_model, confidence,
+                       SUM(ROUND(GREATEST(yhat, 0)))                                           FILTER (WHERE week_num <= :weeks) AS yhat_total,
+                       SUM(CASE WHEN yhat_hi IS NOT NULL THEN ROUND(GREATEST(yhat_hi, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
+                FROM ranked
+                GROUP BY unique_id, bucket, history_length, selected_model, confidence
+            ),
+            demand AS (
+                SELECT link_master_sku, SUM(link_qty) AS demand_total
+                FROM shipcore.fc_velocity_link_snapshot
+                WHERE order_date > :demand_start
+                  AND order_date <= :demand_end
+                  AND {pt_snap}
+                GROUP BY link_master_sku
+            )
+            SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
+                   COALESCE(a.yhat_total, 0)::int AS yhat_total,
+                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END AS yhat_hi_total,
+                   COALESCE(d.demand_total, 0) AS demand_total
+            FROM sku_agg a
+            LEFT JOIN demand d ON d.link_master_sku = a.unique_id
+            ORDER BY a.yhat_total DESC NULLS LAST
+        """
+        params = {"weeks": weeks, "demand_start": demand_start.date(), "demand_end": demand_end.date()}
+
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql), params).fetchall()
 
     SHORT_THRESHOLD = 52
+    MIN_HISTORY_WEEKS = 20
+
+    # active_weeks: in backtest mode use history as of forecast_date; in forward use current profiles
+    if mode == "backtest" and segment == "smooth_short":
+        uid_list = [r[0] for r in rows]
+        active_weeks_map: dict[str, int] = {}
+        if uid_list:
+            with engine.connect() as conn:
+                # Use full current demand history for ramp-up detection — more data
+                # gives a more reliable train_start. active_weeks is then measured
+                # from that stable train_start back to eval_date.
+                demand_rows = conn.execute(text("""
+                    SELECT link_master_sku,
+                           DATE_TRUNC('week', order_date::timestamp)::date AS week_start,
+                           SUM(link_qty) AS y
+                    FROM shipcore.fc_velocity_link_snapshot
+                    WHERE link_master_sku IN :uids
+                    GROUP BY link_master_sku, DATE_TRUNC('week', order_date::timestamp)::date
+                    ORDER BY link_master_sku, week_start
+                """), {"uids": tuple(uid_list)}).fetchall()
+            demand_df = pd.DataFrame(demand_rows, columns=["unique_id", "ds", "y"])
+            demand_df["ds"] = pd.to_datetime(demand_df["ds"])
+            eval_dt = pd.Timestamp(eval_date)
+            for uid, grp in demand_df.groupby("unique_id"):
+                grp = grp.sort_values("ds").reset_index(drop=True)
+                _, _, train_start = _detect_ramp_up(grp)
+                aw = max(0, (eval_dt - train_start).days // 7)
+                active_weeks_map[uid] = aw
+    else:
+        profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
+        active_weeks_map = {}
+        if profiles_path.exists():
+            prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks"])
+            active_weeks_map = dict(zip(prof["unique_id"], prof["active_weeks"].astype(int)))
 
     skus = []
     for r in rows:
         uid = r[0]
         aw = active_weeks_map.get(uid)
+        # In backtest for smooth_short, exclude SKUs that had too little history at forecast time
+        if mode == "backtest" and segment == "smooth_short" and (aw is None or aw < MIN_HISTORY_WEEKS):
+            continue
         weeks_to_grad = max(0, SHORT_THRESHOLD - aw) if aw is not None else None
         skus.append({
             "unique_id":        uid,
@@ -624,13 +871,100 @@ async def get_segment_detail(
             "confidence":       r[4],
             "yhat_total":       int(r[5]) if r[5] is not None else 0,
             "yhat_hi_total":    int(r[6]) if r[6] is not None else None,
+            "demand_total":     int(r[7]) if r[7] is not None else 0,
             "active_weeks":     aw,
             "weeks_to_graduation": weeks_to_grad,
         })
 
-    return JSONResponse({"segment": segment, "weeks": weeks, "skus": skus})
+    return JSONResponse({
+        "segment":      segment,
+        "weeks":        weeks,
+        "mode":         mode,
+        "period_start": str(demand_start.date()),
+        "period_end":   str(demand_end.date()),
+        "skus":         skus,
+    })
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/run-forecast")
+async def run_forecast(horizon: int = Query(default=13, ge=1, le=104)):
+    """Spawn a background forecast job and return a job_id to poll."""
+    job_id = str(uuid.uuid4())[:8]
+    _jobs[job_id] = {"status": "running", "lines": [], "exit_code": None, "proc": None}
+
+    def _run():
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(ROOT / "scripts" / "run_forward_forecast.py"),
+                 "--horizon", str(horizon)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(ROOT),
+            )
+            _jobs[job_id]["proc"] = proc
+            for line in proc.stdout:
+                _jobs[job_id]["lines"].append(line.rstrip())
+            proc.wait()
+            _jobs[job_id]["exit_code"] = proc.returncode
+            if _jobs[job_id].get("cancelled"):
+                _jobs[job_id]["status"] = "cancelled"
+            else:
+                _jobs[job_id]["status"] = "done" if proc.returncode == 0 else "failed"
+        except Exception as exc:
+            _jobs[job_id]["lines"].append(f"Error: {exc}")
+            _jobs[job_id]["status"] = "failed"
+            _jobs[job_id]["exit_code"] = -1
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.post("/cancel-forecast/{job_id}")
+async def cancel_forecast(job_id: str):
+    """Terminate a running forecast job."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job["status"] != "running":
+        return {"ok": False, "reason": "Job is not running"}
+    job["cancelled"] = True
+    proc = job.get("proc")
+    if proc:
+        proc.terminate()
+    return {"ok": True}
+
+
+@app.get("/forecast-status/{job_id}")
+async def forecast_status(job_id: str):
+    """Poll the status of a running or completed forecast job."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "job_id":     job_id,
+        "status":     job["status"],
+        "lines":      job["lines"],
+        "exit_code":  job["exit_code"],
+    }
+
+
+@app.get("/forecast-last-run")
+async def forecast_last_run():
+    """Return the most recent run_date and horizon from fc_forecast_history."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT run_date, horizon_weeks
+            FROM shipcore.fc_forecast_history
+            ORDER BY run_date DESC
+            LIMIT 1
+        """)).fetchone()
+    if not row:
+        return {"run_date": None, "horizon_weeks": None}
+    return {"run_date": str(row[0]), "horizon_weeks": int(row[1])}

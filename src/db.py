@@ -1,4 +1,5 @@
 import os
+from datetime import date, datetime
 import pandas as pd
 from urllib.parse import quote_plus
 from sqlalchemy import create_engine, text
@@ -7,6 +8,28 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _TABLE = "shipcore.fc_forward_forecasts"
+_HIST_TABLE = "shipcore.fc_forecast_history"
+
+_HIST_CREATE_SQL = f"""
+CREATE TABLE IF NOT EXISTS {_HIST_TABLE} (
+    unique_id         TEXT      NOT NULL,
+    week_of           DATE      NOT NULL,
+    run_date          TIMESTAMP NOT NULL,
+    bucket            TEXT      NOT NULL,
+    history_length    TEXT      NOT NULL,
+    horizon_weeks     INTEGER   NOT NULL,
+    yhat_total        FLOAT     NOT NULL,
+    yhat_hi           FLOAT,
+    yhat_lo           FLOAT,
+    forecast_end_date DATE      NOT NULL,
+    PRIMARY KEY (unique_id, week_of)
+)
+"""
+
+_HIST_MIGRATE_SQL = f"""
+ALTER TABLE IF EXISTS {_HIST_TABLE}
+    ALTER COLUMN run_date TYPE TIMESTAMP USING run_date::timestamp
+"""
 
 _CREATE_SQL = f"""
 CREATE TABLE IF NOT EXISTS {_TABLE} (
@@ -57,6 +80,84 @@ def write_forward_forecasts(df: pd.DataFrame) -> None:
         )
 
 
+def write_forecast_history(df: pd.DataFrame, run_date: datetime, horizon_weeks: int) -> None:
+    """Aggregate per-week forecast rows into one summary row per SKU and upsert.
+
+    Unique constraint is (unique_id, week_of) — one row per SKU per Monday week.
+    Re-running within the same week overwrites the previous run.
+    """
+    def _sum_or_none(s: pd.Series):
+        valid = s.dropna()
+        return float(valid.sum()) if len(valid) > 0 else None
+
+    today = pd.Timestamp(run_date.date())
+    week_of = (today - pd.Timedelta(days=today.dayofweek)).date()
+
+    df = df[df["bucket"] == "smooth"].copy()
+
+    agg = (
+        df.groupby(["unique_id", "bucket", "history_length"])
+        .agg(
+            yhat_total=("yhat", "sum"),
+            yhat_hi=("yhat_hi", _sum_or_none),
+            yhat_lo=("yhat_lo", _sum_or_none),
+            forecast_end_date=("ds", "max"),
+        )
+        .reset_index()
+    )
+    agg["week_of"] = week_of
+    agg["run_date"] = run_date
+    agg["horizon_weeks"] = horizon_weeks
+    agg["forecast_end_date"] = agg["forecast_end_date"].apply(
+        lambda v: v.date() if hasattr(v, "date") else v
+    )
+
+    records = [
+        {
+            "unique_id":         row["unique_id"],
+            "week_of":           week_of,
+            "run_date":          run_date,
+            "bucket":            row["bucket"],
+            "history_length":    row["history_length"],
+            "horizon_weeks":     horizon_weeks,
+            "yhat_total":        float(row["yhat_total"]),
+            "yhat_hi":           row["yhat_hi"],
+            "yhat_lo":           row["yhat_lo"],
+            "forecast_end_date": row["forecast_end_date"],
+        }
+        for _, row in agg.iterrows()
+    ]
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text(_HIST_CREATE_SQL))
+        try:
+            conn.execute(text(_HIST_MIGRATE_SQL))
+        except Exception:
+            pass  # column already TIMESTAMP or table just created
+        conn.execute(
+            text(f"""
+                INSERT INTO {_HIST_TABLE}
+                    (unique_id, week_of, run_date, bucket, history_length,
+                     horizon_weeks, yhat_total, yhat_hi, yhat_lo, forecast_end_date)
+                VALUES
+                    (:unique_id, :week_of, :run_date, :bucket, :history_length,
+                     :horizon_weeks, :yhat_total, :yhat_hi, :yhat_lo, :forecast_end_date)
+                ON CONFLICT (unique_id, week_of) DO UPDATE SET
+                    run_date          = EXCLUDED.run_date,
+                    bucket            = EXCLUDED.bucket,
+                    history_length    = EXCLUDED.history_length,
+                    horizon_weeks     = EXCLUDED.horizon_weeks,
+                    yhat_total        = EXCLUDED.yhat_total,
+                    yhat_hi           = EXCLUDED.yhat_hi,
+                    yhat_lo           = EXCLUDED.yhat_lo,
+                    forecast_end_date = EXCLUDED.forecast_end_date
+            """),
+            records,
+        )
+    print(f"  Wrote {len(records)} rows to fc_forecast_history (week_of={week_of})")
+
+
 def read_latest_forecast(sku_id: str) -> pd.DataFrame:
     engine = get_engine()
     query = f"""
@@ -74,7 +175,25 @@ def read_latest_forecast(sku_id: str) -> pd.DataFrame:
     return df
 
 
-def read_segments(weeks: int = 10) -> dict:
+_ALL_PRODUCT_TYPES = {"Car Cover", "Seat Cover", "Floor Mat"}
+
+
+def _product_type_where(col: str, product_types: list[str] | None) -> str:
+    """Return a SQL boolean expression to filter a SKU column by product type list."""
+    if not product_types or _ALL_PRODUCT_TYPES.issubset(set(product_types)):
+        return "TRUE"
+    parts = []
+    for pt in product_types:
+        if pt == "Car Cover":
+            parts.append(f"({col} LIKE 'CC%%' OR {col} = 'C-SJ-GR-7')")
+        elif pt == "Seat Cover":
+            parts.append(f"({col} LIKE 'CA-SC%%' OR {col} LIKE 'CL-SC%%')")
+        elif pt == "Floor Mat":
+            parts.append(f"{col} LIKE 'CA-FM%%'")
+    return f"({' OR '.join(parts)})" if parts else "TRUE"
+
+
+def read_segments(weeks: int = 10, product_types: list[str] | None = None) -> dict:
     """Return SKU counts and demand totals per segment for the last N complete weeks.
 
     Forecasted SKUs (smooth) come from fc_forward_forecasts.
@@ -87,25 +206,31 @@ def read_segments(weeks: int = 10) -> dict:
     last_monday = today - pd.Timedelta(days=days_back)
     period_start = last_monday - pd.Timedelta(weeks=weeks)
 
+    pt_fcast  = _product_type_where("unique_id",       product_types)
+    pt_snap   = _product_type_where("link_master_sku", product_types)
+
     with engine.connect() as conn:
         # Latest segment classification for every forecasted SKU
         forecast_df = pd.read_sql(text(f"""
             SELECT DISTINCT unique_id, bucket, history_length
             FROM {_TABLE}
             WHERE forecast_date = (SELECT MAX(forecast_date) FROM {_TABLE})
+              AND {pt_fcast}
         """), conn)
 
         # All SKUs ever seen — so dormant SKUs (no recent sales) still count
-        all_skus_df = pd.read_sql(text("""
+        all_skus_df = pd.read_sql(text(f"""
             SELECT DISTINCT link_master_sku
             FROM shipcore.fc_velocity_link_snapshot
+            WHERE {pt_snap}
         """), conn)
 
         # Demand per SKU for the last N complete weeks
-        demand_df = pd.read_sql(text("""
+        demand_df = pd.read_sql(text(f"""
             SELECT link_master_sku, SUM(link_qty) AS demand
             FROM shipcore.fc_velocity_link_snapshot
             WHERE order_date > :start
+              AND {pt_snap}
             GROUP BY link_master_sku
         """), conn, params={"start": period_start})
 
@@ -163,11 +288,10 @@ def read_segments(weeks: int = 10) -> dict:
 
     n_fcast = len(forecasted)
     pareto_annotation = None
-    if 0 < n_fcast <= n_skus:
-        ann_idx = n_fcast - 1
+    if n_fcast > 0 and n_skus > 0 and total_d > 0:
         pareto_annotation = {
-            "sku_pct":    round(pareto_x[ann_idx], 1),
-            "demand_pct": round(pareto_y[ann_idx], 1),
+            "sku_pct":    round(n_fcast / n_skus * 100, 1),
+            "demand_pct": round(float(forecasted["demand"].sum()) / total_d * 100, 1),
         }
 
     return {
