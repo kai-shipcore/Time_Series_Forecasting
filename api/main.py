@@ -1,8 +1,10 @@
 import sys
 import copy
 import uuid
+import asyncio
 import threading
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -470,6 +472,382 @@ async def run_backtest(
     })
 
 
+# ── Segment simulation ───────────────────────────────────────────────────────
+
+def _run_segment_simulation(
+    segment: str,
+    cutoff_ts: pd.Timestamp,
+    horizon: int,
+    model_param: str,
+    pts: list[str] | None,
+    log_fn=None,
+    cancel_flag: threading.Event | None = None,
+) -> dict:
+    """Fit fresh models for all SKUs in a smooth segment and return per-SKU backtest results."""
+    SHORT_THRESHOLD    = 52
+    MIN_HISTORY_WEEKS  = 13
+
+    def log(msg: str):
+        if log_fn:
+            log_fn(msg)
+
+    def cancelled() -> bool:
+        return cancel_flag is not None and cancel_flag.is_set()
+
+    log("Sim-Step 0: Loading profiles…")
+    profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
+    if not profiles_path.exists():
+        return {"error": "sku_profiles.csv not found — run the forecast pipeline first."}
+
+    prof = pd.read_csv(profiles_path, usecols=["unique_id", "train_start", "bucket"])
+    prof["train_start"] = pd.to_datetime(prof["train_start"])
+    # Restrict to smooth bucket — intermittent/low_volume SKUs are excluded even if
+    # they happen to have high active_weeks at the cutoff date.
+    prof = prof[prof["bucket"] == "smooth"].copy()
+    prof["aw"] = ((cutoff_ts - prof["train_start"]).dt.days // 7).clip(lower=0).astype(int)
+
+    log("Sim-Step 1: Filtering SKUs…")
+    if segment == "smooth_full":
+        eligible     = prof[prof["aw"] >= SHORT_THRESHOLD].copy()
+        hist_len_key = "full"
+    else:  # smooth_short
+        eligible     = prof[(prof["aw"] >= MIN_HISTORY_WEEKS) & (prof["aw"] < SHORT_THRESHOLD)].copy()
+        hist_len_key = "short"
+
+    uid_to_ts = dict(zip(eligible["unique_id"], eligible["train_start"]))
+    uid_to_aw = dict(zip(eligible["unique_id"], eligible["aw"]))
+    uid_list  = list(uid_to_ts.keys())
+    log(f"  → {len(uid_list)} SKUs eligible")
+
+    horizon_start = cutoff_ts + pd.Timedelta(weeks=1)
+    horizon_end   = cutoff_ts + pd.Timedelta(weeks=horizon)
+
+    def _empty():
+        return {
+            "segment": segment, "weeks": horizon, "mode": "simulation",
+            "period_start": str(horizon_start.date()),
+            "period_end":   str(horizon_end.date()),
+            "skus": [],
+        }
+
+    if not uid_list:
+        return _empty()
+
+    if cancelled():
+        return {"cancelled": True}
+
+    log("Sim-Step 2: Loading demand data…")
+    engine    = get_engine()
+    pt_clause = _product_type_where("link_master_sku", pts) if pts else "TRUE"
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"""
+            SELECT link_master_sku AS unique_id,
+                   DATE_TRUNC('week', order_date::timestamp)::date AS ds,
+                   SUM(link_qty) AS y
+            FROM shipcore.fc_velocity_link_snapshot
+            WHERE link_master_sku IN :uids
+              AND {pt_clause}
+            GROUP BY link_master_sku, DATE_TRUNC('week', order_date::timestamp)::date
+        """), {"uids": tuple(uid_list)}).fetchall()
+
+    if not rows:
+        return _empty()
+
+    all_demand = pd.DataFrame(rows, columns=["unique_id", "ds", "y"])
+    all_demand["ds"] = pd.to_datetime(all_demand["ds"])
+
+    # Restrict uid_list to SKUs that survived the product-type filter
+    uid_list = [u for u in uid_list if u in all_demand["unique_id"].values]
+
+    if cancelled():
+        return {"cancelled": True}
+
+    log("Sim-Step 3: Zero-filling training grids…")
+    global_grid = pd.DataFrame({"ds": pd.date_range(all_demand["ds"].min(), cutoff_ts, freq="W-MON")})
+    train_frames: dict[str, pd.DataFrame] = {}
+    eval_lookups: dict[str, dict[pd.Timestamp, int]] = {}
+
+    for uid in uid_list:
+        grp         = all_demand[all_demand["unique_id"] == uid]
+        ts          = uid_to_ts[uid]
+        train_raw   = grp[grp["ds"] <= cutoff_ts][["ds", "y"]].rename(columns={"y": "y_act"})
+        merged      = global_grid.merge(train_raw, on="ds", how="left")
+        merged["y"] = merged["y_act"].fillna(0.0)
+        train_df    = merged[merged["ds"] >= ts][["ds", "y"]].sort_values("ds").reset_index(drop=True)
+        train_df.insert(0, "unique_id", uid)
+
+        if len(train_df) < 8:
+            continue
+
+        train_frames[uid] = train_df
+        eval_grp          = grp[(grp["ds"] > cutoff_ts) & (grp["ds"] <= horizon_end)]
+        eval_lookups[uid] = {r["ds"]: int(r["y"]) for _, r in eval_grp.iterrows()}
+
+    valid_uids = list(train_frames.keys())
+    if not valid_uids:
+        return _empty()
+
+    bucket     = "smooth"
+    use_deseas = USE_SEASONAL_ADJUSTMENT and hist_len_key != "short"
+    model_min  = 20
+
+    try:
+        candidates = get_models(bucket, hist_len_key)
+    except ValueError:
+        candidates = get_models("low_volume", "full")
+    candidate_names = {type(m).__name__ for m in candidates}
+    try:
+        baselines = [b for b in get_baselines(bucket, hist_len_key) if type(b).__name__ not in candidate_names]
+    except ValueError:
+        baselines = []
+    all_models_list = candidates + baselines
+
+    combined  = pd.concat([train_frames[uid] for uid in valid_uids]).reset_index(drop=True)
+    fit_data  = deseasonalize(combined[["unique_id", "ds", "y"]]) if use_deseas else combined[["unique_id", "ds", "y"]]
+    min_train = min(len(train_frames[uid]) for uid in valid_uids)
+    n_windows = max(0, min(_MAX_N_WINDOWS, (min_train - model_min) // horizon))
+
+    if cancelled():
+        return {"cancelled": True}
+
+    # ── Model selection ───────────────────────────────────────────────────────
+    uid_to_model: dict[str, str] = {}
+
+    if model_param == "Auto" and hist_len_key != "short" and n_windows >= 1:
+        log(f"Sim-Step 4: CV model selection ({n_windows} windows, {len(valid_uids)} SKUs)…")
+        try:
+            sf_cv = StatsForecast(models=copy.deepcopy(all_models_list), freq=FREQUENCY, n_jobs=-1)
+            cv    = sf_cv.cross_validation(df=fit_data, h=horizon, n_windows=n_windows, step_size=horizon)
+            if use_deseas:
+                cv = reseasonalize(cv)
+            non_meta = {"unique_id", "ds", "cutoff", "y", "bucket", "history_length"}
+            model_cols = [c for c in cv.columns if c not in non_meta]
+            for uid, uid_cv in cv.groupby("unique_id"):
+                best_wape, best = float("inf"), None
+                for col in model_cols:
+                    if uid_cv[col].isna().all():
+                        continue
+                    window_wapes = [
+                        abs(w[col].sum() - w["y"].sum()) / max(w["y"].sum(), 1e-6)
+                        for _, w in uid_cv.groupby("cutoff")
+                    ]
+                    if window_wapes:
+                        avg = sum(window_wapes) / len(window_wapes)
+                        if avg < best_wape:
+                            best_wape, best = avg, col
+                if best:
+                    uid_to_model[str(uid)] = best
+            log(f"  → selected models for {len(uid_to_model)} SKUs")
+        except Exception as exc:
+            log(f"  → CV selection failed ({exc}), falling back to selection.csv")
+    else:
+        if model_param == "Auto":
+            # short history: WindowAverage is the safe fallback (V1 not available here)
+            fixed = "WindowAverage"
+            log(f"Sim-Step 4: Fitting models (short history → {fixed}, {len(valid_uids)} SKUs)…")
+        else:
+            fixed = model_param
+            log(f"Sim-Step 4: Fitting models ({fixed}, {len(valid_uids)} SKUs)…")
+        uid_to_model = {uid: fixed for uid in valid_uids}
+
+    # Fill any gaps with selection.csv or AutoETS fallback
+    if model_param == "Auto":
+        sel_map: dict[str, str] = {}
+        sel_path = OUTPUTS_REPORTS / "selection.csv"
+        if sel_path.exists():
+            sel_df = pd.read_csv(sel_path)
+            for _, row in sel_df.iterrows():
+                m = str(row["model"])
+                if m.startswith("Ensemble:"):
+                    m = m.replace("Ensemble:", "").split("+")[0]
+                sel_map[str(row["unique_id"])] = m
+        for uid in valid_uids:
+            if uid not in uid_to_model:
+                uid_to_model[uid] = sel_map.get(uid, "AutoETS")
+
+    if cancelled():
+        return {"cancelled": True}
+
+    # ── Forecast ──────────────────────────────────────────────────────────────
+    log(f"  → Forecasting {len(valid_uids)} SKUs…")
+    sf = StatsForecast(models=copy.deepcopy(all_models_list), freq=FREQUENCY, n_jobs=-1)
+    try:
+        if n_windows >= 1:
+            pi    = ConformalIntervals(h=horizon, n_windows=n_windows)
+            fcast = sf.forecast(df=fit_data, h=horizon, level=[_CONFORMAL_LEVEL], prediction_intervals=pi)
+        else:
+            sf.fit(fit_data)
+            fcast = sf.predict(h=horizon)
+    except Exception:
+        try:
+            sf2   = StatsForecast(models=copy.deepcopy(all_models_list), freq=FREQUENCY, n_jobs=-1)
+            sf2.fit(fit_data)
+            fcast = sf2.predict(h=horizon)
+        except Exception as exc:
+            return {"error": f"Forecast failed: {exc}"}
+
+    fcast["ds"] = pd.to_datetime(fcast["ds"])
+    if use_deseas:
+        fcast = reseasonalize(fcast)
+    if "ds" not in fcast.columns:
+        fcast = fcast.reset_index()
+
+    today_ts    = pd.Timestamp.today().normalize()
+    sku_results: list[dict] = []
+
+    for uid in valid_uids:
+        uid_fcast = fcast[fcast["unique_id"] == uid] if "unique_id" in fcast.columns else fcast
+        if uid_fcast.empty:
+            continue
+
+        model_for_uid                   = uid_to_model.get(uid, "AutoETS")
+        yhat_s, lo_s, hi_s, model_used = _pick_cols(uid_fcast, model_for_uid)
+        has_pi        = lo_s is not None
+        eval_lookup   = eval_lookups[uid]
+        yhat_total    = 0
+        yhat_lo_total = 0
+        yhat_hi_total = 0
+        demand_total  = 0
+
+        lo_vals = lo_s.values if lo_s is not None else [None] * len(uid_fcast)
+        hi_vals = hi_s.values if hi_s is not None else [None] * len(uid_fcast)
+
+        for ds_val, yhat_v, lo_v, hi_v in zip(uid_fcast["ds"].values, yhat_s.values, lo_vals, hi_vals):
+            ds_ts = pd.Timestamp(ds_val)
+            # Only count weeks where actual demand is available (same window for both sides)
+            if ds_ts > today_ts:
+                continue
+            yhat        = max(0, round(float(yhat_v))) if pd.notna(yhat_v) else 0
+            yhat_total += yhat
+            if has_pi and lo_v is not None and pd.notna(lo_v):
+                yhat_lo_total += max(0, round(float(lo_v)))
+            if has_pi and hi_v is not None and pd.notna(hi_v):
+                yhat_hi_total += max(0, round(float(hi_v)))
+            demand_total += eval_lookup.get(ds_ts, 0)
+
+        aw = uid_to_aw.get(uid)
+        sku_results.append({
+            "unique_id":           uid,
+            "bucket":              bucket,
+            "history_length":      hist_len_key,
+            "selected_model":      model_used,
+            "confidence":          "standard",
+            "yhat_total":          yhat_total,
+            "yhat_lo_total":       yhat_lo_total if has_pi else None,
+            "yhat_hi_total":       yhat_hi_total if has_pi else None,
+            "demand_total":        demand_total,
+            "active_weeks":        int(aw) if aw is not None else None,
+            "weeks_to_graduation": max(0, SHORT_THRESHOLD - int(aw)) if aw is not None else None,
+        })
+
+    log("Sim-Step 5: Complete.")
+    return {
+        "segment":      segment,
+        "weeks":        horizon,
+        "mode":         "simulation",
+        "period_start": str(horizon_start.date()),
+        "period_end":   str(horizon_end.date()),
+        "skus":         sku_results,
+    }
+
+
+@app.post("/segment-simulate-job/{segment}")
+async def start_segment_simulation(
+    segment: str,
+    cutoff: str = Query(..., description="Cutoff date (YYYY-MM-DD, a Monday)"),
+    horizon: int = Query(default=13, ge=1, le=52),
+    model: str = Query(default="Auto"),
+    product_type: str = Query(default="All"),
+):
+    """Start a simulation job and return a job_id to poll."""
+    if segment not in ("smooth_full", "smooth_short"):
+        raise HTTPException(400, "Simulation is only supported for smooth_full and smooth_short.")
+
+    pts         = _parse_product_types(product_type)
+    cutoff_ts   = pd.Timestamp(cutoff).normalize()
+    job_id      = str(uuid.uuid4())[:8]
+    cancel_flag = threading.Event()
+
+    _jobs[job_id] = {
+        "status":       "running",
+        "lines":        [],
+        "exit_code":    None,
+        "proc":         None,
+        "cancel_event": cancel_flag,
+        "result":       None,
+    }
+
+    def log_fn(msg: str):
+        _jobs[job_id]["lines"].append(msg)
+
+    def run():
+        try:
+            result = _run_segment_simulation(segment, cutoff_ts, horizon, model, pts, log_fn=log_fn, cancel_flag=cancel_flag)
+            if result.get("cancelled"):
+                _jobs[job_id]["status"] = "cancelled"
+                _jobs[job_id]["exit_code"] = 0
+            elif result.get("error"):
+                _jobs[job_id]["lines"].append(f"Error: {result['error']}")
+                _jobs[job_id]["status"] = "failed"
+                _jobs[job_id]["exit_code"] = -1
+            else:
+                _jobs[job_id]["result"]     = result
+                _jobs[job_id]["status"]     = "done"
+                _jobs[job_id]["exit_code"]  = 0
+        except Exception as exc:
+            _jobs[job_id]["lines"].append(f"Error: {exc}")
+            _jobs[job_id]["status"]     = "failed"
+            _jobs[job_id]["exit_code"]  = -1
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/segment-simulate-result/{job_id}")
+async def segment_simulate_result(job_id: str):
+    """Retrieve the result of a completed simulation job."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] != "done":
+        raise HTTPException(409, f"Job not done yet (status: {job['status']})")
+    return JSONResponse(job["result"])
+
+
+@app.post("/cancel-simulation/{job_id}")
+async def cancel_simulation(job_id: str):
+    """Signal a running simulation job to stop between steps."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] != "running":
+        return {"status": job["status"]}
+    cancel_event = job.get("cancel_event")
+    if cancel_event:
+        cancel_event.set()
+    return {"status": "cancelling"}
+
+
+@app.get("/segment-simulate/{segment}")
+async def simulate_segment(
+    segment: str,
+    cutoff: str = Query(..., description="Cutoff date (YYYY-MM-DD, a Monday)"),
+    horizon: int = Query(default=13, ge=1, le=52),
+    model: str = Query(default="Auto"),
+    product_type: str = Query(default="All"),
+):
+    """Run a fresh batch backtest simulation for all SKUs in a smooth segment."""
+    if segment not in ("smooth_full", "smooth_short"):
+        raise HTTPException(400, "Simulation is only supported for smooth_full and smooth_short.")
+    pts       = _parse_product_types(product_type)
+    cutoff_ts = pd.Timestamp(cutoff).normalize()
+    loop      = asyncio.get_event_loop()
+    result    = await loop.run_in_executor(None, _run_segment_simulation, segment, cutoff_ts, horizon, model, pts)
+    if "error" in result:
+        raise HTTPException(500, detail=result["error"])
+    return JSONResponse(result)
+
+
 @app.get("/segmentation")
 async def get_segmentation():
     """Aggregate the latest forward forecasts into segment-level metrics.
@@ -650,6 +1028,7 @@ async def _segment_detail_intermittent(weeks: int, product_types: list[str] | No
             m.last_sale_week,
             CASE WHEN m.last_sale_week IS NOT NULL
                  THEN FLOOR((:today - m.last_sale_week) / 7.0)::int END                       AS weeks_since_last_sale,
+            m.nonzero_weeks                                                                    AS event_count,
             CASE WHEN m.nonzero_weeks > 0
                  THEN ROUND(m.total_units::numeric / m.nonzero_weeks, 1) END                  AS avg_units_per_event
         FROM metrics m
@@ -662,15 +1041,17 @@ async def _segment_detail_intermittent(weeks: int, product_types: list[str] | No
         }).fetchall()
 
     return JSONResponse({
-        "segment": "intermittent",
-        "weeks": weeks,
+        "segment":           "intermittent",
+        "weeks":             weeks,
+        "forecast_run_date": str(last_monday.date()),
         "skus": [
             {
-                "unique_id":            r[0],
-                "units_recent":         int(r[1]) if r[1] is not None else 0,
-                "last_sale_week":       str(r[2]) if r[2] is not None else None,
+                "unique_id":             r[0],
+                "units_recent":          int(r[1]) if r[1] is not None else 0,
+                "last_sale_week":        str(r[2]) if r[2] is not None else None,
                 "weeks_since_last_sale": int(r[3]) if r[3] is not None else None,
-                "avg_units_per_event":  float(r[4]) if r[4] is not None else None,
+                "event_count":           int(r[4]) if r[4] is not None else None,
+                "avg_units_per_event":   float(r[5]) if r[5] is not None else None,
             }
             for r in rows
         ],
@@ -737,7 +1118,7 @@ async def get_segment_detail(
         sql = f"""
             WITH ranked AS (
                 SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
-                       f.yhat, f.yhat_hi, f.confidence
+                       f.yhat, f.yhat_lo, f.yhat_hi, f.confidence
                 FROM {fcast_table} f
                 WHERE f.forecast_date = :eval_date
                   AND {where_backtest}
@@ -745,7 +1126,8 @@ async def get_segment_detail(
             ),
             sku_agg AS (
                 SELECT unique_id, bucket, history_length, selected_model, confidence,
-                       SUM(ROUND(GREATEST(yhat, 0)))                                         AS yhat_total,
+                       SUM(ROUND(GREATEST(yhat, 0)))                                           AS yhat_total,
+                       SUM(CASE WHEN yhat_lo IS NOT NULL THEN ROUND(GREATEST(yhat_lo, 0)) END) AS yhat_lo_total,
                        SUM(CASE WHEN yhat_hi IS NOT NULL THEN ROUND(GREATEST(yhat_hi, 0)) END) AS yhat_hi_total
                 FROM ranked
                 GROUP BY unique_id, bucket, history_length, selected_model, confidence
@@ -759,9 +1141,10 @@ async def get_segment_detail(
                 GROUP BY link_master_sku
             )
             SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
-                   COALESCE(a.yhat_total, 0)::int AS yhat_total,
-                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END AS yhat_hi_total,
-                   COALESCE(d.demand_total, 0) AS demand_total
+                   COALESCE(a.yhat_total, 0)::int                                              AS yhat_total,
+                   CASE WHEN a.yhat_lo_total IS NOT NULL THEN a.yhat_lo_total::int END         AS yhat_lo_total,
+                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END         AS yhat_hi_total,
+                   COALESCE(d.demand_total, 0)                                                 AS demand_total
             FROM sku_agg a
             LEFT JOIN demand d ON d.link_master_sku = a.unique_id
             ORDER BY a.yhat_total DESC NULLS LAST
@@ -786,7 +1169,7 @@ async def get_segment_detail(
             ),
             ranked AS (
                 SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
-                       f.yhat, f.yhat_hi, f.confidence,
+                       f.yhat, f.yhat_lo, f.yhat_hi, f.confidence,
                        ROW_NUMBER() OVER (PARTITION BY f.unique_id ORDER BY f.ds) AS week_num
                 FROM {fcast_table} f
                 INNER JOIN latest_dates ld
@@ -797,6 +1180,7 @@ async def get_segment_detail(
             sku_agg AS (
                 SELECT unique_id, bucket, history_length, selected_model, confidence,
                        SUM(ROUND(GREATEST(yhat, 0)))                                           FILTER (WHERE week_num <= :weeks) AS yhat_total,
+                       SUM(CASE WHEN yhat_lo IS NOT NULL THEN ROUND(GREATEST(yhat_lo, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_lo_total,
                        SUM(CASE WHEN yhat_hi IS NOT NULL THEN ROUND(GREATEST(yhat_hi, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
                 FROM ranked
                 GROUP BY unique_id, bucket, history_length, selected_model, confidence
@@ -810,9 +1194,10 @@ async def get_segment_detail(
                 GROUP BY link_master_sku
             )
             SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
-                   COALESCE(a.yhat_total, 0)::int AS yhat_total,
-                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END AS yhat_hi_total,
-                   COALESCE(d.demand_total, 0) AS demand_total
+                   COALESCE(a.yhat_total, 0)::int                                              AS yhat_total,
+                   CASE WHEN a.yhat_lo_total IS NOT NULL THEN a.yhat_lo_total::int END         AS yhat_lo_total,
+                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END         AS yhat_hi_total,
+                   COALESCE(d.demand_total, 0)                                                 AS demand_total
             FROM sku_agg a
             LEFT JOIN demand d ON d.link_master_sku = a.unique_id
             ORDER BY a.yhat_total DESC NULLS LAST
@@ -831,6 +1216,7 @@ async def get_segment_detail(
     # whatever history_length was stored in the DB at eval_date.
     profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
     active_weeks_map: dict[str, int] = {}
+    current_bucket_map: dict[str, str] = {}  # uid → current bucket, used to drop stale DB rows
     if profiles_path.exists():
         if mode == "backtest" and segment in ("smooth_full", "smooth_short"):
             prof = pd.read_csv(profiles_path, usecols=["unique_id", "train_start"])
@@ -839,8 +1225,9 @@ async def get_segment_detail(
                 ts = pd.Timestamp(row["train_start"])
                 active_weeks_map[row["unique_id"]] = max(0, (eval_dt - ts).days // 7)
         else:
-            prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks"])
+            prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks", "bucket"])
             active_weeks_map = dict(zip(prof["unique_id"], prof["active_weeks"].astype(int)))
+            current_bucket_map = dict(zip(prof["unique_id"], prof["bucket"]))
 
     skus = []
     for r in rows:
@@ -854,28 +1241,88 @@ async def get_segment_detail(
                 continue  # was short at eval_date — belongs in smooth_short
             if segment == "smooth_short" and aw >= SHORT_THRESHOLD:
                 continue  # was full at eval_date — belongs in smooth_full
+        elif mode == "forward" and segment in ("smooth_full", "smooth_short") and current_bucket_map:
+            # Drop stale DB rows for SKUs reclassified since the last run.
+            # If a SKU was reclassified to intermittent/low_volume, the pipeline
+            # writes no new forecast — old smooth rows stay as "latest" in the DB.
+            if current_bucket_map.get(uid) != "smooth":
+                continue
         weeks_to_grad = max(0, SHORT_THRESHOLD - aw) if aw is not None else None
         skus.append({
-            "unique_id":        uid,
-            "bucket":           r[1],
-            "history_length":   r[2],
-            "selected_model":   r[3],
-            "confidence":       r[4],
-            "yhat_total":       int(r[5]) if r[5] is not None else 0,
-            "yhat_hi_total":    int(r[6]) if r[6] is not None else None,
-            "demand_total":     int(r[7]) if r[7] is not None else 0,
-            "active_weeks":     aw,
+            "unique_id":           uid,
+            "bucket":              r[1],
+            "history_length":      r[2],
+            "selected_model":      r[3],
+            "confidence":          r[4],
+            "yhat_total":          int(r[5]) if r[5] is not None else 0,
+            "yhat_lo_total":       int(r[6]) if r[6] is not None else None,
+            "yhat_hi_total":       int(r[7]) if r[7] is not None else None,
+            "demand_total":        int(r[8]) if r[8] is not None else 0,
+            "active_weeks":        aw,
             "weeks_to_graduation": weeks_to_grad,
         })
 
+    # Join HorizonWAPE from selection.csv (not stored in DB) so the frontend
+    # can display training error alongside the confidence badge.
+    sel_path = OUTPUTS_REPORTS / "selection.csv"
+    if sel_path.exists():
+        sel_df = pd.read_csv(sel_path, usecols=["unique_id", "HorizonWAPE"])
+        wape_map: dict[str, float | None] = {}
+        for _, row in sel_df.iterrows():
+            v = row["HorizonWAPE"]
+            wape_map[row["unique_id"]] = float(v) if pd.notna(v) else None
+        for sku in skus:
+            sku["train_wape"] = wape_map.get(sku["unique_id"])
+    else:
+        for sku in skus:
+            sku["train_wape"] = None
+
+    if mode == "forward":
+        with engine.connect() as conn:
+            dr = conn.execute(text(f"""
+                SELECT MAX(f.forecast_date) FROM {fcast_table} f
+                WHERE {where_forward} AND {pt_fcast}
+            """)).fetchone()
+        forecast_run_date = str(dr[0]) if dr and dr[0] else None
+    else:
+        forecast_run_date = eval_date
+
     return JSONResponse({
-        "segment":      segment,
-        "weeks":        weeks,
-        "mode":         mode,
-        "period_start": str(demand_start.date()),
-        "period_end":   str(demand_end.date()),
-        "skus":         skus,
+        "segment":           segment,
+        "weeks":             weeks,
+        "mode":              mode,
+        "period_start":      str(demand_start.date()),
+        "period_end":        str(demand_end.date()),
+        "forecast_run_date": forecast_run_date,
+        "skus":              skus,
     })
+
+
+@app.get("/sku-search")
+async def sku_search(q: str = Query(default="", min_length=1)):
+    """Search SKUs by prefix/substring across all segments using sku_profiles.csv."""
+    profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
+    if not profiles_path.exists():
+        return JSONResponse([])
+
+    prof = pd.read_csv(profiles_path, usecols=["unique_id", "bucket", "history_length", "active_weeks"])
+    q_lower = q.strip().lower()
+    matches = prof[prof["unique_id"].str.lower().str.contains(q_lower, regex=False)]
+
+    def to_segment(row) -> str:
+        if row["bucket"] == "smooth":
+            return "smooth_full" if row["history_length"] in ("full", "medium") else "smooth_short"
+        return "intermittent"
+
+    results = [
+        {
+            "unique_id":    row["unique_id"],
+            "segment":      to_segment(row),
+            "active_weeks": int(row["active_weeks"]) if pd.notna(row["active_weeks"]) else None,
+        }
+        for _, row in matches.iterrows()
+    ]
+    return JSONResponse(results)
 
 
 @app.get("/health")
