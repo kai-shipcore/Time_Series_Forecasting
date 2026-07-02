@@ -117,7 +117,10 @@ def _select_best(metrics: pd.DataFrame, profiles: pd.DataFrame) -> pd.DataFrame:
     """HorizonWAPE-primary for CV SKUs; fixed defaults for short-history SKUs."""
     cv_sel = (
         metrics
-        .sort_values(["unique_id", "HorizonWAPE", "HorizonBias"])
+        # tie-break on |bias|: signed bias would prefer the most under-forecasting
+        # model on WAPE ties; we want the least-biased one in either direction
+        .assign(_abs_bias=lambda d: d["HorizonBias"].abs())
+        .sort_values(["unique_id", "HorizonWAPE", "_abs_bias"])
         .groupby("unique_id")
         .first()
         .reset_index()
