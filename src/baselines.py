@@ -16,8 +16,8 @@ SEASON_LENGTH = 52  # weeks in a year
 # Seasonal baselines — "full" and "medium" history.
 _BASELINE_SETS = {
     "smooth": [
-        Naive(),
-        SeasonalNaive(season_length=SEASON_LENGTH),
+        # Naive and SeasonalNaive removed — both underperform V1 on smooth SKUs
+        # and introduce poor worst-case selections via CV noise.
         # V1Formula(),  # TODO: add once ported
     ],
     "low_volume": [

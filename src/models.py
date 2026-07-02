@@ -15,7 +15,6 @@ from statsforecast.models import (
     SeasonalNaive,
     WindowAverage,
     HistoricAverage,
-    Naive,
 )
 
 SEASON_LENGTH = 52  # weeks in a year
@@ -33,7 +32,6 @@ _MODEL_SETS = {
         AutoETS(season_length=_SMOOTH_SL, damped=True),
         AutoTheta(season_length=_SMOOTH_SL),
         WindowAverage(window_size=8),
-        Naive(),          # strong baseline on deseasonalized flat series
         HistoricAverage(),
     ],
     "low_volume": [
