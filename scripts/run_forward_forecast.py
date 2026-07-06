@@ -30,6 +30,7 @@ from src.models import get_models
 from src.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
 from src.db import write_forward_forecasts, write_forecast_history
+from src.v1 import load_raw_for_v1, build_index, compute_v1_per_week
 
 FORWARD_WEEKS      = 13
 CONFORMAL_LEVEL    = 70
@@ -102,7 +103,9 @@ def refit_and_forecast(
             if train_g.empty:
                 continue
 
-            use_deseas = USE_SEASONAL_ADJUSTMENT and bucket == "smooth" and hist != "short"
+            # short included since Jul 2026: round-trip seasonality is safe for the
+            # level-only short default (WA12) and provides Q4 coverage it lacks raw
+            use_deseas = USE_SEASONAL_ADJUSTMENT and bucket == "smooth"
 
             fit_data = deseasonalize(train_g) if use_deseas else train_g
             fit_data = fit_data[["unique_id", "ds", "y"]]
@@ -223,8 +226,19 @@ def main():
     forecasts = refit_and_forecast(weekly_capped, profiles, selection, horizon_weeks=horizon_weeks)
     print(f"  {len(forecasts):,} rows | {forecasts['unique_id'].nunique()} SKUs")
 
+    print("\n── Step 4b: Compute V1 baseline per SKU ────────────────────────")
+    v1_raw   = load_raw_for_v1()
+    v1_index = build_index(v1_raw)
+    smooth_ids = forecasts["unique_id"].unique().tolist()
+    v1_map = compute_v1_per_week(smooth_ids, last_complete_monday, horizon_weeks, v1_index)
+    forecasts["v1_yhat"] = forecasts["unique_id"].map(v1_map)
+    n_v1 = forecasts["v1_yhat"].notna().sum()
+    print(f"  V1 computed for {len(v1_map)} SKUs ({n_v1} rows)")
+
     print("\n── Step 5: Write to DB ─────────────────────────────────────────")
-    run_date = datetime.now(timezone.utc)
+    # Naive UTC datetime — avoids psycopg2 converting to PostgreSQL session timezone
+    # before storing into a TIMESTAMP WITHOUT TIME ZONE column.
+    run_date = datetime.now(timezone.utc).replace(tzinfo=None)
     forecasts["forecast_date"] = run_date.date()
     write_forward_forecasts(forecasts)
     print(f"  Done — forecast_date={run_date.date()}")

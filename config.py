@@ -43,9 +43,13 @@ HOLIDAY_END               = (12, 31)   # (month, day)  end of December
 HOLIDAY_MULTIPLIER        = 1.26       # CV-optimised: overall MAE 39.71, Jan bias +14.77 (window 11/20–12/31)
 
 # Routing: short-history smooth SKUs route to V1 instead of a statistical model.
-# Research showed V1's rolling-rate windows outperform any statistical model on
-# ramp-up products with < 1 seasonal cycle of data (MAE 23.69 vs 27.27 for WA(12)).
-ROUTE_SHORT_SMOOTH_TO_V1 = True
+# False since Jul 2026: leak-free Apr–Jun backtest (321 short SKUs) showed
+# WindowAverage(12) beats V1 in every tier×volume cell (median WAPE 0.188 vs
+# 0.265, pooled 0.218 vs 0.291) — V1's 30–90d velocity windows average over the
+# pre-ramp dormant period and systematically underforecast young SKUs (-13% bias).
+# Short SKUs are also now deseasonalized like medium/full: the seasonal round-trip
+# is safe for level-only models (a wash in mild seasons, Q4 protection in peak).
+ROUTE_SHORT_SMOOTH_TO_V1 = False
 
 # Metric thresholds (used in select.py)
 WAPE_ACCEPTABLE = 0.25          # flag SKUs above this in reports

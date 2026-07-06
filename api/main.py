@@ -19,12 +19,13 @@ from sqlalchemy import text
 from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
-from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS
+from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS, TEST_WEEKS
 from src.db import read_latest_forecast, read_actuals, read_segments, get_engine, get_global_start, _product_type_where
 from src.profile import _detect_ramp_up
 from src.models import get_models
 from src.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
+from src.v1 import load_raw_for_v1, build_index as build_v1_index, forecast_total as v1_forecast_total
 
 _jobs: dict[str, dict] = {}
 
@@ -484,7 +485,7 @@ def _run_segment_simulation(
     cancel_flag: threading.Event | None = None,
 ) -> dict:
     """Fit fresh models for all SKUs in a smooth segment and return per-SKU backtest results."""
-    SHORT_THRESHOLD    = 52
+    SHORT_THRESHOLD    = 50   # keep in sync with src/profile.py SHORT_HISTORY_WEEKS
     MIN_HISTORY_WEEKS  = 13
 
     def log(msg: str):
@@ -588,7 +589,8 @@ def _run_segment_simulation(
         return _empty()
 
     bucket     = "smooth"
-    use_deseas = USE_SEASONAL_ADJUSTMENT and hist_len_key != "short"
+    # short included since Jul 2026 — keep in sync with run_forward_forecast.py
+    use_deseas = USE_SEASONAL_ADJUSTMENT
     model_min  = 20
 
     try:
@@ -605,53 +607,71 @@ def _run_segment_simulation(
     combined  = pd.concat([train_frames[uid] for uid in valid_uids]).reset_index(drop=True)
     fit_data  = deseasonalize(combined[["unique_id", "ds", "y"]]) if use_deseas else combined[["unique_id", "ds", "y"]]
     min_train = min(len(train_frames[uid]) for uid in valid_uids)
+    # Group-level window count at horizon length — used only for conformal PIs below.
     n_windows = max(0, min(_MAX_N_WINDOWS, (min_train - model_min) // horizon))
 
     if cancelled():
         return {"cancelled": True}
 
     # ── Model selection ───────────────────────────────────────────────────────
+    # CV windows are TEST_WEEKS (10) long to match the pipeline, and the window
+    # count is computed PER SKU so one short series no longer caps the whole
+    # group. SKUs are batched into cohorts by window count (StatsForecast needs
+    # a uniform n_windows per call). A single window can't referee the full
+    # model menu, so n=1 cohorts choose between the two robust defaults only.
     uid_to_model: dict[str, str] = {}
 
-    if model_param == "Auto" and hist_len_key != "short" and n_windows >= 1:
-        log(f"Sim-Step 4: CV model selection ({n_windows} windows, {len(valid_uids)} SKUs)…")
-        try:
-            sf_cv = StatsForecast(models=copy.deepcopy(all_models_list), freq=FREQUENCY, n_jobs=-1)
-            cv    = sf_cv.cross_validation(df=fit_data, h=horizon, n_windows=n_windows, step_size=horizon)
-            if use_deseas:
-                cv = reseasonalize(cv)
-            non_meta = {"unique_id", "ds", "cutoff", "y", "bucket", "history_length"}
-            model_cols = [c for c in cv.columns if c not in non_meta]
-            for uid, uid_cv in cv.groupby("unique_id"):
-                best_wape, best = float("inf"), None
-                for col in model_cols:
-                    if uid_cv[col].isna().all():
-                        continue
-                    window_wapes = [
-                        abs(w[col].sum() - w["y"].sum()) / max(w["y"].sum(), 1e-6)
-                        for _, w in uid_cv.groupby("cutoff")
-                    ]
-                    if window_wapes:
-                        avg = sum(window_wapes) / len(window_wapes)
-                        if avg < best_wape:
-                            best_wape, best = avg, col
-                if best:
-                    uid_to_model[str(uid)] = best
-            log(f"  → selected models for {len(uid_to_model)} SKUs")
-        except Exception as exc:
-            log(f"  → CV selection failed ({exc}), falling back to selection.csv")
+    if model_param == "Auto":
+        uid_n = {uid: max(0, min(_MAX_N_WINDOWS, (len(train_frames[uid]) - model_min) // TEST_WEEKS))
+                 for uid in valid_uids}
+        cohorts: dict[int, list[str]] = {}
+        for uid, n in uid_n.items():
+            if n >= 1:
+                cohorts.setdefault(n, []).append(uid)
+        n_cv = sum(len(v) for v in cohorts.values())
+        log(f"Sim-Step 4: CV model selection ({TEST_WEEKS}-week windows, per-SKU count; "
+            f"{n_cv}/{len(valid_uids)} SKUs eligible)…")
+        binary_menu = [m for m in all_models_list if type(m).__name__ in ("AutoETS", "WindowAverage")]
+        non_meta = {"unique_id", "ds", "cutoff", "y", "bucket", "history_length"}
+        for n, uids in sorted(cohorts.items(), reverse=True):
+            if cancelled():
+                return {"cancelled": True}
+            menu = binary_menu if (n == 1 and len(binary_menu) >= 2) else all_models_list
+            cohort_fit = fit_data[fit_data["unique_id"].isin(uids)]
+            log(f"  → cohort n_windows={n}: {len(uids)} SKUs, {len(menu)} candidates")
+            try:
+                sf_cv = StatsForecast(models=copy.deepcopy(menu), freq=FREQUENCY, n_jobs=-1)
+                cv    = sf_cv.cross_validation(df=cohort_fit, h=TEST_WEEKS, n_windows=n, step_size=TEST_WEEKS)
+                if use_deseas:
+                    cv = reseasonalize(cv)
+                model_cols = [c for c in cv.columns if c not in non_meta]
+                for uid, uid_cv in cv.groupby("unique_id"):
+                    best_wape, best = float("inf"), None
+                    for col in model_cols:
+                        if uid_cv[col].isna().all():
+                            continue
+                        window_wapes = [
+                            abs(w[col].sum() - w["y"].sum()) / max(w["y"].sum(), 1e-6)
+                            for _, w in uid_cv.groupby("cutoff")
+                        ]
+                        if window_wapes:
+                            avg = sum(window_wapes) / len(window_wapes)
+                            if avg < best_wape:
+                                best_wape, best = avg, col
+                    if best:
+                        uid_to_model[str(uid)] = best
+            except Exception as exc:
+                log(f"  → cohort n_windows={n} CV failed ({exc}); those SKUs use defaults")
+        log(f"  → selected models for {len(uid_to_model)} SKUs")
     else:
-        if model_param == "Auto":
-            # short history: WindowAverage is the safe fallback (V1 not available here)
-            fixed = "WindowAverage"
-            log(f"Sim-Step 4: Fitting models (short history → {fixed}, {len(valid_uids)} SKUs)…")
-        else:
-            fixed = model_param
-            log(f"Sim-Step 4: Fitting models ({fixed}, {len(valid_uids)} SKUs)…")
+        fixed = model_param
+        log(f"Sim-Step 4: Fitting models ({fixed}, {len(valid_uids)} SKUs)…")
         uid_to_model = {uid: fixed for uid in valid_uids}
 
-    # Fill any gaps with selection.csv or AutoETS fallback
+    # Fill any gaps (n=0 SKUs, failed cohorts) with selection.csv or a safe default
     if model_param == "Auto":
+        default_model = "WindowAverage" if hist_len_key == "short" else "AutoETS"
+        fittable = {type(m).__name__ for m in all_models_list}
         sel_map: dict[str, str] = {}
         sel_path = OUTPUTS_REPORTS / "selection.csv"
         if sel_path.exists():
@@ -663,7 +683,10 @@ def _run_segment_simulation(
                 sel_map[str(row["unique_id"])] = m
         for uid in valid_uids:
             if uid not in uid_to_model:
-                uid_to_model[uid] = sel_map.get(uid, "AutoETS")
+                m = sel_map.get(uid, default_model)
+                if m not in fittable:   # e.g. "V1" label — not a fittable column here
+                    m = default_model
+                uid_to_model[uid] = m
 
     if cancelled():
         return {"cancelled": True}
@@ -708,6 +731,7 @@ def _run_segment_simulation(
         yhat_lo_total = 0
         yhat_hi_total = 0
         demand_total  = 0
+        completed_weeks = 0
 
         lo_vals = lo_s.values if lo_s is not None else [None] * len(uid_fcast)
         hi_vals = hi_s.values if hi_s is not None else [None] * len(uid_fcast)
@@ -717,6 +741,7 @@ def _run_segment_simulation(
             # Only count weeks where actual demand is available (same window for both sides)
             if ds_ts > today_ts:
                 continue
+            completed_weeks += 1
             yhat        = max(0, round(float(yhat_v))) if pd.notna(yhat_v) else 0
             yhat_total += yhat
             if has_pi and lo_v is not None and pd.notna(lo_v):
@@ -738,7 +763,29 @@ def _run_segment_simulation(
             "demand_total":        demand_total,
             "active_weeks":        int(aw) if aw is not None else None,
             "weeks_to_graduation": max(0, SHORT_THRESHOLD - int(aw)) if aw is not None else None,
+            "_completed_weeks":    completed_weeks,
         })
+
+    # Compute V1 baseline for all segments (short no longer routes to V1 —
+    # its default is WindowAverage(12), so V1 is a genuine comparison there too)
+    if sku_results:
+        try:
+            v1_raw   = load_raw_for_v1()
+            v1_index = build_v1_index(v1_raw)
+            horizon_days = horizon * 7
+            for r in sku_results:
+                full_total = v1_forecast_total(v1_index, r["unique_id"], cutoff_ts, horizon_days)
+                cw = r["_completed_weeks"]
+                r["v1_yhat_total"] = round(full_total * cw / horizon) if horizon > 0 and cw > 0 else None
+        except Exception:
+            for r in sku_results:
+                r["v1_yhat_total"] = None
+    else:
+        for r in sku_results:
+            r["v1_yhat_total"] = None
+
+    for r in sku_results:
+        r.pop("_completed_weeks", None)
 
     log("Sim-Step 5: Complete.")
     return {
@@ -1118,7 +1165,7 @@ async def get_segment_detail(
         sql = f"""
             WITH ranked AS (
                 SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
-                       f.yhat, f.yhat_lo, f.yhat_hi, f.confidence
+                       f.yhat, f.yhat_lo, f.yhat_hi, f.confidence, f.v1_yhat
                 FROM {fcast_table} f
                 WHERE f.forecast_date = :eval_date
                   AND {where_backtest}
@@ -1126,9 +1173,10 @@ async def get_segment_detail(
             ),
             sku_agg AS (
                 SELECT unique_id, bucket, history_length, selected_model, confidence,
-                       SUM(ROUND(GREATEST(yhat, 0)))                                           AS yhat_total,
-                       SUM(CASE WHEN yhat_lo IS NOT NULL THEN ROUND(GREATEST(yhat_lo, 0)) END) AS yhat_lo_total,
-                       SUM(CASE WHEN yhat_hi IS NOT NULL THEN ROUND(GREATEST(yhat_hi, 0)) END) AS yhat_hi_total
+                       SUM(ROUND(GREATEST(yhat, 0)))                                                                             AS yhat_total,
+                       SUM(CASE WHEN yhat_lo IS NOT NULL AND yhat_lo != 'NaN'::float8 THEN ROUND(GREATEST(yhat_lo, 0)) END) AS yhat_lo_total,
+                       SUM(CASE WHEN yhat_hi IS NOT NULL AND yhat_hi != 'NaN'::float8 THEN ROUND(GREATEST(yhat_hi, 0)) END) AS yhat_hi_total,
+                       SUM(CASE WHEN v1_yhat IS NOT NULL AND v1_yhat != 'NaN'::float8 THEN ROUND(GREATEST(v1_yhat, 0)) END) AS v1_yhat_total
                 FROM ranked
                 GROUP BY unique_id, bucket, history_length, selected_model, confidence
             ),
@@ -1141,10 +1189,11 @@ async def get_segment_detail(
                 GROUP BY link_master_sku
             )
             SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
-                   COALESCE(a.yhat_total, 0)::int                                              AS yhat_total,
-                   CASE WHEN a.yhat_lo_total IS NOT NULL THEN a.yhat_lo_total::int END         AS yhat_lo_total,
-                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END         AS yhat_hi_total,
-                   COALESCE(d.demand_total, 0)                                                 AS demand_total
+                   COALESCE(a.yhat_total, 0)::int                                           AS yhat_total,
+                   CASE WHEN a.yhat_lo_total IS NOT NULL THEN a.yhat_lo_total::int END      AS yhat_lo_total,
+                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END      AS yhat_hi_total,
+                   COALESCE(d.demand_total, 0)                                                 AS demand_total,
+                   a.v1_yhat_total::int                                                     AS v1_yhat_total
             FROM sku_agg a
             LEFT JOIN demand d ON d.link_master_sku = a.unique_id
             ORDER BY a.yhat_total DESC NULLS LAST
@@ -1179,9 +1228,9 @@ async def get_segment_detail(
             ),
             sku_agg AS (
                 SELECT unique_id, bucket, history_length, selected_model, confidence,
-                       SUM(ROUND(GREATEST(yhat, 0)))                                           FILTER (WHERE week_num <= :weeks) AS yhat_total,
-                       SUM(CASE WHEN yhat_lo IS NOT NULL THEN ROUND(GREATEST(yhat_lo, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_lo_total,
-                       SUM(CASE WHEN yhat_hi IS NOT NULL THEN ROUND(GREATEST(yhat_hi, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
+                       SUM(ROUND(GREATEST(yhat, 0)))                                                                             FILTER (WHERE week_num <= :weeks) AS yhat_total,
+                       SUM(CASE WHEN yhat_lo IS NOT NULL AND yhat_lo != 'NaN'::float8 THEN ROUND(GREATEST(yhat_lo, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_lo_total,
+                       SUM(CASE WHEN yhat_hi IS NOT NULL AND yhat_hi != 'NaN'::float8 THEN ROUND(GREATEST(yhat_hi, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
                 FROM ranked
                 GROUP BY unique_id, bucket, history_length, selected_model, confidence
             ),
@@ -1194,10 +1243,11 @@ async def get_segment_detail(
                 GROUP BY link_master_sku
             )
             SELECT a.unique_id, a.bucket, a.history_length, a.selected_model, a.confidence,
-                   COALESCE(a.yhat_total, 0)::int                                              AS yhat_total,
-                   CASE WHEN a.yhat_lo_total IS NOT NULL THEN a.yhat_lo_total::int END         AS yhat_lo_total,
-                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END         AS yhat_hi_total,
-                   COALESCE(d.demand_total, 0)                                                 AS demand_total
+                   COALESCE(a.yhat_total, 0)::int                                           AS yhat_total,
+                   CASE WHEN a.yhat_lo_total IS NOT NULL THEN a.yhat_lo_total::int END      AS yhat_lo_total,
+                   CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END      AS yhat_hi_total,
+                   COALESCE(d.demand_total, 0)                                                 AS demand_total,
+                   NULL::int                                                                 AS v1_yhat_total
             FROM sku_agg a
             LEFT JOIN demand d ON d.link_master_sku = a.unique_id
             ORDER BY a.yhat_total DESC NULLS LAST
@@ -1207,7 +1257,7 @@ async def get_segment_detail(
     with engine.connect() as conn:
         rows = conn.execute(text(sql), params).fetchall()
 
-    SHORT_THRESHOLD = 52
+    SHORT_THRESHOLD = 50   # keep in sync with src/profile.py SHORT_HISTORY_WEEKS
     MIN_HISTORY_WEEKS = 20
 
     # active_weeks: always derived from sku_profiles.csv train_start (same pipeline/zero-filled data).
@@ -1260,6 +1310,7 @@ async def get_segment_detail(
             "demand_total":        int(r[8]) if r[8] is not None else 0,
             "active_weeks":        aw,
             "weeks_to_graduation": weeks_to_grad,
+            "v1_yhat_total":       int(r[9]) if r[9] is not None else None,
         })
 
     # Join HorizonWAPE from selection.csv (not stored in DB) so the frontend

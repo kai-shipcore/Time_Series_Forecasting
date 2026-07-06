@@ -1,0 +1,178 @@
+"""V1 forecasting formula — stream-based blend with seasonal modifier.
+
+Ported from scripts/compare_v1.py for use in the live pipeline.
+Computes a total forecast for a given horizon in days, from the DB
+snapshot (fc_velocity_link_snapshot with order_type and channel).
+"""
+import calendar
+import os
+from datetime import timedelta
+from urllib.parse import quote_plus
+
+import pandas as pd
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+
+load_dotenv()
+
+SEASONAL = {
+    1: 0.75, 2: 0.80, 3: 0.90, 4: 0.95,
+    5: 1.00, 6: 1.00, 7: 1.00, 8: 1.00, 9: 1.00,
+    10: 1.10, 11: 1.25, 12: 1.30,
+}
+
+V1_WINDOWS = [
+    (90, 0.10, "sales"),
+    (60, 0.15, "sales"),
+    (30, 0.30, "sales"),
+    (15, 0.20, "sales"),
+    (7,  0.15, "sales"),
+    (30, 0.10, "preorder"),
+]
+
+
+_engine_instance = None
+
+def _engine():
+    global _engine_instance
+    if _engine_instance is None:
+        url = "postgresql+psycopg2://{}:{}@{}:{}/{}".format(
+            quote_plus(os.getenv("DB_USER")),
+            quote_plus(os.getenv("DB_PASSWORD")),
+            os.getenv("DB_HOST"),
+            os.getenv("DB_PORT"),
+            os.getenv("DB_NAME"),
+        )
+        _engine_instance = create_engine(
+            url,
+            pool_size=3,
+            max_overflow=3,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": 10, "sslmode": "require"},
+        )
+    return _engine_instance
+
+
+def load_raw_for_v1() -> pd.DataFrame:
+    """Pull order_date, unique_id, link_qty, channel, order_type from the snapshot."""
+    engine = _engine()
+    with engine.connect() as conn:
+        raw = pd.read_sql(text("""
+            SELECT order_date, link_master_sku AS unique_id, link_qty, channel, order_type
+            FROM shipcore.fc_velocity_link_snapshot
+        """), conn, parse_dates=["order_date"])
+    raw["order_date"] = pd.to_datetime(raw["order_date"]).dt.normalize()
+    return raw
+
+
+def _assign_stream(channel: str, order_type: str) -> str | None:
+    if channel == "Amazon FBA":
+        return "fba"
+    if order_type in ("sales", "preorder"):
+        return f"west_{order_type}"
+    if order_type == "ttm":
+        return "east_sales"
+    if order_type == "ttm_preorder":
+        return "east_preorder"
+    return None
+
+
+def build_index(raw: pd.DataFrame) -> dict:
+    """Build {(uid, stream): cumsum Series} for fast window lookups."""
+    raw = raw.copy()
+    raw["stream"] = raw.apply(
+        lambda r: _assign_stream(r["channel"], r["order_type"]), axis=1
+    )
+    raw = raw[raw["stream"].notna()].drop(columns=["channel", "order_type"])
+
+    daily = (
+        raw.groupby(["unique_id", "stream", "order_date"])["link_qty"]
+        .sum()
+        .reset_index()
+    )
+    full_range = pd.date_range(raw["order_date"].min(), raw["order_date"].max(), freq="D")
+
+    index: dict = {}
+    for (uid, stream), grp in daily.groupby(["unique_id", "stream"]):
+        s = grp.set_index("order_date")["link_qty"].reindex(full_range, fill_value=0)
+        index[(uid, stream)] = s.cumsum()
+    return index
+
+
+def _window_sum(index: dict, uid: str, stream: str, end: pd.Timestamp, days: int) -> float:
+    cs = index.get((uid, stream))
+    if cs is None:
+        return 0.0
+    start = end - timedelta(days=days)
+    end_val   = float(cs.asof(end))   if end   >= cs.index[0] else 0.0
+    start_val = float(cs.asof(start)) if start >= cs.index[0] else 0.0
+    return max(0.0, end_val - start_val)
+
+
+def _blend_rate(index: dict, uid: str, prefix: str, as_of: pd.Timestamp) -> float:
+    rate = 0.0
+    for days, weight, kind in V1_WINDOWS:
+        stream = f"{prefix}_preorder" if kind == "preorder" else f"{prefix}_sales"
+        rate += weight * (_window_sum(index, uid, stream, as_of, days) / days)
+    return max(0.0, rate)
+
+
+def _dampen(S: float, R: float) -> float:
+    if R == 0:
+        return S
+    change = abs((S - R) / R)
+    return 0.1 * R + 0.9 * S if change < 0.5 else 0.2 * R + 0.8 * S
+
+
+def _daily_rate(index: dict, uid: str, cutoff: pd.Timestamp) -> float:
+    prev = cutoff - timedelta(days=7)
+    west = _dampen(_blend_rate(index, uid, "west", cutoff),
+                   _blend_rate(index, uid, "west", prev))
+    east = _dampen(_blend_rate(index, uid, "east", cutoff),
+                   _blend_rate(index, uid, "east", prev))
+    fba  = _window_sum(index, uid, "fba", cutoff, 30) / 30
+    return west + east + fba
+
+
+def _seasonal_modifier(start: pd.Timestamp, end: pd.Timestamp) -> float:
+    total_days = (end - start).days + 1
+    weighted = 0.0
+    current = start
+    while current <= end:
+        last_of_month = pd.Timestamp(
+            current.year, current.month,
+            calendar.monthrange(current.year, current.month)[1],
+        )
+        chunk_end  = min(end, last_of_month)
+        chunk_days = (chunk_end - current).days + 1
+        weighted  += SEASONAL[current.month] * chunk_days
+        current    = chunk_end + timedelta(days=1)
+    return weighted / total_days
+
+
+def forecast_total(index: dict, uid: str, cutoff: pd.Timestamp, horizon_days: int) -> float:
+    """V1 forecast total for `horizon_days` calendar days starting the day after cutoff."""
+    rate  = _daily_rate(index, uid, cutoff)
+    start = cutoff + timedelta(days=1)
+    end   = cutoff + timedelta(days=horizon_days)
+    mod   = _seasonal_modifier(start, end)
+    return max(0.0, rate * horizon_days * mod)
+
+
+def compute_v1_per_week(
+    unique_ids: list[str],
+    cutoff: pd.Timestamp,
+    horizon_weeks: int,
+    index: dict,
+) -> dict[str, float]:
+    """Return {uid: v1_yhat_per_week} for all requested SKUs.
+
+    v1_yhat_per_week = V1 horizon total / horizon_weeks
+    so that SUM(v1_yhat) over all ds rows equals the full V1 horizon forecast.
+    """
+    horizon_days = horizon_weeks * 7
+    result: dict[str, float] = {}
+    for uid in unique_ids:
+        total = forecast_total(index, uid, cutoff, horizon_days)
+        result[uid] = round(total / horizon_weeks, 4)
+    return result

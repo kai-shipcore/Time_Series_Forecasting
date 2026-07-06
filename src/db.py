@@ -43,20 +43,32 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     history_length TEXT,
     selected_model TEXT,
     confidence     TEXT,
+    v1_yhat        FLOAT,
     PRIMARY KEY (unique_id, forecast_date, ds)
 )
 """
 
 
+_engine = None
+
 def get_engine():
-    url = "postgresql+psycopg2://{}:{}@{}:{}/{}".format(
-        quote_plus(os.getenv("DB_USER")),
-        quote_plus(os.getenv("DB_PASSWORD")),
-        os.getenv("DB_HOST"),
-        os.getenv("DB_PORT"),
-        os.getenv("DB_NAME"),
-    )
-    return create_engine(url, connect_args={"connect_timeout": 10, "sslmode": "require"})
+    global _engine
+    if _engine is None:
+        url = "postgresql+psycopg2://{}:{}@{}:{}/{}".format(
+            quote_plus(os.getenv("DB_USER")),
+            quote_plus(os.getenv("DB_PASSWORD")),
+            os.getenv("DB_HOST"),
+            os.getenv("DB_PORT"),
+            os.getenv("DB_NAME"),
+        )
+        _engine = create_engine(
+            url,
+            pool_size=5,
+            max_overflow=5,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": 10, "sslmode": "require"},
+        )
+    return _engine
 
 
 def write_forward_forecasts(df: pd.DataFrame) -> None:

@@ -11,7 +11,7 @@ MEAN_INTERMITTENT_CUTOFF = 3.0  # used for ramp-up detection only (not classific
 
 # Recent-activity overrides (last 13 complete weeks)
 RECENT_WEEKS             = 13
-RECENT_ZERO_PCT_UPGRADE  = 0.15  # if recent zero_pct below this AND mean ≥ threshold → promote to smooth/short
+RECENT_ZERO_PCT_UPGRADE  = 0.20  # if recent zero_pct below this AND mean ≥ threshold → promote to smooth/short
 RECENT_MEAN_UPGRADE      = 2.0   # recent weekly mean must be ≥ this to promote
 RECENT_MEAN_DOWNGRADE    = 2.0   # if recent weekly mean below this → demote to intermittent
 
@@ -20,10 +20,13 @@ RAMP_UP_RATIO = 3.0          # second-half mean must be this many times the firs
 RAMP_UP_MIN_DEMAND = MEAN_INTERMITTENT_CUTOFF  # ramp-up only meaningful above the intermittent threshold
 
 # History length thresholds (weeks)
-# < SHORT  → too little history; V1/simple rolling rate only
-# SHORT–MEDIUM → one seasonal cycle; seasonal models are candidates but shaky
+# < SHORT  → too little history; fixed short default, no CV
+# SHORT–MEDIUM → CV-capable (3+ ten-week windows on a 20-week training floor);
+#                deseasonalized full model menu, seasonal signal still shaky
 # > MEDIUM → 2+ cycles; full seasonal model set
-SHORT_HISTORY_WEEKS = 52
+# SHORT = 50 = 20-week training floor + 3 × 10-week CV windows: a SKU is
+# "medium" exactly when it can support 3-window CV selection.
+SHORT_HISTORY_WEEKS = 50
 MEDIUM_HISTORY_WEEKS = 104
 
 
