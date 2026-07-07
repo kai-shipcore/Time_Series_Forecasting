@@ -38,29 +38,40 @@ _HIST_MIGRATE_PI_SQL = f"""
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns
                WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo')
-    THEN
-        ALTER TABLE {_HIST_TABLE} RENAME COLUMN yhat_lo TO yhat_lo_70;
-    END IF;
+    THEN ALTER TABLE {_HIST_TABLE} RENAME COLUMN yhat_lo TO yhat_lo_70; END IF;
     IF EXISTS (SELECT 1 FROM information_schema.columns
                WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_hi')
-    THEN
-        ALTER TABLE {_HIST_TABLE} RENAME COLUMN yhat_hi TO yhat_hi_70;
-    END IF;
+    THEN ALTER TABLE {_HIST_TABLE} RENAME COLUMN yhat_hi TO yhat_hi_70; END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                    WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo_40')
-    THEN
-        ALTER TABLE {_HIST_TABLE}
-            ADD COLUMN yhat_lo_40 FLOAT,
-            ADD COLUMN yhat_hi_40 FLOAT,
-            ADD COLUMN yhat_lo_60 FLOAT,
-            ADD COLUMN yhat_hi_60 FLOAT,
-            ADD COLUMN yhat_lo_70 FLOAT,
-            ADD COLUMN yhat_hi_70 FLOAT,
-            ADD COLUMN yhat_lo_80 FLOAT,
-            ADD COLUMN yhat_hi_80 FLOAT,
-            ADD COLUMN yhat_lo_90 FLOAT,
-            ADD COLUMN yhat_hi_90 FLOAT;
-    END IF;
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_lo_40 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_hi_40')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_hi_40 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo_60')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_lo_60 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_hi_60')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_hi_60 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo_70')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_lo_70 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_hi_70')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_hi_70 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo_80')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_lo_80 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_hi_80')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_hi_80 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo_90')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_lo_90 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_hi_90')
+    THEN ALTER TABLE {_HIST_TABLE} ADD COLUMN yhat_hi_90 FLOAT; END IF;
 END $$;
 """
 
@@ -98,29 +109,40 @@ _MIGRATE_PI_SQL = f"""
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns
                WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo')
-    THEN
-        ALTER TABLE {_TABLE} RENAME COLUMN yhat_lo TO yhat_lo_70;
-    END IF;
+    THEN ALTER TABLE {_TABLE} RENAME COLUMN yhat_lo TO yhat_lo_70; END IF;
     IF EXISTS (SELECT 1 FROM information_schema.columns
                WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi')
-    THEN
-        ALTER TABLE {_TABLE} RENAME COLUMN yhat_hi TO yhat_hi_70;
-    END IF;
+    THEN ALTER TABLE {_TABLE} RENAME COLUMN yhat_hi TO yhat_hi_70; END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                    WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo_40')
-    THEN
-        ALTER TABLE {_TABLE}
-            ADD COLUMN yhat_lo_40 FLOAT,
-            ADD COLUMN yhat_hi_40 FLOAT,
-            ADD COLUMN yhat_lo_60 FLOAT,
-            ADD COLUMN yhat_hi_60 FLOAT,
-            ADD COLUMN yhat_lo_70 FLOAT,
-            ADD COLUMN yhat_hi_70 FLOAT,
-            ADD COLUMN yhat_lo_80 FLOAT,
-            ADD COLUMN yhat_hi_80 FLOAT,
-            ADD COLUMN yhat_lo_90 FLOAT,
-            ADD COLUMN yhat_hi_90 FLOAT;
-    END IF;
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_lo_40 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi_40')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_hi_40 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo_60')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_lo_60 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi_60')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_hi_60 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo_70')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_lo_70 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi_70')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_hi_70 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo_80')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_lo_80 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi_80')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_hi_80 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo_90')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_lo_90 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi_90')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_hi_90 FLOAT; END IF;
 END $$;
 """
 
