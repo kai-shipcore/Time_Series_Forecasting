@@ -16,6 +16,11 @@ TRIM_TRAILING_WEEKS = 0   # train through the last complete week
 TEST_WEEKS = 10           # evaluation window ending at the trimmed tail
 N_CV_SPLITS = 6
 
+# Conformal prediction interval levels.
+# level=N in statsforecast means the CENTRAL N% interval: lower = P((100-N)/2), upper = P((100+N)/2).
+# So level=70 → [P15, P85]; level=90 → [P5, P95]. The upper bound is NOT the Nth percentile.
+CONFORMAL_LEVELS = [40, 60, 70, 80, 90]
+
 # Segmentation thresholds
 ZERO_PCT_INTERMITTENT = 0.30    # fraction of zero weeks → intermittent bucket
 CV_THRESHOLD = 1.5              # coefficient of variation cutoff for lumpy demand

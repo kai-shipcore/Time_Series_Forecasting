@@ -19,11 +19,49 @@ CREATE TABLE IF NOT EXISTS {_HIST_TABLE} (
     history_length    TEXT      NOT NULL,
     horizon_weeks     INTEGER   NOT NULL,
     yhat_total        FLOAT     NOT NULL,
-    yhat_hi           FLOAT,
-    yhat_lo           FLOAT,
+    yhat_lo_40        FLOAT,
+    yhat_hi_40        FLOAT,
+    yhat_lo_60        FLOAT,
+    yhat_hi_60        FLOAT,
+    yhat_lo_70        FLOAT,
+    yhat_hi_70        FLOAT,
+    yhat_lo_80        FLOAT,
+    yhat_hi_80        FLOAT,
+    yhat_lo_90        FLOAT,
+    yhat_hi_90        FLOAT,
     forecast_end_date DATE      NOT NULL,
     PRIMARY KEY (unique_id, week_of)
 )
+"""
+
+_HIST_MIGRATE_PI_SQL = f"""
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo')
+    THEN
+        ALTER TABLE {_HIST_TABLE} RENAME COLUMN yhat_lo TO yhat_lo_70;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_hi')
+    THEN
+        ALTER TABLE {_HIST_TABLE} RENAME COLUMN yhat_hi TO yhat_hi_70;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forecast_history' AND column_name='yhat_lo_40')
+    THEN
+        ALTER TABLE {_HIST_TABLE}
+            ADD COLUMN yhat_lo_40 FLOAT,
+            ADD COLUMN yhat_hi_40 FLOAT,
+            ADD COLUMN yhat_lo_60 FLOAT,
+            ADD COLUMN yhat_hi_60 FLOAT,
+            ADD COLUMN yhat_lo_70 FLOAT,
+            ADD COLUMN yhat_hi_70 FLOAT,
+            ADD COLUMN yhat_lo_80 FLOAT,
+            ADD COLUMN yhat_hi_80 FLOAT,
+            ADD COLUMN yhat_lo_90 FLOAT,
+            ADD COLUMN yhat_hi_90 FLOAT;
+    END IF;
+END $$;
 """
 
 _HIST_MIGRATE_SQL = f"""
@@ -37,8 +75,16 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     forecast_date  DATE  NOT NULL,
     ds             DATE  NOT NULL,
     yhat           FLOAT NOT NULL,
-    yhat_lo        FLOAT,
-    yhat_hi        FLOAT,
+    yhat_lo_40     FLOAT,
+    yhat_hi_40     FLOAT,
+    yhat_lo_60     FLOAT,
+    yhat_hi_60     FLOAT,
+    yhat_lo_70     FLOAT,
+    yhat_hi_70     FLOAT,
+    yhat_lo_80     FLOAT,
+    yhat_hi_80     FLOAT,
+    yhat_lo_90     FLOAT,
+    yhat_hi_90     FLOAT,
     bucket         TEXT,
     history_length TEXT,
     selected_model TEXT,
@@ -46,6 +92,36 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     v1_yhat        FLOAT,
     PRIMARY KEY (unique_id, forecast_date, ds)
 )
+"""
+
+_MIGRATE_PI_SQL = f"""
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo')
+    THEN
+        ALTER TABLE {_TABLE} RENAME COLUMN yhat_lo TO yhat_lo_70;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi')
+    THEN
+        ALTER TABLE {_TABLE} RENAME COLUMN yhat_hi TO yhat_hi_70;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_lo_40')
+    THEN
+        ALTER TABLE {_TABLE}
+            ADD COLUMN yhat_lo_40 FLOAT,
+            ADD COLUMN yhat_hi_40 FLOAT,
+            ADD COLUMN yhat_lo_60 FLOAT,
+            ADD COLUMN yhat_hi_60 FLOAT,
+            ADD COLUMN yhat_lo_70 FLOAT,
+            ADD COLUMN yhat_hi_70 FLOAT,
+            ADD COLUMN yhat_lo_80 FLOAT,
+            ADD COLUMN yhat_hi_80 FLOAT,
+            ADD COLUMN yhat_lo_90 FLOAT,
+            ADD COLUMN yhat_hi_90 FLOAT;
+    END IF;
+END $$;
 """
 
 
@@ -72,11 +148,12 @@ def get_engine():
 
 
 def write_forward_forecasts(df: pd.DataFrame) -> None:
-    """Create table if needed, delete today's existing rows, insert fresh results."""
+    """Create table if needed, migrate PI columns, delete today's rows, insert fresh results."""
     engine = get_engine()
     forecast_date = str(df["forecast_date"].iloc[0])
     with engine.begin() as conn:
         conn.execute(text(_CREATE_SQL))
+        conn.execute(text(_MIGRATE_PI_SQL))
         conn.execute(
             text(f"DELETE FROM {_TABLE} WHERE forecast_date = :fd"),
             {"fd": forecast_date},
@@ -105,16 +182,18 @@ def write_forecast_history(df: pd.DataFrame, run_date: datetime, horizon_weeks: 
     today = pd.Timestamp(run_date.date())
     week_of = (today - pd.Timedelta(days=today.dayofweek)).date()
 
+    _PI_LEVELS = [40, 60, 70, 80, 90]
+
     df = df[df["bucket"] == "smooth"].copy()
+
+    agg_dict: dict = {"yhat_total": ("yhat", "sum"), "forecast_end_date": ("ds", "max")}
+    for lvl in _PI_LEVELS:
+        agg_dict[f"yhat_lo_{lvl}"] = (f"yhat_lo_{lvl}", _sum_or_none)
+        agg_dict[f"yhat_hi_{lvl}"] = (f"yhat_hi_{lvl}", _sum_or_none)
 
     agg = (
         df.groupby(["unique_id", "bucket", "history_length"])
-        .agg(
-            yhat_total=("yhat", "sum"),
-            yhat_hi=("yhat_hi", _sum_or_none),
-            yhat_lo=("yhat_lo", _sum_or_none),
-            forecast_end_date=("ds", "max"),
-        )
+        .agg(**agg_dict)
         .reset_index()
     )
     agg["week_of"] = week_of
@@ -124,8 +203,9 @@ def write_forecast_history(df: pd.DataFrame, run_date: datetime, horizon_weeks: 
         lambda v: v.date() if hasattr(v, "date") else v
     )
 
-    records = [
-        {
+    records = []
+    for _, row in agg.iterrows():
+        rec = {
             "unique_id":         row["unique_id"],
             "week_of":           week_of,
             "run_date":          run_date,
@@ -133,12 +213,20 @@ def write_forecast_history(df: pd.DataFrame, run_date: datetime, horizon_weeks: 
             "history_length":    row["history_length"],
             "horizon_weeks":     horizon_weeks,
             "yhat_total":        float(row["yhat_total"]),
-            "yhat_hi":           row["yhat_hi"],
-            "yhat_lo":           row["yhat_lo"],
             "forecast_end_date": row["forecast_end_date"],
         }
-        for _, row in agg.iterrows()
-    ]
+        for lvl in _PI_LEVELS:
+            rec[f"yhat_lo_{lvl}"] = row[f"yhat_lo_{lvl}"]
+            rec[f"yhat_hi_{lvl}"] = row[f"yhat_hi_{lvl}"]
+        records.append(rec)
+
+    _pi_insert_cols = ", ".join(f"yhat_lo_{l}, yhat_hi_{l}" for l in _PI_LEVELS)
+    _pi_insert_vals = ", ".join(f":yhat_lo_{l}, :yhat_hi_{l}" for l in _PI_LEVELS)
+    _pi_upsert = "\n".join(
+        f"                    yhat_lo_{l} = EXCLUDED.yhat_lo_{l},\n"
+        f"                    yhat_hi_{l} = EXCLUDED.yhat_hi_{l},"
+        for l in _PI_LEVELS
+    ).rstrip(",")
 
     engine = get_engine()
     with engine.begin() as conn:
@@ -147,22 +235,22 @@ def write_forecast_history(df: pd.DataFrame, run_date: datetime, horizon_weeks: 
             conn.execute(text(_HIST_MIGRATE_SQL))
         except Exception:
             pass  # column already TIMESTAMP or table just created
+        conn.execute(text(_HIST_MIGRATE_PI_SQL))
         conn.execute(
             text(f"""
                 INSERT INTO {_HIST_TABLE}
                     (unique_id, week_of, run_date, bucket, history_length,
-                     horizon_weeks, yhat_total, yhat_hi, yhat_lo, forecast_end_date)
+                     horizon_weeks, yhat_total, {_pi_insert_cols}, forecast_end_date)
                 VALUES
                     (:unique_id, :week_of, :run_date, :bucket, :history_length,
-                     :horizon_weeks, :yhat_total, :yhat_hi, :yhat_lo, :forecast_end_date)
+                     :horizon_weeks, :yhat_total, {_pi_insert_vals}, :forecast_end_date)
                 ON CONFLICT (unique_id, week_of) DO UPDATE SET
                     run_date          = EXCLUDED.run_date,
                     bucket            = EXCLUDED.bucket,
                     history_length    = EXCLUDED.history_length,
                     horizon_weeks     = EXCLUDED.horizon_weeks,
                     yhat_total        = EXCLUDED.yhat_total,
-                    yhat_hi           = EXCLUDED.yhat_hi,
-                    yhat_lo           = EXCLUDED.yhat_lo,
+{_pi_upsert},
                     forecast_end_date = EXCLUDED.forecast_end_date
             """),
             records,

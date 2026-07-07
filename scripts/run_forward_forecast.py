@@ -20,7 +20,7 @@ import pandas as pd
 from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
-from config import FREQUENCY, TEST_WEEKS, TRIM_TRAILING_WEEKS, USE_SEASONAL_ADJUSTMENT
+from config import FREQUENCY, TEST_WEEKS, TRIM_TRAILING_WEEKS, USE_SEASONAL_ADJUSTMENT, CONFORMAL_LEVELS
 from src.ingest import ingest
 from src.clean import clean
 from src.profile import profile
@@ -32,8 +32,7 @@ from src.deseasonalize import deseasonalize, reseasonalize
 from src.db import write_forward_forecasts, write_forecast_history
 from src.v1 import load_raw_for_v1, build_index, compute_v1_per_week
 
-FORWARD_WEEKS      = 13
-CONFORMAL_LEVEL    = 70
+FORWARD_WEEKS       = 13
 CONFORMAL_N_WINDOWS = 5
 
 
@@ -57,21 +56,25 @@ def _pick_yhat(fcast: pd.DataFrame, model_name: str) -> pd.Series:
     return fcast[avail[0]] if avail else pd.Series([np.nan] * len(fcast))
 
 
-def _pick_intervals(fcast: pd.DataFrame, model_name: str):
-    lo_suf = f"-lo-{CONFORMAL_LEVEL}"
-    hi_suf = f"-hi-{CONFORMAL_LEVEL}"
-    if model_name.startswith("Ensemble:"):
-        parts   = model_name.replace("Ensemble:", "").split("+")
-        lo_cols = [f"{p}{lo_suf}" for p in parts if f"{p}{lo_suf}" in fcast.columns]
-        hi_cols = [f"{p}{hi_suf}" for p in parts if f"{p}{hi_suf}" in fcast.columns]
-        lo = fcast[lo_cols].mean(axis=1) if lo_cols else pd.Series([np.nan] * len(fcast))
-        hi = fcast[hi_cols].mean(axis=1) if hi_cols else pd.Series([np.nan] * len(fcast))
-    else:
-        lo_col = f"{model_name}{lo_suf}"
-        hi_col = f"{model_name}{hi_suf}"
-        lo = fcast[lo_col] if lo_col in fcast.columns else pd.Series([np.nan] * len(fcast))
-        hi = fcast[hi_col] if hi_col in fcast.columns else pd.Series([np.nan] * len(fcast))
-    return lo.reset_index(drop=True), hi.reset_index(drop=True)
+def _pick_intervals(fcast: pd.DataFrame, model_name: str) -> dict[int, tuple]:
+    """Return {level: (lo_series, hi_series)} for all CONFORMAL_LEVELS."""
+    result = {}
+    for lvl in CONFORMAL_LEVELS:
+        lo_suf = f"-lo-{lvl}"
+        hi_suf = f"-hi-{lvl}"
+        if model_name.startswith("Ensemble:"):
+            parts   = model_name.replace("Ensemble:", "").split("+")
+            lo_cols = [f"{p}{lo_suf}" for p in parts if f"{p}{lo_suf}" in fcast.columns]
+            hi_cols = [f"{p}{hi_suf}" for p in parts if f"{p}{hi_suf}" in fcast.columns]
+            lo = fcast[lo_cols].mean(axis=1) if lo_cols else pd.Series([np.nan] * len(fcast))
+            hi = fcast[hi_cols].mean(axis=1) if hi_cols else pd.Series([np.nan] * len(fcast))
+        else:
+            lo_col = f"{model_name}{lo_suf}"
+            hi_col = f"{model_name}{hi_suf}"
+            lo = fcast[lo_col] if lo_col in fcast.columns else pd.Series([np.nan] * len(fcast))
+            hi = fcast[hi_col] if hi_col in fcast.columns else pd.Series([np.nan] * len(fcast))
+        result[lvl] = (lo.reset_index(drop=True), hi.reset_index(drop=True))
+    return result
 
 
 def refit_and_forecast(
@@ -125,7 +128,7 @@ def refit_and_forecast(
                 pi    = ConformalIntervals(h=horizon_weeks, n_windows=n_windows)
                 sf    = StatsForecast(models=models, freq=FREQUENCY, n_jobs=-1)
                 fcast = sf.forecast(df=fit_data, h=horizon_weeks,
-                                    level=[CONFORMAL_LEVEL], prediction_intervals=pi)
+                                    level=CONFORMAL_LEVELS, prediction_intervals=pi)
             else:
                 sf    = StatsForecast(models=models, freq=FREQUENCY, n_jobs=-1)
                 sf.fit(fit_data)
@@ -145,29 +148,26 @@ def refit_and_forecast(
                 # smooth/short SKUs may be mapped to "V1" — fall back to best available
                 preds = _pick_yhat(uid_fcast, model_name)
 
-                if use_pi:
-                    lo_s, hi_s = _pick_intervals(uid_fcast, model_name)
-                else:
-                    lo_s = pd.Series([np.nan] * len(uid_fcast))
-                    hi_s = pd.Series([np.nan] * len(uid_fcast))
+                _nan_series = pd.Series([np.nan] * len(uid_fcast))
+                intervals = _pick_intervals(uid_fcast, model_name) if use_pi else {
+                    lvl: (_nan_series, _nan_series) for lvl in CONFORMAL_LEVELS
+                }
 
-                for ds_val, yhat_val, lo_val, hi_val in zip(
-                    uid_fcast["ds"].values,
-                    preds.values,
-                    lo_s.values,
-                    hi_s.values,
-                ):
-                    rows.append({
+                for i, (ds_val, yhat_val) in enumerate(zip(uid_fcast["ds"].values, preds.values)):
+                    row = {
                         "unique_id":      uid,
                         "ds":             pd.Timestamp(ds_val),
                         "yhat":           max(0.0, float(yhat_val)) if pd.notna(yhat_val) else 0.0,
-                        "yhat_lo":        max(0.0, float(lo_val))  if pd.notna(lo_val)  else None,
-                        "yhat_hi":        max(0.0, float(hi_val))  if pd.notna(hi_val)  else None,
                         "bucket":         bucket,
                         "history_length": hist,
                         "selected_model": model_name,
                         "confidence":     conf_map.get(uid, "standard"),
-                    })
+                    }
+                    for lvl, (lo_s, hi_s) in intervals.items():
+                        lo_val, hi_val = lo_s.iloc[i], hi_s.iloc[i]
+                        row[f"yhat_lo_{lvl}"] = max(0.0, float(lo_val)) if pd.notna(lo_val) else None
+                        row[f"yhat_hi_{lvl}"] = max(0.0, float(hi_val)) if pd.notna(hi_val) else None
+                    rows.append(row)
 
     return pd.DataFrame(rows)
 

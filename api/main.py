@@ -19,7 +19,7 @@ from sqlalchemy import text
 from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
-from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS, TEST_WEEKS
+from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS, TEST_WEEKS, CONFORMAL_LEVELS
 from src.db import read_latest_forecast, read_actuals, read_segments, get_engine, get_global_start, _product_type_where
 from src.profile import _detect_ramp_up
 from src.models import get_models
@@ -37,7 +37,6 @@ def _parse_product_types(product_type: str) -> list[str] | None:
     pts = [p.strip() for p in product_type.split(",") if p.strip()]
     return pts if pts else None
 
-_CONFORMAL_LEVEL = 70
 _MAX_N_WINDOWS = 5
 
 app = FastAPI(title="Coverland Forecast API")
@@ -124,7 +123,7 @@ async def get_forecast(
         sf = StatsForecast(models=copy.deepcopy(candidates + baselines), freq=FREQUENCY, n_jobs=-1)
         if n_windows >= 2:
             pi = ConformalIntervals(h=effective_horizon, n_windows=n_windows)
-            fcast = sf.forecast(df=fit_data, h=effective_horizon, level=[_CONFORMAL_LEVEL], prediction_intervals=pi)
+            fcast = sf.forecast(df=fit_data, h=effective_horizon, level=CONFORMAL_LEVELS, prediction_intervals=pi)
         else:
             sf.fit(fit_data)
             fcast = sf.predict(h=effective_horizon)
@@ -139,10 +138,10 @@ async def get_forecast(
         has_pi_override = lo_s is not None
 
         forecast = pd.DataFrame({
-            "ds":             fcast["ds"],
-            "yhat":           yhat_s.clip(lower=0).round(),
-            "yhat_lo":        lo_s.clip(lower=0).round() if has_pi_override else pd.Series([None] * len(fcast)),
-            "yhat_hi":        hi_s.clip(lower=0).round() if has_pi_override else pd.Series([None] * len(fcast)),
+            "ds":         fcast["ds"],
+            "yhat":       yhat_s.clip(lower=0).round(),
+            "yhat_lo_70": lo_s.clip(lower=0).round() if has_pi_override else pd.Series([None] * len(fcast)),
+            "yhat_hi_70": hi_s.clip(lower=0).round() if has_pi_override else pd.Series([None] * len(fcast)),
             "bucket":         meta_bucket,
             "selected_model": resolved_model,
             "confidence":     confidence,
@@ -152,7 +151,7 @@ async def get_forecast(
 
     bucket     = meta_bucket
     model_used = stored_model
-    has_pi        = forecast["yhat_lo"].notna().any()
+    has_pi        = forecast["yhat_lo_70"].notna().any()
 
     fig = go.Figure()
 
@@ -171,26 +170,26 @@ async def get_forecast(
     if has_pi:
         fig.add_trace(go.Scatter(
             x=pd.concat([forecast["ds"], forecast["ds"].iloc[::-1]]),
-            y=pd.concat([forecast["yhat_hi"], forecast["yhat_lo"].iloc[::-1]]),
+            y=pd.concat([forecast["yhat_hi_70"], forecast["yhat_lo_70"].iloc[::-1]]),
             fill="toself",
             fillcolor="rgba(221, 132, 82, 0.18)",
             line=dict(color="rgba(0,0,0,0)"),
-            name="P70 interval",
+            name="70% interval",
             showlegend=True,
             hoverinfo="skip",
         ))
         # Invisible trace so unified hover shows the actual [lo, hi] interval
         fig.add_trace(go.Scatter(
             x=forecast["ds"],
-            y=forecast["yhat_hi"],
+            y=forecast["yhat_hi_70"],
             mode="none",
-            name="P70 interval",
+            name="70% interval",
             showlegend=False,
             customdata=list(zip(
-                forecast["yhat_lo"].round().astype(int),
-                forecast["yhat_hi"].round().astype(int),
+                forecast["yhat_lo_70"].round().astype(int),
+                forecast["yhat_hi_70"].round().astype(int),
             )),
-            hovertemplate="P70 interval: [%{customdata[0]}, %{customdata[1]}]<extra></extra>",
+            hovertemplate="70%% interval: [%{customdata[0]}, %{customdata[1]}]<extra></extra>",
         ))
 
     # ── Point forecast ────────────────────────────────────────────────────
@@ -245,7 +244,7 @@ async def get_forecast(
         },
         "forecastDates":  forecast["ds"].dt.strftime("%Y-%m-%d").tolist(),
         "forecastValues": forecast["yhat"].round().clip(lower=0).astype(int).tolist(),
-        "forecastUpper":  forecast["yhat_hi"].round().clip(lower=0).astype(int).tolist() if has_pi else None,
+        "forecastUpper":  forecast["yhat_hi_70"].round().clip(lower=0).astype(int).tolist() if has_pi else None,
     })
 
 
@@ -283,9 +282,9 @@ def _classify_sku(train: pd.DataFrame) -> tuple[str, str, pd.Timestamp]:
 def _pick_cols(
     fcast: pd.DataFrame, model_name: str
 ) -> tuple[pd.Series, pd.Series | None, pd.Series | None, str]:
-    """Extract (yhat, yhat_lo, yhat_hi, actual_model_name) for the given model."""
-    lo_suf = f"-lo-{_CONFORMAL_LEVEL}"
-    hi_suf = f"-hi-{_CONFORMAL_LEVEL}"
+    """Extract (yhat, yhat_lo_70, yhat_hi_70, actual_model_name) for the given model."""
+    lo_suf = "-lo-70"
+    hi_suf = "-hi-70"
     non_data = {"unique_id", "ds", "cutoff", "y"}
     data_cols = [
         c for c in fcast.columns
@@ -387,7 +386,7 @@ async def run_backtest(
     sf = StatsForecast(models=copy.deepcopy(all_model_list), freq=FREQUENCY, n_jobs=-1)
     if n_windows >= 1:
         pi = ConformalIntervals(h=horizon, n_windows=n_windows)
-        fcast = sf.forecast(df=fit_data, h=horizon, level=[_CONFORMAL_LEVEL], prediction_intervals=pi)
+        fcast = sf.forecast(df=fit_data, h=horizon, level=CONFORMAL_LEVELS, prediction_intervals=pi)
     else:
         sf.fit(fit_data)
         fcast = sf.predict(h=horizon)
@@ -411,11 +410,11 @@ async def run_backtest(
         ds_ts = pd.Timestamp(ds_val)
         actual = int(eval_lookup.get(ds_ts, 0)) if ds_ts <= today_ts else None
         predictions.append({
-            "ds": str(ds_ts.date()),
-            "yhat": max(0, round(float(yhat_v))) if pd.notna(yhat_v) else 0,
-            "yhat_lo": max(0, round(float(lo_v))) if lo_v is not None and pd.notna(lo_v) else None,
-            "yhat_hi": max(0, round(float(hi_v))) if hi_v is not None and pd.notna(hi_v) else None,
-            "actual": actual,
+            "ds":         str(ds_ts.date()),
+            "yhat":       max(0, round(float(yhat_v))) if pd.notna(yhat_v) else 0,
+            "yhat_lo_70": max(0, round(float(lo_v))) if lo_v is not None and pd.notna(lo_v) else None,
+            "yhat_hi_70": max(0, round(float(hi_v))) if hi_v is not None and pd.notna(hi_v) else None,
+            "actual":     actual,
         })
 
     actuals_context = [
@@ -425,7 +424,7 @@ async def run_backtest(
 
     # ── Metrics ───────────────────────────────────────────────────────────
     completed = [p for p in predictions if p["actual"] is not None]
-    pi_weeks = [p for p in completed if p["yhat_lo"] is not None]
+    pi_weeks = [p for p in completed if p["yhat_lo_70"] is not None]
 
     total_actual   = sum(p["actual"] for p in completed)
     total_yhat     = sum(p["yhat"]   for p in completed)
@@ -450,9 +449,9 @@ async def run_backtest(
         if (completed and mae_naive and mae_naive > 0) else None
     )
 
-    # P70 coverage (per-week — what fraction of individual weeks fell inside the band)
+    # Coverage: fraction of individual weeks where actual fell inside the level-70 band [P15, P85]
     coverage = (
-        round(sum(1 for p in pi_weeks if p["yhat_lo"] <= p["actual"] <= p["yhat_hi"]) / len(pi_weeks) * 100)
+        round(sum(1 for p in pi_weeks if p["yhat_lo_70"] <= p["actual"] <= p["yhat_hi_70"]) / len(pi_weeks) * 100)
         if pi_weeks else None
     )
 
@@ -697,7 +696,7 @@ def _run_segment_simulation(
     try:
         if n_windows >= 1:
             pi    = ConformalIntervals(h=horizon, n_windows=n_windows)
-            fcast = sf.forecast(df=fit_data, h=horizon, level=[_CONFORMAL_LEVEL], prediction_intervals=pi)
+            fcast = sf.forecast(df=fit_data, h=horizon, level=CONFORMAL_LEVELS, prediction_intervals=pi)
         else:
             sf.fit(fit_data)
             fcast = sf.predict(h=horizon)
@@ -1165,7 +1164,7 @@ async def get_segment_detail(
         sql = f"""
             WITH ranked AS (
                 SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
-                       f.yhat, f.yhat_lo, f.yhat_hi, f.confidence, f.v1_yhat
+                       f.yhat, f.yhat_lo_70, f.yhat_hi_70, f.confidence, f.v1_yhat
                 FROM {fcast_table} f
                 WHERE f.forecast_date = :eval_date
                   AND {where_backtest}
@@ -1173,10 +1172,10 @@ async def get_segment_detail(
             ),
             sku_agg AS (
                 SELECT unique_id, bucket, history_length, selected_model, confidence,
-                       SUM(ROUND(GREATEST(yhat, 0)))                                                                             AS yhat_total,
-                       SUM(CASE WHEN yhat_lo IS NOT NULL AND yhat_lo != 'NaN'::float8 THEN ROUND(GREATEST(yhat_lo, 0)) END) AS yhat_lo_total,
-                       SUM(CASE WHEN yhat_hi IS NOT NULL AND yhat_hi != 'NaN'::float8 THEN ROUND(GREATEST(yhat_hi, 0)) END) AS yhat_hi_total,
-                       SUM(CASE WHEN v1_yhat IS NOT NULL AND v1_yhat != 'NaN'::float8 THEN ROUND(GREATEST(v1_yhat, 0)) END) AS v1_yhat_total
+                       SUM(ROUND(GREATEST(yhat, 0)))                                                                                       AS yhat_total,
+                       SUM(CASE WHEN yhat_lo_70 IS NOT NULL AND yhat_lo_70 != 'NaN'::float8 THEN ROUND(GREATEST(yhat_lo_70, 0)) END) AS yhat_lo_total,
+                       SUM(CASE WHEN yhat_hi_70 IS NOT NULL AND yhat_hi_70 != 'NaN'::float8 THEN ROUND(GREATEST(yhat_hi_70, 0)) END) AS yhat_hi_total,
+                       SUM(CASE WHEN v1_yhat IS NOT NULL AND v1_yhat != 'NaN'::float8 THEN ROUND(GREATEST(v1_yhat, 0)) END)         AS v1_yhat_total
                 FROM ranked
                 GROUP BY unique_id, bucket, history_length, selected_model, confidence
             ),
@@ -1218,7 +1217,7 @@ async def get_segment_detail(
             ),
             ranked AS (
                 SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
-                       f.yhat, f.yhat_lo, f.yhat_hi, f.confidence,
+                       f.yhat, f.yhat_lo_70, f.yhat_hi_70, f.confidence,
                        ROW_NUMBER() OVER (PARTITION BY f.unique_id ORDER BY f.ds) AS week_num
                 FROM {fcast_table} f
                 INNER JOIN latest_dates ld
@@ -1228,9 +1227,9 @@ async def get_segment_detail(
             ),
             sku_agg AS (
                 SELECT unique_id, bucket, history_length, selected_model, confidence,
-                       SUM(ROUND(GREATEST(yhat, 0)))                                                                             FILTER (WHERE week_num <= :weeks) AS yhat_total,
-                       SUM(CASE WHEN yhat_lo IS NOT NULL AND yhat_lo != 'NaN'::float8 THEN ROUND(GREATEST(yhat_lo, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_lo_total,
-                       SUM(CASE WHEN yhat_hi IS NOT NULL AND yhat_hi != 'NaN'::float8 THEN ROUND(GREATEST(yhat_hi, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
+                       SUM(ROUND(GREATEST(yhat, 0)))                                                                                             FILTER (WHERE week_num <= :weeks) AS yhat_total,
+                       SUM(CASE WHEN yhat_lo_70 IS NOT NULL AND yhat_lo_70 != 'NaN'::float8 THEN ROUND(GREATEST(yhat_lo_70, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_lo_total,
+                       SUM(CASE WHEN yhat_hi_70 IS NOT NULL AND yhat_hi_70 != 'NaN'::float8 THEN ROUND(GREATEST(yhat_hi_70, 0)) END) FILTER (WHERE week_num <= :weeks) AS yhat_hi_total
                 FROM ranked
                 GROUP BY unique_id, bucket, history_length, selected_model, confidence
             ),
