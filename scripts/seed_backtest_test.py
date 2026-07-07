@@ -11,7 +11,7 @@ Run:  python scripts/seed_backtest_test.py
       python scripts/seed_backtest_test.py --ingest   # re-pull raw data first
 """
 
-import sys, time, copy, argparse
+import sys, time, copy, argparse, shutil, tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -221,56 +221,80 @@ def main():
     print(f"  {weekly['unique_id'].nunique():,} SKUs | {len(weekly):,} rows"
           f" | up to {weekly['ds'].max().date()}")
 
-    # ── Step 1b: Profile ──────────────────────────────────────────────────────
-    print("\n── Step 1b: Profile ────────────────────────────────────────────")
-    profiles = profile(weekly)
-    profiles["train_start"] = pd.to_datetime(profiles["train_start"])
+    # ── Snapshot shared artifact files ────────────────────────────────────────
+    # profile() / backtest() / select() below overwrite the shared local
+    # artifacts with as-of-cutoff versions. Without restoring them, the API
+    # (which reads sku_profiles.csv live for active_weeks / graduation) and any
+    # analysis on cv_results/selection silently use stale capped data until the
+    # next full pipeline run. Snapshot here, restore in `finally` (crash-safe).
+    artifacts = [
+        PROCESSED_DIR / "sku_profiles.csv",
+        OUTPUTS_REPORTS / "cv_results.parquet",
+        OUTPUTS_REPORTS / "test_set.parquet",
+        OUTPUTS_REPORTS / "selection.csv",
+        OUTPUTS_REPORTS / "cv_metrics.csv",
+    ]
+    backup_dir = Path(tempfile.mkdtemp(prefix="seed_artifact_backup_"))
+    backed_up = [p for p in artifacts if p.exists()]
+    for p in backed_up:
+        shutil.copy2(p, backup_dir / p.name)
 
-    # ── Step 2: Backtest (CV for model selection) ─────────────────────────────
-    print("\n── Step 2: Backtest (CV for model selection) ───────────────────")
-    backtest(weekly, profiles)
+    try:
+        # ── Step 1b: Profile ──────────────────────────────────────────────────
+        print("\n── Step 1b: Profile ────────────────────────────────────────────")
+        profiles = profile(weekly)
+        profiles["train_start"] = pd.to_datetime(profiles["train_start"])
 
-    # ── Step 3: Select ────────────────────────────────────────────────────────
-    print("\n── Step 3: Select ──────────────────────────────────────────────")
-    selection = select(weekly, profiles)
+        # ── Step 2: Backtest (CV for model selection) ─────────────────────────
+        print("\n── Step 2: Backtest (CV for model selection) ───────────────────")
+        backtest(weekly, profiles)
 
-    # ── Step 4: Refit on full data + forecast forward from cutoff ─────────────
-    print("\n── Step 4: Refit + forecast ─────────────────────────────────────")
-    print(f"  Horizon: {FORWARD_WEEKS} weeks ahead of {cutoff.date()}")
-    forecasts = refit_and_forecast(weekly, profiles, selection, cutoff)
-    print(f"  {len(forecasts):,} rows | {forecasts['unique_id'].nunique()} SKUs")
+        # ── Step 3: Select ────────────────────────────────────────────────────
+        print("\n── Step 3: Select ──────────────────────────────────────────────")
+        selection = select(weekly, profiles)
 
-    # ── Step 4b: V1 baseline ──────────────────────────────────────────────────
-    print("\n── Step 4b: Compute V1 baseline ────────────────────────────────")
-    v1_raw       = load_raw_for_v1()
-    v1_index     = build_index(v1_raw)
-    smooth_ids   = forecasts["unique_id"].unique().tolist()
-    v1_map       = compute_v1_per_week(smooth_ids, cutoff, FORWARD_WEEKS, v1_index)
-    forecasts["v1_yhat"] = forecasts["unique_id"].map(v1_map)
-    print(f"  V1 computed for {len(v1_map)} SKUs")
+        # ── Step 4: Refit on full data + forecast forward from cutoff ─────────
+        print("\n── Step 4: Refit + forecast ─────────────────────────────────────")
+        print(f"  Horizon: {FORWARD_WEEKS} weeks ahead of {cutoff.date()}")
+        forecasts = refit_and_forecast(weekly, profiles, selection, cutoff)
+        print(f"  {len(forecasts):,} rows | {forecasts['unique_id'].nunique()} SKUs")
 
-    # ── Step 5: Write to test table ───────────────────────────────────────────
-    print("\n── Step 5: Write to fc_forward_forecasts_test ──────────────────")
-    forecasts["forecast_date"] = cutoff.date()
-    write_test_forecasts(forecasts, cutoff.date())
-    print(f"  Inserted {len(forecasts):,} rows  (forecast_date={cutoff.date()})")
+        # ── Step 4b: V1 baseline ──────────────────────────────────────────────
+        print("\n── Step 4b: Compute V1 baseline ────────────────────────────────")
+        v1_raw       = load_raw_for_v1()
+        v1_index     = build_index(v1_raw)
+        smooth_ids   = forecasts["unique_id"].unique().tolist()
+        v1_map       = compute_v1_per_week(smooth_ids, cutoff, FORWARD_WEEKS, v1_index)
+        forecasts["v1_yhat"] = forecasts["unique_id"].map(v1_map)
+        print(f"  V1 computed for {len(v1_map)} SKUs")
 
-    # ── Verify ────────────────────────────────────────────────────────────────
-    engine = get_engine()
-    with engine.connect() as conn:
-        check = conn.execute(text("""
-            SELECT forecast_date, MIN(ds) AS h_start, MAX(ds) AS h_end,
-                   COUNT(DISTINCT ds) AS weeks, COUNT(DISTINCT unique_id) AS skus,
-                   COUNT(v1_yhat) AS v1_rows
-            FROM shipcore.fc_forward_forecasts_test
-            GROUP BY forecast_date ORDER BY forecast_date
-        """)).fetchall()
+        # ── Step 5: Write to test table ───────────────────────────────────────
+        print("\n── Step 5: Write to fc_forward_forecasts_test ──────────────────")
+        forecasts["forecast_date"] = cutoff.date()
+        write_test_forecasts(forecasts, cutoff.date())
+        print(f"  Inserted {len(forecasts):,} rows  (forecast_date={cutoff.date()})")
 
-    print("\n── Result ──────────────────────────────────────────────────────")
-    for r in check:
-        print(f"  {r[0]}  {r[1]} → {r[2]}  ({r[3]}W, {r[4]} SKUs, {r[5]} V1 values)")
-    eligible = sum(1 for r in check if pd.Timestamp(str(r[2])) <= last_monday)
-    print(f"  Cycles visible in /backtest-cycles: {eligible}")
+        # ── Verify ────────────────────────────────────────────────────────────
+        engine = get_engine()
+        with engine.connect() as conn:
+            check = conn.execute(text("""
+                SELECT forecast_date, MIN(ds) AS h_start, MAX(ds) AS h_end,
+                       COUNT(DISTINCT ds) AS weeks, COUNT(DISTINCT unique_id) AS skus,
+                       COUNT(v1_yhat) AS v1_rows
+                FROM shipcore.fc_forward_forecasts_test
+                GROUP BY forecast_date ORDER BY forecast_date
+            """)).fetchall()
+
+        print("\n── Result ──────────────────────────────────────────────────────")
+        for r in check:
+            print(f"  {r[0]}  {r[1]} → {r[2]}  ({r[3]}W, {r[4]} SKUs, {r[5]} V1 values)")
+        eligible = sum(1 for r in check if pd.Timestamp(str(r[2])) <= last_monday)
+        print(f"  Cycles visible in /backtest-cycles: {eligible}")
+    finally:
+        for p in backed_up:
+            shutil.copy2(backup_dir / p.name, p)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        print(f"\n  Restored {len(backed_up)} shared artifact file(s) (full-data versions preserved)")
 
 
 if __name__ == "__main__":
