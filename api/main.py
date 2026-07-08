@@ -1035,6 +1035,101 @@ async def get_backtest_cycles(test: bool = Query(default=False)):
     ])
 
 
+@app.get("/accuracy-history")
+async def get_accuracy_history(
+    product_type: str = Query(default="All", description="Comma-separated product types, or 'All'"),
+):
+    """Pooled WAPE per stored forecast run, evaluated over the first K completed
+    weeks of each run's horizon — for every K at once, so the client can switch
+    the window without refetching. One run per training week (enforced at write).
+    """
+    product_types = _parse_product_types(product_type)
+    pt_fcast = _product_type_where("f.unique_id", product_types)
+    pt_snap  = _product_type_where("v.link_master_sku", product_types)
+
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_complete = today - pd.Timedelta(days=days_back)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        fdf = pd.read_sql(text(f"""
+            SELECT f.forecast_date, f.unique_id, f.history_length, f.ds, f.yhat, f.v1_yhat
+            FROM shipcore.fc_forward_forecasts f
+            WHERE f.bucket = 'smooth'
+              AND f.ds <= :last_complete
+              AND {pt_fcast}
+        """), conn, params={"last_complete": last_complete.date()}, parse_dates=["ds"])
+
+        if fdf.empty:
+            return JSONResponse({"last_complete_week": str(last_complete.date()), "series": []})
+
+        # Weekly actuals labeled by W-MON convention: each week is labeled by the
+        # Monday it ends on, so an order maps to the first Monday >= order_date.
+        adf = pd.read_sql(text(f"""
+            SELECT
+                v.link_master_sku AS unique_id,
+                (v.order_date + ((8 - EXTRACT(ISODOW FROM v.order_date))::int % 7) * INTERVAL '1 day')::date AS ds,
+                SUM(v.link_qty) AS y
+            FROM shipcore.fc_velocity_link_snapshot_forecast v
+            WHERE v.order_date > :from_date
+              AND {pt_snap}
+            GROUP BY 1, 2
+        """), conn, params={"from_date": (fdf["ds"].min() - pd.Timedelta(days=7)).date()}, parse_dates=["ds"])
+
+    merged = fdf.merge(adf, on=["unique_id", "ds"], how="left")
+    merged["y"] = merged["y"].fillna(0).astype(float)
+    merged["yhat"] = merged["yhat"].clip(lower=0)
+    merged["v1_yhat"] = merged["v1_yhat"].clip(lower=0)  # NaN stays NaN
+    merged["segment"] = np.where(merged["history_length"] == "short", "smooth_short", "smooth_full")
+
+    merged = merged.sort_values(["forecast_date", "unique_id", "ds"])
+    grp = merged.groupby(["forecast_date", "unique_id"])
+    merged["week_index"] = grp.cumcount() + 1
+    merged["yhat_cum"] = grp["yhat"].cumsum()
+    merged["y_cum"]    = grp["y"].cumsum()
+    merged["v1_cum"]   = grp["v1_yhat"].cumsum()
+
+    horizon_starts = merged.groupby("forecast_date")["ds"].min()
+
+    def _wape(abs_err: float, demand: float) -> float | None:
+        return round(abs_err / demand, 4) if demand > 0 else None
+
+    series = []
+    for (fd, k), snap in merged.groupby(["forecast_date", "week_index"]):
+        for seg in ("all", "smooth_full", "smooth_short"):
+            sub = snap if seg == "all" else snap[snap["segment"] == seg]
+            if sub.empty:
+                continue
+            demand = float(sub["y_cum"].sum())
+            model_err = float((sub["yhat_cum"] - sub["y_cum"]).abs().sum())
+
+            v1_sub = sub[sub["v1_cum"].notna()]
+            demand_v1 = float(v1_sub["y_cum"].sum())
+            model_err_v1 = float((v1_sub["yhat_cum"] - v1_sub["y_cum"]).abs().sum())
+            v1_err = float((v1_sub["v1_cum"] - v1_sub["y_cum"]).abs().sum())
+
+            series.append({
+                "forecast_date":  str(pd.Timestamp(fd).date()),
+                "horizon_start":  str(horizon_starts[fd].date()),
+                "segment":        seg,
+                "k":              int(k),
+                "n_skus":         int(sub["unique_id"].nunique()),
+                "demand_total":   round(demand),
+                "model_wape":     _wape(model_err, demand),
+                "n_v1":           int(v1_sub["unique_id"].nunique()),
+                "demand_total_v1": round(demand_v1),
+                "model_wape_v1":  _wape(model_err_v1, demand_v1),
+                "v1_wape":        _wape(v1_err, demand_v1),
+            })
+
+    series.sort(key=lambda r: (r["horizon_start"], r["segment"], r["k"]))
+    return JSONResponse({
+        "last_complete_week": str(last_complete.date()),
+        "series": series,
+    })
+
+
 @app.get("/segments")
 async def get_segments(
     weeks: int = Query(default=10, ge=1, le=52, description="Number of completed weeks to sum demand over"),
@@ -1141,10 +1236,10 @@ async def get_segment_detail(
 
     if segment == "smooth_full":
         where_forward  = "f.bucket = 'smooth' AND f.history_length IN ('full', 'medium')"
-        where_backtest = "f.bucket = 'smooth'"   # re-classify by active_weeks in Python
+        where_backtest = "f.bucket = 'smooth' AND f.history_length IN ('full', 'medium')"
     elif segment == "smooth_short":
         where_forward  = "f.bucket = 'smooth' AND f.history_length = 'short'"
-        where_backtest = "f.bucket = 'smooth'"   # re-classify by active_weeks in Python
+        where_backtest = "f.bucket = 'smooth' AND f.history_length = 'short'"
     else:
         raise HTTPException(status_code=400, detail=f"Unknown segment '{segment}'")
 
@@ -1181,11 +1276,11 @@ async def get_segment_detail(
         horizon_start, horizon_end, horizon_weeks = horizon[0], horizon[1], int(horizon[2])
 
         # Evaluate this run's predictions against actual demand in the same weeks.
-        # Fetch all smooth SKUs; segment membership is re-derived in Python by active_weeks_at_eval.
+        # Segment membership comes from history_length stored in the table at seed time.
         sql = f"""
             WITH ranked AS (
                 SELECT f.unique_id, f.bucket, f.history_length, f.selected_model,
-                       f.yhat, f.{lo_col}, f.{hi_col}, f.confidence, f.v1_yhat
+                       f.yhat, f.{lo_col}, f.{hi_col}, f.confidence, f.active_weeks, f.v1_yhat
                 FROM {fcast_table} f
                 WHERE f.forecast_date = :eval_date
                   AND {where_backtest}
@@ -1193,6 +1288,7 @@ async def get_segment_detail(
             ),
             sku_agg AS (
                 SELECT unique_id, bucket, history_length, selected_model, confidence,
+                       MAX(active_weeks)                                                                                                           AS active_weeks,
                        SUM(ROUND(GREATEST(yhat, 0)))                                                                                             AS yhat_total,
                        SUM(CASE WHEN {lo_col} IS NOT NULL AND {lo_col} != 'NaN'::float8 THEN ROUND(GREATEST({lo_col}, 0)) END) AS yhat_lo_total,
                        SUM(CASE WHEN {hi_col} IS NOT NULL AND {hi_col} != 'NaN'::float8 THEN ROUND(GREATEST({hi_col}, 0)) END) AS yhat_hi_total,
@@ -1203,7 +1299,7 @@ async def get_segment_detail(
             demand AS (
                 SELECT link_master_sku, SUM(link_qty) AS demand_total
                 FROM shipcore.fc_velocity_link_snapshot_forecast
-                WHERE order_date >= :horizon_start
+                WHERE order_date > :eval_date
                   AND order_date <= :horizon_end
                   AND {pt_snap}
                 GROUP BY link_master_sku
@@ -1213,7 +1309,8 @@ async def get_segment_detail(
                    CASE WHEN a.yhat_lo_total IS NOT NULL THEN a.yhat_lo_total::int END      AS yhat_lo_total,
                    CASE WHEN a.yhat_hi_total IS NOT NULL THEN a.yhat_hi_total::int END      AS yhat_hi_total,
                    COALESCE(d.demand_total, 0)                                                 AS demand_total,
-                   a.v1_yhat_total::int                                                     AS v1_yhat_total
+                   a.v1_yhat_total::int                                                     AS v1_yhat_total,
+                   a.active_weeks::int                                                      AS active_weeks
             FROM sku_agg a
             LEFT JOIN demand d ON d.link_master_sku = a.unique_id
             ORDER BY a.yhat_total DESC NULLS LAST
@@ -1278,40 +1375,28 @@ async def get_segment_detail(
         rows = conn.execute(text(sql), params).fetchall()
 
     SHORT_THRESHOLD = 50   # keep in sync with src/profile.py SHORT_HISTORY_WEEKS
-    MIN_HISTORY_WEEKS = 20
 
-    # active_weeks: always derived from sku_profiles.csv train_start (same pipeline/zero-filled data).
-    # In backtest mode for any smooth segment, measure train_start → eval_date to get history
-    # available at forecast time. This re-derives segment membership retroactively, overriding
-    # whatever history_length was stored in the DB at eval_date.
+    # active_weeks: derived from sku_profiles.csv. In backtest mode, measure train_start → eval_date
+    # so the displayed aw reflects history available at forecast time (not today's aw).
+    # Segment filtering is done in SQL via history_length stored at seed time — not re-derived here.
     profiles_path = ROOT / "data" / "processed" / "sku_profiles.csv"
     active_weeks_map: dict[str, int] = {}
     current_bucket_map: dict[str, str] = {}  # uid → current bucket, used to drop stale DB rows
     if profiles_path.exists():
-        if mode == "backtest" and segment in ("smooth_full", "smooth_short"):
-            prof = pd.read_csv(profiles_path, usecols=["unique_id", "train_start"])
-            eval_dt = pd.Timestamp(eval_date)
-            for _, row in prof.iterrows():
-                ts = pd.Timestamp(row["train_start"])
-                active_weeks_map[row["unique_id"]] = max(0, (eval_dt - ts).days // 7)
-        else:
-            prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks", "bucket"])
-            active_weeks_map = dict(zip(prof["unique_id"], prof["active_weeks"].astype(int)))
-            current_bucket_map = dict(zip(prof["unique_id"], prof["bucket"]))
+        prof = pd.read_csv(profiles_path, usecols=["unique_id", "active_weeks", "bucket"])
+        active_weeks_map = dict(zip(prof["unique_id"], prof["active_weeks"].astype(int)))
+        current_bucket_map = dict(zip(prof["unique_id"], prof["bucket"]))
 
     skus = []
     for r in rows:
         uid = r[0]
-        aw = active_weeks_map.get(uid)
-        if mode == "backtest" and segment in ("smooth_full", "smooth_short"):
-            # Re-classify by active_weeks at eval_date, ignoring history_length stored in DB.
-            if aw is None or aw < MIN_HISTORY_WEEKS:
-                continue  # too little history at eval_date — exclude entirely
-            if segment == "smooth_full" and aw < SHORT_THRESHOLD:
-                continue  # was short at eval_date — belongs in smooth_short
-            if segment == "smooth_short" and aw >= SHORT_THRESHOLD:
-                continue  # was full at eval_date — belongs in smooth_full
-        elif mode == "forward" and segment in ("smooth_full", "smooth_short") and current_bucket_map:
+        # In backtest mode the DB now stores active_weeks at run time (r[10]).
+        # Use it when available; fall back to current-profiles for rows written before this column existed.
+        if mode == "backtest":
+            aw = int(r[10]) if len(r) > 10 and r[10] is not None else active_weeks_map.get(uid)
+        else:
+            aw = active_weeks_map.get(uid)
+        if mode == "forward" and segment in ("smooth_full", "smooth_short") and current_bucket_map:
             # Drop stale DB rows for SKUs reclassified since the last run.
             # If a SKU was reclassified to intermittent/low_volume, the pipeline
             # writes no new forecast — old smooth rows stay as "latest" in the DB.
