@@ -2,7 +2,7 @@
 
 Ported from scripts/compare_v1.py for use in the live pipeline.
 Computes a total forecast for a given horizon in days, from the DB
-snapshot (fc_velocity_link_snapshot with order_type and channel).
+snapshot (fc_velocity_link_snapshot_forecast with order_type and channel).
 """
 import calendar
 import os
@@ -59,7 +59,7 @@ def load_raw_for_v1() -> pd.DataFrame:
     with engine.connect() as conn:
         raw = pd.read_sql(text("""
             SELECT order_date, link_master_sku AS unique_id, link_qty, channel, order_type
-            FROM shipcore.fc_velocity_link_snapshot
+            FROM shipcore.fc_velocity_link_snapshot_forecast
         """), conn, parse_dates=["order_date"])
     raw["order_date"] = pd.to_datetime(raw["order_date"]).dt.normalize()
     return raw
