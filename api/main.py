@@ -1116,9 +1116,11 @@ async def get_accuracy_history(
                 "k":              int(k),
                 "n_skus":         int(sub["unique_id"].nunique()),
                 "demand_total":   round(demand),
+                "model_total":    round(float(sub["yhat_cum"].sum())),
                 "model_wape":     _wape(model_err, demand),
                 "n_v1":           int(v1_sub["unique_id"].nunique()),
                 "demand_total_v1": round(demand_v1),
+                "v1_total":       round(float(v1_sub["v1_cum"].sum())),
                 "model_wape_v1":  _wape(model_err_v1, demand_v1),
                 "v1_wape":        _wape(v1_err, demand_v1),
             })
