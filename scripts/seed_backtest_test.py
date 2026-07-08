@@ -88,6 +88,7 @@ def refit_and_forecast(weekly, profiles, selection, cutoff, horizon_weeks=FORWAR
 
     sel_map  = selection.set_index("unique_id")["model"].to_dict()
     conf_map = selection.set_index("unique_id")["forecast_confidence"].to_dict()
+    aw_map   = profiles.set_index("unique_id")["active_weeks"].to_dict()
     rows = []
 
     for bucket in ("smooth", "low_volume"):
@@ -150,6 +151,7 @@ def refit_and_forecast(weekly, profiles, selection, cutoff, horizon_weeks=FORWAR
                         "history_length": hist,
                         "selected_model": model_name,
                         "confidence":     conf_map.get(uid, "standard"),
+                        "active_weeks":   aw_map.get(uid),
                     }
                     for lvl, (lo_s, hi_s) in intervals.items():
                         lo_val, hi_val = lo_s.iloc[i], hi_s.iloc[i]
@@ -184,6 +186,7 @@ def write_test_forecasts(df: pd.DataFrame, forecast_date) -> None:
                 history_length TEXT,
                 selected_model TEXT,
                 confidence     TEXT,
+                active_weeks   INTEGER,
                 v1_yhat        DOUBLE PRECISION
             );
         """))
@@ -195,12 +198,12 @@ def write_test_forecasts(df: pd.DataFrame, forecast_date) -> None:
                     (unique_id, forecast_date, ds, yhat,
                      yhat_lo_40, yhat_hi_40, yhat_lo_60, yhat_hi_60, yhat_lo_70, yhat_hi_70,
                      yhat_lo_80, yhat_hi_80, yhat_lo_90, yhat_hi_90,
-                     bucket, history_length, selected_model, confidence, v1_yhat)
+                     bucket, history_length, selected_model, confidence, active_weeks, v1_yhat)
                 VALUES
                     (:unique_id, :forecast_date, :ds, :yhat,
                      :yhat_lo_40, :yhat_hi_40, :yhat_lo_60, :yhat_hi_60, :yhat_lo_70, :yhat_hi_70,
                      :yhat_lo_80, :yhat_hi_80, :yhat_lo_90, :yhat_hi_90,
-                     :bucket, :history_length, :selected_model, :confidence, :v1_yhat)
+                     :bucket, :history_length, :selected_model, :confidence, :active_weeks, :v1_yhat)
             """), records[i:i + CHUNK])
 
 
