@@ -5,7 +5,12 @@ from urllib.parse import quote_plus
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
+from config import ROUTE_SHORT_SMOOTH_TO_V1
+
 load_dotenv()
+
+# Method shown for smooth/short SKUs — follows the actual routing in selector.py
+_SHORT_METHOD = "V1" if ROUTE_SHORT_SMOOTH_TO_V1 else "WindowAverage"
 
 _TABLE = "shipcore.fc_forward_forecasts"
 _HIST_TABLE = "shipcore.fc_forecast_history"
@@ -395,7 +400,7 @@ def read_segments(weeks: int = 10, product_types: list[str] | None = None) -> di
 
     _DEFS = [
         ("smooth_full",  "Smooth",              "StatsForecast"),
-        ("smooth_short", "Smooth / Short history", "V1"),
+        ("smooth_short", "Smooth / Short history", _SHORT_METHOD),
         ("intermittent", "Intermittent",         "Restock policy"),
     ]
 
