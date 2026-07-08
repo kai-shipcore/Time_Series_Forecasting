@@ -24,9 +24,11 @@ PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 CV_PATH = OUTPUTS_REPORTS / "cv_results.parquet"
 TEST_PATH = OUTPUTS_REPORTS / "test_set.parquet"
 
-# Only smooth/full goes through StatsForecast CV.
-# smooth/medium (short history) uses V1; intermittent/low_volume use restock policy.
-_CV_GROUPS = [("smooth", "full", N_CV_SPLITS)]
+# n_windows per history length — "short" has no CV
+_HIST_WINDOWS = {
+    "full":   N_CV_SPLITS,  # 6 windows × 10 weeks — test spans Jan 2025 → Mar 2026; Q4 is 2/6 not 3/4
+    "medium": 3,            # 3 windows; medium SKUs have 52–104 active weeks, min_len=31 so all qualify
+}
 
 
 def _trim_to_train_start(df: pd.DataFrame, profiles: pd.DataFrame) -> pd.DataFrame:
@@ -67,11 +69,12 @@ def backtest(weekly: pd.DataFrame, profiles: pd.DataFrame) -> tuple[pd.DataFrame
     # ── 3. CV per bucket × history_length ─────────────────────────────────────
     cv_parts = []
 
-    for bucket, hist, n_windows in _CV_GROUPS:
-        skus = profiles.loc[
-            (profiles["bucket"] == bucket) & (profiles["history_length"] == hist),
-            "unique_id",
-        ].tolist()
+    for bucket in ("smooth", "low_volume", "intermittent"):
+        for hist, n_windows in _HIST_WINDOWS.items():
+            skus = profiles.loc[
+                (profiles["bucket"] == bucket) & (profiles["history_length"] == hist),
+                "unique_id",
+            ].tolist()
 
             if not skus:
                 continue
