@@ -128,6 +128,16 @@ def backtest(weekly: pd.DataFrame, profiles: pd.DataFrame) -> tuple[pd.DataFrame
             print(f"    → {len(cv):,} rows in {time.time() - t0:.1f}s")
 
     # ── 4. Save and return ────────────────────────────────────────────────────
+    if not cv_parts:
+        train_weeks = len(trimmed_weeks) - TEST_WEEKS
+        min_medium = _min_length(3, TEST_WEEKS)
+        min_full   = _min_length(N_CV_SPLITS, TEST_WEEKS)
+        raise RuntimeError(
+            f"No SKUs qualified for cross-validation. "
+            f"Train data has only {train_weeks} weeks, but medium-history SKUs need "
+            f"≥{min_medium} weeks and full-history SKUs need ≥{min_full} weeks. "
+            f"Extend the historical data window in the source DB."
+        )
     cv_df = pd.concat(cv_parts, ignore_index=True)
 
     OUTPUTS_REPORTS.mkdir(parents=True, exist_ok=True)

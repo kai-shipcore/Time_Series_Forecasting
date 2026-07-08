@@ -12,7 +12,7 @@ _QUERY = """
         order_date,
         link_master_sku,
         link_qty
-    FROM shipcore.fc_velocity_link_snapshot
+    FROM shipcore.fc_velocity_link_snapshot_forecast
 """
 
 

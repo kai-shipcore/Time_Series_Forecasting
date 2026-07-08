@@ -343,14 +343,14 @@ def read_segments(weeks: int = 10, product_types: list[str] | None = None) -> di
         # All SKUs ever seen — so dormant SKUs (no recent sales) still count
         all_skus_df = pd.read_sql(text(f"""
             SELECT DISTINCT link_master_sku
-            FROM shipcore.fc_velocity_link_snapshot
+            FROM shipcore.fc_velocity_link_snapshot_forecast
             WHERE {pt_snap}
         """), conn)
 
         # Demand per SKU for the last N complete weeks
         demand_df = pd.read_sql(text(f"""
             SELECT link_master_sku, SUM(link_qty) AS demand
-            FROM shipcore.fc_velocity_link_snapshot
+            FROM shipcore.fc_velocity_link_snapshot_forecast
             WHERE order_date > :start
               AND {pt_snap}
             GROUP BY link_master_sku
@@ -443,7 +443,7 @@ def get_global_start() -> str:
     if _GLOBAL_START is None:
         engine = get_engine()
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT MIN(order_date) FROM shipcore.fc_velocity_link_snapshot"))
+            result = conn.execute(text("SELECT MIN(order_date) FROM shipcore.fc_velocity_link_snapshot_forecast"))
             row = result.scalar()
         _GLOBAL_START = str(row) if row else "2024-06-17"
     return _GLOBAL_START
@@ -466,14 +466,14 @@ def read_actuals(
         fetch_from = (pd.Timestamp(fetch_anchor) - pd.Timedelta(days=6)).strftime("%Y-%m-%d")
         query = """
             SELECT order_date, link_qty
-            FROM shipcore.fc_velocity_link_snapshot
+            FROM shipcore.fc_velocity_link_snapshot_forecast
             WHERE link_master_sku = :uid AND order_date >= :fetch_from
         """
         params: dict = {"uid": sku_id, "fetch_from": fetch_from}
     else:
         query = """
             SELECT order_date, link_qty
-            FROM shipcore.fc_velocity_link_snapshot
+            FROM shipcore.fc_velocity_link_snapshot_forecast
             WHERE link_master_sku = :uid
         """
         params = {"uid": sku_id}

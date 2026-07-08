@@ -558,7 +558,7 @@ def _run_segment_simulation(
             SELECT link_master_sku AS unique_id,
                    DATE_TRUNC('week', order_date::timestamp)::date AS ds,
                    SUM(link_qty) AS y
-            FROM shipcore.fc_velocity_link_snapshot
+            FROM shipcore.fc_velocity_link_snapshot_forecast
             WHERE link_master_sku IN :uids
               AND {pt_clause}
             GROUP BY link_master_sku, DATE_TRUNC('week', order_date::timestamp)::date
@@ -943,7 +943,7 @@ async def get_segmentation():
         GROUP BY bucket, history_length
         ORDER BY bucket, history_length
     """
-    sql_total = "SELECT COUNT(DISTINCT link_master_sku) AS total FROM shipcore.fc_velocity_link_snapshot"
+    sql_total = "SELECT COUNT(DISTINCT link_master_sku) AS total FROM shipcore.fc_velocity_link_snapshot_forecast"
     with engine.connect() as conn:
         rows = conn.execute(text(sql_segments)).fetchall()
         total_skus = int(conn.execute(text(sql_total)).scalar() or 0)
@@ -1067,7 +1067,7 @@ async def _segment_detail_intermittent(weeks: int, product_types: list[str] | No
                 v.link_master_sku                                        AS unique_id,
                 DATE_TRUNC('week', v.order_date::timestamp)::date        AS week_start,
                 SUM(v.link_qty)                                          AS week_qty
-            FROM shipcore.fc_velocity_link_snapshot v
+            FROM shipcore.fc_velocity_link_snapshot_forecast v
             WHERE v.link_master_sku NOT IN (SELECT unique_id FROM smooth_skus)
               AND {pt_filter}
             GROUP BY v.link_master_sku, DATE_TRUNC('week', v.order_date::timestamp)::date
@@ -1202,7 +1202,7 @@ async def get_segment_detail(
             ),
             demand AS (
                 SELECT link_master_sku, SUM(link_qty) AS demand_total
-                FROM shipcore.fc_velocity_link_snapshot
+                FROM shipcore.fc_velocity_link_snapshot_forecast
                 WHERE order_date >= :horizon_start
                   AND order_date <= :horizon_end
                   AND {pt_snap}
@@ -1256,7 +1256,7 @@ async def get_segment_detail(
             ),
             demand AS (
                 SELECT link_master_sku, SUM(link_qty) AS demand_total
-                FROM shipcore.fc_velocity_link_snapshot
+                FROM shipcore.fc_velocity_link_snapshot_forecast
                 WHERE order_date > :demand_start
                   AND order_date <= :demand_end
                   AND {pt_snap}
