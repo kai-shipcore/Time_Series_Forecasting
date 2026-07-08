@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     history_length TEXT,
     selected_model TEXT,
     confidence     TEXT,
+    active_weeks   INTEGER,
     v1_yhat        FLOAT,
     PRIMARY KEY (unique_id, forecast_date, ds)
 )
@@ -143,6 +144,9 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                    WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='yhat_hi_90')
     THEN ALTER TABLE {_TABLE} ADD COLUMN yhat_hi_90 FLOAT; END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='shipcore' AND table_name='fc_forward_forecasts' AND column_name='active_weeks')
+    THEN ALTER TABLE {_TABLE} ADD COLUMN active_weeks INTEGER; END IF;
 END $$;
 """
 
@@ -170,15 +174,27 @@ def get_engine():
 
 
 def write_forward_forecasts(df: pd.DataFrame) -> None:
-    """Create table if needed, migrate PI columns, delete today's rows, insert fresh results."""
+    """Create table if needed, migrate PI columns, insert fresh results.
+
+    Replaces any prior run with the same horizon start: training always cuts at
+    the last complete Monday, so runs within the same week produce identical
+    forecasts and only the latest one is kept.
+    """
     engine = get_engine()
-    forecast_date = str(df["forecast_date"].iloc[0])
+    horizon_start = str(pd.Timestamp(df["ds"].min()).date())
     with engine.begin() as conn:
         conn.execute(text(_CREATE_SQL))
         conn.execute(text(_MIGRATE_PI_SQL))
         conn.execute(
-            text(f"DELETE FROM {_TABLE} WHERE forecast_date = :fd"),
-            {"fd": forecast_date},
+            text(f"""
+                DELETE FROM {_TABLE}
+                WHERE forecast_date IN (
+                    SELECT forecast_date FROM {_TABLE}
+                    GROUP BY forecast_date
+                    HAVING MIN(ds) = :hs
+                )
+            """),
+            {"hs": horizon_start},
         )
         df.to_sql(
             "fc_forward_forecasts",
