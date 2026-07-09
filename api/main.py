@@ -1158,7 +1158,7 @@ async def get_demand_trend(
     with engine.connect() as conn:
         fdf = pd.read_sql(text(f"""
             SELECT f.forecast_date, f.unique_id, f.history_length, f.ds, f.yhat,
-                   f.yhat_lo_70 AS lo, f.yhat_hi_70 AS hi
+                   f.yhat_lo_70 AS lo, f.yhat_hi_70 AS hi, f.v1_yhat
             FROM shipcore.fc_forward_forecasts f
             WHERE f.bucket = 'smooth' AND {pt_fcast}
         """), conn, parse_dates=["ds"])
@@ -1192,6 +1192,7 @@ async def get_demand_trend(
     fdf = fdf[fdf["unique_id"].isin(seg_map.index)].copy()
     fdf["segment"] = fdf["unique_id"].map(seg_map)
     fdf["yhat"] = fdf["yhat"].clip(lower=0)
+    fdf["v1_yhat"] = fdf["v1_yhat"].clip(lower=0)  # NaN stays NaN
     horizon_start = fdf.groupby("forecast_date")["ds"].transform("min")
     fdf["lead"] = ((fdf["ds"] - horizon_start).dt.days // 7) + 1
 
@@ -1206,21 +1207,32 @@ async def get_demand_trend(
 
         f_sub = fdf if seg == "all" else fdf[fdf["segment"] == seg]
         # One run per training week, so (ds, lead) maps to exactly one forecast_date
-        past = f_sub[f_sub["ds"] <= last_complete].groupby(["ds", "lead", "forecast_date"])["yhat"].sum()
-        for (ds_, lead, fd), v in past.items():
+        past = (
+            f_sub[f_sub["ds"] <= last_complete]
+            .groupby(["ds", "lead", "forecast_date"])
+            .agg(yhat=("yhat", "sum"), v1=("v1_yhat", lambda s: s.sum(min_count=1)))
+        )
+        for (ds_, lead, fd), row in past.iterrows():
             predicted.append({
                 "week": str(ds_.date()), "lead": int(lead), "segment": seg,
-                "yhat": round(float(v)), "run_date": str(pd.Timestamp(fd).date()),
+                "yhat": round(float(row["yhat"])),
+                "v1": round(float(row["v1"])) if pd.notna(row["v1"]) else None,
+                "run_date": str(pd.Timestamp(fd).date()),
             })
 
         fwd = f_sub[(f_sub["forecast_date"] == latest_fd) & (f_sub["ds"] > last_complete)].copy()
         # SKUs without a stored band contribute their point forecast to the sum
         fwd["lo"] = fwd["lo"].where(fwd["lo"].notna(), fwd["yhat"]).clip(lower=0)
         fwd["hi"] = fwd["hi"].where(fwd["hi"].notna(), fwd["yhat"]).clip(lower=0)
-        for ds_, row in fwd.groupby("ds")[["yhat", "lo", "hi"]].sum().iterrows():
+        fwd_agg = fwd.groupby("ds").agg(
+            yhat=("yhat", "sum"), lo=("lo", "sum"), hi=("hi", "sum"),
+            v1=("v1_yhat", lambda s: s.sum(min_count=1)),
+        )
+        for ds_, row in fwd_agg.iterrows():
             forward.append({
                 "week": str(ds_.date()), "segment": seg,
                 "yhat": round(float(row["yhat"])), "lo": round(float(row["lo"])), "hi": round(float(row["hi"])),
+                "v1": round(float(row["v1"])) if pd.notna(row["v1"]) else None,
             })
 
     return JSONResponse({
