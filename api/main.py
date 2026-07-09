@@ -1205,9 +1205,13 @@ async def get_demand_trend(
             actuals.append({"week": str(ds_.date()), "segment": seg, "y": int(y)})
 
         f_sub = fdf if seg == "all" else fdf[fdf["segment"] == seg]
-        past = f_sub[f_sub["ds"] <= last_complete].groupby(["ds", "lead"])["yhat"].sum()
-        for (ds_, lead), v in past.items():
-            predicted.append({"week": str(ds_.date()), "lead": int(lead), "segment": seg, "yhat": round(float(v))})
+        # One run per training week, so (ds, lead) maps to exactly one forecast_date
+        past = f_sub[f_sub["ds"] <= last_complete].groupby(["ds", "lead", "forecast_date"])["yhat"].sum()
+        for (ds_, lead, fd), v in past.items():
+            predicted.append({
+                "week": str(ds_.date()), "lead": int(lead), "segment": seg,
+                "yhat": round(float(v)), "run_date": str(pd.Timestamp(fd).date()),
+            })
 
         fwd = f_sub[(f_sub["forecast_date"] == latest_fd) & (f_sub["ds"] > last_complete)].copy()
         # SKUs without a stored band contribute their point forecast to the sum
