@@ -1151,6 +1151,9 @@ async def get_all_skus(
     demand_start = last_complete - pd.Timedelta(weeks=weeks)
     recent_start = last_complete - pd.Timedelta(weeks=4)
     prior_start  = last_complete - pd.Timedelta(weeks=8)
+    # Same 4 weeks one year (52 weeks) earlier, for seasonality-aware aggregates
+    yoy_end   = last_complete - pd.Timedelta(weeks=52)
+    yoy_start = last_complete - pd.Timedelta(weeks=56)
 
     sql = f"""
         WITH latest AS (
@@ -1178,13 +1181,14 @@ async def get_all_skus(
                 MAX(ds)  FILTER (WHERE y > 0)                                                AS last_sale_week,
                 COALESCE(SUM(y) FILTER (WHERE ds > :demand_start), 0)                        AS demand_total,
                 COALESCE(SUM(y) FILTER (WHERE ds > :recent_start), 0)                        AS recent4,
-                COALESCE(SUM(y) FILTER (WHERE ds > :prior_start AND ds <= :recent_start), 0) AS prior4
+                COALESCE(SUM(y) FILTER (WHERE ds > :prior_start AND ds <= :recent_start), 0) AS prior4,
+                COALESCE(SUM(y) FILTER (WHERE ds > :yoy_start AND ds <= :yoy_end), 0)        AS yoy4
             FROM weekly
             WHERE ds <= :last_complete
             GROUP BY unique_id
         )
         SELECT m.unique_id, m.active_weeks, m.last_sale_week,
-               m.demand_total, m.recent4, m.prior4,
+               m.demand_total, m.recent4, m.prior4, m.yoy4,
                l.history_length, l.selected_model, l.forecast_total
         FROM m
         LEFT JOIN latest l USING (unique_id)
@@ -1196,19 +1200,21 @@ async def get_all_skus(
             "demand_start":  demand_start.date(),
             "recent_start":  recent_start.date(),
             "prior_start":   prior_start.date(),
+            "yoy_start":     yoy_start.date(),
+            "yoy_end":       yoy_end.date(),
             "last_complete": last_complete.date(),
         }).fetchall()
 
     skus = []
     for r in rows:
-        hist = r[6]
+        hist = r[7]
         segment = "intermittent" if hist is None else ("smooth_short" if hist == "short" else "smooth_full")
         recent4, prior4 = float(r[4]), float(r[5])
         last_sale = r[2]
         skus.append({
             "unique_id":             r[0],
             "segment":               segment,
-            "model":                 r[7],
+            "model":                 r[8],
             "active_weeks":          int(r[1]) if r[1] is not None else 0,
             "last_sale_week":        str(last_sale) if last_sale else None,
             "weeks_since_last_sale": int((last_complete.date() - last_sale).days // 7) if last_sale else None,
@@ -1217,7 +1223,8 @@ async def get_all_skus(
             "trend_pct":             round((recent4 - prior4) / prior4 * 100, 1) if prior4 > 0 else None,
             "recent_4w":             int(recent4),
             "prior_4w":              int(prior4),
-            "forecast_total":        int(r[8]) if r[8] is not None else None,
+            "yoy_4w":                int(r[6]),
+            "forecast_total":        int(r[9]) if r[9] is not None else None,
         })
 
     return JSONResponse({
