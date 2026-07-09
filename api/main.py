@@ -1137,9 +1137,10 @@ async def get_accuracy_history(
 @app.get("/history/{sku_id}")
 async def get_history(sku_id: str):
     """Weekly sales history only — for SKUs without a forecast (intermittent).
-    Series runs from the SKU's first sale week through the last completed week,
-    zero-filled so dormant stretches are visible."""
-    actuals = read_actuals(sku_id, n_weeks=None)
+    Zero-padded from the global data start through the last completed week
+    (same as the forecast chart's 'All' view), so gaps and pre-launch periods
+    are visible rather than trimmed."""
+    actuals = read_actuals(sku_id, n_weeks=None, pad_from=get_global_start())
     if actuals.empty:
         raise HTTPException(status_code=404, detail=f"No sales history found for SKU '{sku_id}'")
 
@@ -1151,14 +1152,10 @@ async def get_history(sku_id: str):
     if actuals.empty:
         raise HTTPException(status_code=404, detail=f"No completed sales weeks for SKU '{sku_id}'")
 
-    # Extend forward with zeros to the last completed week so dormancy shows
-    full_idx = pd.date_range(start=actuals["ds"].min(), end=last_complete, freq="W-MON")
-    weekly = actuals.set_index("ds").reindex(full_idx, fill_value=0)["y"]
-
     return JSONResponse({
         "sku_id": sku_id,
-        "dates":  [d.strftime("%Y-%m-%d") for d in weekly.index],
-        "values": [int(v) for v in weekly.values],
+        "dates":  actuals["ds"].dt.strftime("%Y-%m-%d").tolist(),
+        "values": [int(v) for v in actuals["y"]],
     })
 
 
