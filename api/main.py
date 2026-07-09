@@ -1134,6 +1134,34 @@ async def get_accuracy_history(
     })
 
 
+@app.get("/history/{sku_id}")
+async def get_history(sku_id: str):
+    """Weekly sales history only — for SKUs without a forecast (intermittent).
+    Series runs from the SKU's first sale week through the last completed week,
+    zero-filled so dormant stretches are visible."""
+    actuals = read_actuals(sku_id, n_weeks=None)
+    if actuals.empty:
+        raise HTTPException(status_code=404, detail=f"No sales history found for SKU '{sku_id}'")
+
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_complete = today - pd.Timedelta(days=days_back)
+
+    actuals = actuals[actuals["ds"] <= last_complete]
+    if actuals.empty:
+        raise HTTPException(status_code=404, detail=f"No completed sales weeks for SKU '{sku_id}'")
+
+    # Extend forward with zeros to the last completed week so dormancy shows
+    full_idx = pd.date_range(start=actuals["ds"].min(), end=last_complete, freq="W-MON")
+    weekly = actuals.set_index("ds").reindex(full_idx, fill_value=0)["y"]
+
+    return JSONResponse({
+        "sku_id": sku_id,
+        "dates":  [d.strftime("%Y-%m-%d") for d in weekly.index],
+        "values": [int(v) for v in weekly.values],
+    })
+
+
 @app.get("/all-skus")
 async def get_all_skus(
     weeks: int = Query(default=10, ge=1, le=104, description="Demand lookback window in completed weeks"),
