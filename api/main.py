@@ -1132,6 +1132,102 @@ async def get_accuracy_history(
     })
 
 
+@app.get("/demand-trend")
+async def get_demand_trend(
+    product_type: str = Query(default="All", description="Comma-separated product types, or 'All'"),
+):
+    """Aggregate weekly demand vs what stored runs predicted for those weeks.
+
+    - actuals:   weekly demand totals per segment (last ~26 completed weeks)
+    - predicted: forecast totals per (week, lead) for completed weeks, where
+                 lead N = the run made N weeks before the target week
+    - forward:   the latest run's remaining horizon with a P85 (level-70) band
+
+    SKU membership and segment classification come from the latest run, and
+    all runs are restricted to that SKU set so the lines share one universe.
+    """
+    product_types = _parse_product_types(product_type)
+    pt_fcast = _product_type_where("f.unique_id", product_types)
+    pt_snap  = _product_type_where("v.link_master_sku", product_types)
+
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_complete = today - pd.Timedelta(days=days_back)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        fdf = pd.read_sql(text(f"""
+            SELECT f.forecast_date, f.unique_id, f.history_length, f.ds, f.yhat,
+                   f.yhat_lo_70 AS lo, f.yhat_hi_70 AS hi
+            FROM shipcore.fc_forward_forecasts f
+            WHERE f.bucket = 'smooth' AND {pt_fcast}
+        """), conn, parse_dates=["ds"])
+
+        if fdf.empty:
+            return JSONResponse({
+                "last_complete_week": str(last_complete.date()),
+                "forward_run_date": None,
+                "actuals": [], "predicted": [], "forward": [],
+            })
+
+        adf = pd.read_sql(text(f"""
+            SELECT
+                v.link_master_sku AS unique_id,
+                (v.order_date + ((8 - EXTRACT(ISODOW FROM v.order_date))::int % 7) * INTERVAL '1 day')::date AS ds,
+                SUM(v.link_qty) AS y
+            FROM shipcore.fc_velocity_link_snapshot_forecast v
+            WHERE v.order_date > :from_date
+              AND {pt_snap}
+            GROUP BY 1, 2
+        """), conn, params={"from_date": (last_complete - pd.Timedelta(weeks=27)).date()}, parse_dates=["ds"])
+
+    latest_fd = fdf["forecast_date"].max()
+    seg_map = (
+        fdf[fdf["forecast_date"] == latest_fd]
+        .drop_duplicates("unique_id")
+        .set_index("unique_id")["history_length"]
+        .map(lambda h: "smooth_short" if h == "short" else "smooth_full")
+    )
+
+    fdf = fdf[fdf["unique_id"].isin(seg_map.index)].copy()
+    fdf["segment"] = fdf["unique_id"].map(seg_map)
+    fdf["yhat"] = fdf["yhat"].clip(lower=0)
+    horizon_start = fdf.groupby("forecast_date")["ds"].transform("min")
+    fdf["lead"] = ((fdf["ds"] - horizon_start).dt.days // 7) + 1
+
+    adf = adf[adf["unique_id"].isin(seg_map.index) & (adf["ds"] <= last_complete)].copy()
+    adf["segment"] = adf["unique_id"].map(seg_map)
+
+    actuals, predicted, forward = [], [], []
+    for seg in ("all", "smooth_full", "smooth_short"):
+        a_sub = adf if seg == "all" else adf[adf["segment"] == seg]
+        for ds_, y in a_sub.groupby("ds")["y"].sum().items():
+            actuals.append({"week": str(ds_.date()), "segment": seg, "y": int(y)})
+
+        f_sub = fdf if seg == "all" else fdf[fdf["segment"] == seg]
+        past = f_sub[f_sub["ds"] <= last_complete].groupby(["ds", "lead"])["yhat"].sum()
+        for (ds_, lead), v in past.items():
+            predicted.append({"week": str(ds_.date()), "lead": int(lead), "segment": seg, "yhat": round(float(v))})
+
+        fwd = f_sub[(f_sub["forecast_date"] == latest_fd) & (f_sub["ds"] > last_complete)].copy()
+        # SKUs without a stored band contribute their point forecast to the sum
+        fwd["lo"] = fwd["lo"].where(fwd["lo"].notna(), fwd["yhat"]).clip(lower=0)
+        fwd["hi"] = fwd["hi"].where(fwd["hi"].notna(), fwd["yhat"]).clip(lower=0)
+        for ds_, row in fwd.groupby("ds")[["yhat", "lo", "hi"]].sum().iterrows():
+            forward.append({
+                "week": str(ds_.date()), "segment": seg,
+                "yhat": round(float(row["yhat"])), "lo": round(float(row["lo"])), "hi": round(float(row["hi"])),
+            })
+
+    return JSONResponse({
+        "last_complete_week": str(last_complete.date()),
+        "forward_run_date": str(pd.Timestamp(latest_fd).date()),
+        "actuals": actuals,
+        "predicted": predicted,
+        "forward": forward,
+    })
+
+
 @app.get("/segments")
 async def get_segments(
     weeks: int = Query(default=10, ge=1, le=52, description="Number of completed weeks to sum demand over"),
