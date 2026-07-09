@@ -36,6 +36,40 @@ FORWARD_WEEKS       = 13
 CONFORMAL_N_WINDOWS = 5
 
 
+def sync_velocity_snapshot() -> None:
+    """Trigger the app's velocity sync so the run trains on fresh order data.
+
+    Requires VELOCITY_SYNC_URL and VELOCITY_SYNC_TOKEN in the environment
+    (.env). Failure is logged but does not abort the run — a forecast on
+    slightly stale data beats no forecast.
+    """
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    url = os.getenv("VELOCITY_SYNC_URL")
+    token = os.getenv("VELOCITY_SYNC_TOKEN")
+    if not url or not token:
+        print("  VELOCITY_SYNC_URL / VELOCITY_SYNC_TOKEN not set — skipping sync")
+        return
+    try:
+        req = urllib.request.Request(url, method="POST", headers={"x-sync-token": token})
+        with urllib.request.urlopen(req, timeout=900) as resp:
+            body = json.loads(resp.read().decode())
+            if body.get("success"):
+                print(f"  Sync OK — {body.get('linkUpserted', '?'):,} link rows upserted")
+            else:
+                print(f"  Sync responded but failed: {body.get('error')}")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode()[:200]
+        print(f"  Sync failed (HTTP {e.code}): {detail} — continuing with existing snapshot")
+    except Exception as e:  # noqa: BLE001 — never let the sync kill the forecast run
+        print(f"  Sync failed: {e} — continuing with existing snapshot")
+
+
 def _dedupe_models(bucket: str, hist: str) -> list:
     candidates      = get_models(bucket, hist)
     candidate_names = {type(m).__name__ for m in candidates}
@@ -187,7 +221,10 @@ def main():
     horizon_weeks = args.horizon
 
     if not args.skip_ingest:
-        print("── Step 0: Ingest fresh data from DB ───────────────────────────")
+        print("── Step 0a: Sync velocity snapshot from source ─────────────────")
+        sync_velocity_snapshot()
+
+        print("\n── Step 0: Ingest fresh data from DB ───────────────────────────")
         raw = ingest()
         print(f"  {len(raw):,} rows | {raw['link_master_sku'].nunique():,} SKUs"
               f" | {raw['order_date'].min().date()} → {raw['order_date'].max().date()}")
