@@ -19,7 +19,9 @@ from sqlalchemy import text
 from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
-from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS, TEST_WEEKS, CONFORMAL_LEVELS
+from config import FREQUENCY, USE_SEASONAL_ADJUSTMENT, OUTPUTS_REPORTS, TEST_WEEKS, CONFORMAL_LEVELS, FORECAST_HORIZON
+
+HORIZON_WEEKS = round(FORECAST_HORIZON / 7)
 from src.db import read_latest_forecast, read_actuals, read_segments, get_engine, get_global_start, _product_type_where
 from src.profile import _detect_ramp_up
 from src.models import get_models
@@ -1129,6 +1131,101 @@ async def get_accuracy_history(
     return JSONResponse({
         "last_complete_week": str(last_complete.date()),
         "series": series,
+    })
+
+
+@app.get("/all-skus")
+async def get_all_skus(
+    weeks: int = Query(default=10, ge=1, le=104, description="Demand lookback window in completed weeks"),
+    product_type: str = Query(default="All", description="Comma-separated product types, or 'All'"),
+):
+    """Cross-segment SKU directory: demand, momentum, classification, and the
+    latest run's forward forecast total for every SKU in the velocity universe.
+    """
+    product_types = _parse_product_types(product_type)
+    pt_snap = _product_type_where("v.link_master_sku", product_types)
+
+    today = pd.Timestamp.today().normalize()
+    days_back = today.dayofweek or 7
+    last_complete = today - pd.Timedelta(days=days_back)
+    demand_start = last_complete - pd.Timedelta(weeks=weeks)
+    recent_start = last_complete - pd.Timedelta(weeks=4)
+    prior_start  = last_complete - pd.Timedelta(weeks=8)
+
+    sql = f"""
+        WITH latest AS (
+            SELECT unique_id,
+                   MAX(history_length)      AS history_length,
+                   MAX(selected_model)      AS selected_model,
+                   SUM(GREATEST(yhat, 0))   AS forecast_total
+            FROM shipcore.fc_forward_forecasts
+            WHERE bucket = 'smooth'
+              AND forecast_date = (SELECT MAX(forecast_date) FROM shipcore.fc_forward_forecasts)
+            GROUP BY unique_id
+        ),
+        weekly AS (
+            SELECT
+                v.link_master_sku AS unique_id,
+                (v.order_date + ((8 - EXTRACT(ISODOW FROM v.order_date))::int % 7) * INTERVAL '1 day')::date AS ds,
+                SUM(v.link_qty) AS y
+            FROM shipcore.fc_velocity_link_snapshot_forecast v
+            WHERE {pt_snap}
+            GROUP BY 1, 2
+        ),
+        m AS (
+            SELECT unique_id,
+                COUNT(*) FILTER (WHERE y > 0)                                                AS active_weeks,
+                MAX(ds)  FILTER (WHERE y > 0)                                                AS last_sale_week,
+                COALESCE(SUM(y) FILTER (WHERE ds > :demand_start), 0)                        AS demand_total,
+                COALESCE(SUM(y) FILTER (WHERE ds > :recent_start), 0)                        AS recent4,
+                COALESCE(SUM(y) FILTER (WHERE ds > :prior_start AND ds <= :recent_start), 0) AS prior4
+            FROM weekly
+            WHERE ds <= :last_complete
+            GROUP BY unique_id
+        )
+        SELECT m.unique_id, m.active_weeks, m.last_sale_week,
+               m.demand_total, m.recent4, m.prior4,
+               l.history_length, l.selected_model, l.forecast_total
+        FROM m
+        LEFT JOIN latest l USING (unique_id)
+        ORDER BY m.demand_total DESC, m.unique_id
+    """
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql), {
+            "demand_start":  demand_start.date(),
+            "recent_start":  recent_start.date(),
+            "prior_start":   prior_start.date(),
+            "last_complete": last_complete.date(),
+        }).fetchall()
+
+    skus = []
+    for r in rows:
+        hist = r[6]
+        segment = "intermittent" if hist is None else ("smooth_short" if hist == "short" else "smooth_full")
+        recent4, prior4 = float(r[4]), float(r[5])
+        last_sale = r[2]
+        skus.append({
+            "unique_id":             r[0],
+            "segment":               segment,
+            "model":                 r[7],
+            "active_weeks":          int(r[1]) if r[1] is not None else 0,
+            "last_sale_week":        str(last_sale) if last_sale else None,
+            "weeks_since_last_sale": int((last_complete.date() - last_sale).days // 7) if last_sale else None,
+            "demand_total":          int(r[3]),
+            "avg_weekly":            round(float(r[3]) / weeks, 1),
+            "trend_pct":             round((recent4 - prior4) / prior4 * 100, 1) if prior4 > 0 else None,
+            "recent_4w":             int(recent4),
+            "prior_4w":              int(prior4),
+            "forecast_total":        int(r[8]) if r[8] is not None else None,
+        })
+
+    return JSONResponse({
+        "weeks":                  weeks,
+        "period_start":           str((demand_start + pd.Timedelta(days=1)).date()),
+        "period_end":             str(last_complete.date()),
+        "forecast_horizon_weeks": HORIZON_WEEKS,
+        "skus":                   skus,
     })
 
 
