@@ -216,9 +216,16 @@ def main():
     parser.add_argument("--skip-ingest", action="store_true",
                         help="Skip DB pull and reuse existing sales_clean.parquet")
     parser.add_argument("--horizon", type=int, default=FORWARD_WEEKS,
-                        help="Forecast horizon in weeks")
+                        help=f"Forecast horizon in weeks (minimum {FORWARD_WEEKS})")
     args = parser.parse_args()
+    # Floor at FORWARD_WEEKS: each run REPLACES the stored forecast for its
+    # training week, so a short manual run would clobber the full 13-week
+    # snapshot (shortening forward charts, order ranges, stockout dates, and
+    # capping future accuracy evaluation at the shorter horizon).
     horizon_weeks = args.horizon
+    if horizon_weeks < FORWARD_WEEKS:
+        print(f"Horizon {horizon_weeks}w is below the minimum — using {FORWARD_WEEKS}w.")
+        horizon_weeks = FORWARD_WEEKS
 
     if not args.skip_ingest:
         print("── Step 0a: Sync velocity snapshot from source ─────────────────")
