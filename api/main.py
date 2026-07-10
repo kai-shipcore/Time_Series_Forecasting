@@ -1349,16 +1349,22 @@ async def get_demand_trend(
             actuals.append({"week": str(ds_.date()), "segment": seg, "y": int(y)})
 
         f_sub = fdf if seg == "all" else fdf[fdf["segment"] == seg]
-        # One run per training week, so (ds, lead) maps to exactly one forecast_date
+        # One run per training week, so (ds, lead) maps to exactly one forecast_date.
+        # Band sums fall back to yhat for SKUs without a stored interval, same as forward.
+        past_src = f_sub[f_sub["ds"] <= last_complete].copy()
+        past_src["lo_f"] = past_src["lo"].where(past_src["lo"].notna(), past_src["yhat"]).clip(lower=0)
+        past_src["hi_f"] = past_src["hi"].where(past_src["hi"].notna(), past_src["yhat"]).clip(lower=0)
         past = (
-            f_sub[f_sub["ds"] <= last_complete]
+            past_src
             .groupby(["ds", "lead", "forecast_date"])
-            .agg(yhat=("yhat", "sum"), v1=("v1_yhat", lambda s: s.sum(min_count=1)))
+            .agg(yhat=("yhat", "sum"), v1=("v1_yhat", lambda s: s.sum(min_count=1)),
+                 lo=("lo_f", "sum"), hi=("hi_f", "sum"))
         )
         for (ds_, lead, fd), row in past.iterrows():
             predicted.append({
                 "week": str(ds_.date()), "lead": int(lead), "segment": seg,
                 "yhat": round(float(row["yhat"])),
+                "lo": round(float(row["lo"])), "hi": round(float(row["hi"])),
                 "v1": round(float(row["v1"])) if pd.notna(row["v1"]) else None,
                 "run_date": str(pd.Timestamp(fd).date()),
             })
