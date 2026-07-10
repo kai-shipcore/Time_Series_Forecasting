@@ -368,14 +368,17 @@ def read_segments(weeks: int = 10, product_types: list[str] | None = None) -> di
             WHERE {pt_snap}
         """), conn)
 
-        # Demand per SKU for the last N complete weeks
+        # Demand per SKU for the last N complete weeks. Cap at last_monday so
+        # the in-progress week is excluded — otherwise totals creep up daily
+        # and disagree with the displayed period and the W-MON charts.
         demand_df = pd.read_sql(text(f"""
             SELECT link_master_sku, SUM(link_qty) AS demand
             FROM shipcore.fc_velocity_link_snapshot_forecast
             WHERE order_date > :start
+              AND order_date <= :end
               AND {pt_snap}
             GROUP BY link_master_sku
-        """), conn, params={"start": period_start})
+        """), conn, params={"start": period_start, "end": last_monday})
 
     # Start from full SKU universe, attach recent demand (0 for dormant SKUs)
     merged = all_skus_df.merge(demand_df, on="link_master_sku", how="left")
