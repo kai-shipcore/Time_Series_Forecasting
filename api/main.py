@@ -1056,7 +1056,8 @@ async def get_accuracy_history(
     engine = get_engine()
     with engine.connect() as conn:
         fdf = pd.read_sql(text(f"""
-            SELECT f.forecast_date, f.unique_id, f.history_length, f.ds, f.yhat, f.v1_yhat
+            SELECT f.forecast_date, f.unique_id, f.history_length, f.ds, f.yhat, f.v1_yhat,
+                   f.yhat_lo_70 AS lo, f.yhat_hi_70 AS hi
             FROM shipcore.fc_forward_forecasts f
             WHERE f.bucket = 'smooth'
               AND f.ds <= :last_complete
@@ -1085,12 +1086,20 @@ async def get_accuracy_history(
     merged["v1_yhat"] = merged["v1_yhat"].clip(lower=0)  # NaN stays NaN
     merged["segment"] = np.where(merged["history_length"] == "short", "smooth_short", "smooth_full")
 
+    # Weekly band-coverage flags: P85 band (level-70 conformal) should contain
+    # the actual ~70% of the time when calibrated.
+    has_band = merged["lo"].notna() & merged["hi"].notna()
+    merged["band_n"]   = has_band.astype(int)
+    merged["band_hit"] = (has_band & (merged["y"] >= merged["lo"].clip(lower=0)) & (merged["y"] <= merged["hi"])).astype(int)
+
     merged = merged.sort_values(["forecast_date", "unique_id", "ds"])
     grp = merged.groupby(["forecast_date", "unique_id"])
     merged["week_index"] = grp.cumcount() + 1
     merged["yhat_cum"] = grp["yhat"].cumsum()
     merged["y_cum"]    = grp["y"].cumsum()
     merged["v1_cum"]   = grp["v1_yhat"].cumsum()
+    merged["band_n_cum"]   = grp["band_n"].cumsum()
+    merged["band_hit_cum"] = grp["band_hit"].cumsum()
 
     horizon_starts = merged.groupby("forecast_date")["ds"].min()
 
@@ -1111,6 +1120,9 @@ async def get_accuracy_history(
             model_err_v1 = float((v1_sub["yhat_cum"] - v1_sub["y_cum"]).abs().sum())
             v1_err = float((v1_sub["v1_cum"] - v1_sub["y_cum"]).abs().sum())
 
+            band_n = int(sub["band_n_cum"].sum())
+            band_hits = int(sub["band_hit_cum"].sum())
+
             series.append({
                 "forecast_date":  str(pd.Timestamp(fd).date()),
                 "horizon_start":  str(horizon_starts[fd].date()),
@@ -1125,6 +1137,8 @@ async def get_accuracy_history(
                 "v1_total":       round(float(v1_sub["v1_cum"].sum())),
                 "model_wape_v1":  _wape(model_err_v1, demand_v1),
                 "v1_wape":        _wape(v1_err, demand_v1),
+                "coverage":       round(band_hits / band_n, 4) if band_n > 0 else None,
+                "n_band":         band_n,
             })
 
     series.sort(key=lambda r: (r["horizon_start"], r["segment"], r["k"]))
