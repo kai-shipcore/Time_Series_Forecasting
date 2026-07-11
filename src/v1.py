@@ -6,6 +6,7 @@ snapshot (fc_velocity_link_snapshot_forecast with order_type and channel).
 """
 import calendar
 import os
+import time
 from datetime import timedelta
 from urllib.parse import quote_plus
 
@@ -15,6 +16,7 @@ from sqlalchemy import create_engine, text
 
 load_dotenv()
 
+# Module-level defaults — used as fallbacks when DB is unreachable.
 SEASONAL = {
     1: 0.75, 2: 0.80, 3: 0.90, 4: 0.95,
     5: 1.00, 6: 1.00, 7: 1.00, 8: 1.00, 9: 1.00,
@@ -29,6 +31,46 @@ V1_WINDOWS = [
     (7,  0.15, "sales"),
     (30, 0.10, "preorder"),
 ]
+
+_MONTH_ABBR = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
+               "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
+
+_v1_config_cache: dict = {"expires": 0.0, "seasonal": None, "windows": None}
+
+
+def _load_v1_config() -> tuple[dict, list]:
+    """Return (seasonal_dict, windows_list) from DB global preferences, cached 5 minutes."""
+    now = time.monotonic()
+    if now < _v1_config_cache["expires"] and _v1_config_cache["seasonal"] is not None:
+        return _v1_config_cache["seasonal"], _v1_config_cache["windows"]
+    try:
+        with _engine().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT key, value FROM shipcore.fc_user_preferences
+                WHERE user_id = 'global'
+                  AND key IN (
+                    'planning-dashboard-seasonal-factors',
+                    'planning-dashboard-sales-window-weights'
+                  )
+            """)).fetchall()
+        row_map = {r.key: r.value for r in rows}
+
+        sf_raw = row_map.get("planning-dashboard-seasonal-factors")
+        seasonal = (
+            {_MONTH_ABBR[k]: float(v) for k, v in sf_raw.items() if k in _MONTH_ABBR}
+            if sf_raw else SEASONAL
+        )
+
+        ww_raw = row_map.get("planning-dashboard-sales-window-weights")
+        windows = (
+            [(int(w["days"]), float(w["weight"]), w["order_type"]) for w in ww_raw]
+            if ww_raw else V1_WINDOWS
+        )
+
+        _v1_config_cache.update({"expires": now + 300.0, "seasonal": seasonal, "windows": windows})
+        return seasonal, windows
+    except Exception:
+        return SEASONAL, V1_WINDOWS
 
 
 _engine_instance = None
@@ -110,8 +152,9 @@ def _window_sum(index: dict, uid: str, stream: str, end: pd.Timestamp, days: int
 
 
 def _blend_rate(index: dict, uid: str, prefix: str, as_of: pd.Timestamp) -> float:
+    _, windows = _load_v1_config()
     rate = 0.0
-    for days, weight, kind in V1_WINDOWS:
+    for days, weight, kind in windows:
         stream = f"{prefix}_preorder" if kind == "preorder" else f"{prefix}_sales"
         rate += weight * (_window_sum(index, uid, stream, as_of, days) / days)
     return max(0.0, rate)
@@ -135,6 +178,7 @@ def _daily_rate(index: dict, uid: str, cutoff: pd.Timestamp) -> float:
 
 
 def _seasonal_modifier(start: pd.Timestamp, end: pd.Timestamp) -> float:
+    seasonal, _ = _load_v1_config()
     total_days = (end - start).days + 1
     weighted = 0.0
     current = start
@@ -145,7 +189,7 @@ def _seasonal_modifier(start: pd.Timestamp, end: pd.Timestamp) -> float:
         )
         chunk_end  = min(end, last_of_month)
         chunk_days = (chunk_end - current).days + 1
-        weighted  += SEASONAL[current.month] * chunk_days
+        weighted  += seasonal[current.month] * chunk_days
         current    = chunk_end + timedelta(days=1)
     return weighted / total_days
 
