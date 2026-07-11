@@ -47,7 +47,7 @@ After=network.target
 User=ubuntu
 WorkingDirectory=/opt/coverland-forecast-api
 EnvironmentFile=/opt/coverland-forecast-api/.env
-ExecStart=/opt/coverland-forecast-api/.venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+ExecStart=/opt/coverland-forecast-api/.venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 

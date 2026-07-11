@@ -26,6 +26,14 @@ ZERO_PCT_INTERMITTENT = 0.30    # fraction of zero weeks → intermittent bucket
 CV_THRESHOLD = 1.5              # coefficient of variation cutoff for lumpy demand
 MEAN_INTERMITTENT_CUTOFF = 3.0  # SKUs above this mean go to smooth even if high zero_pct
 
+# History-length boundaries (active training weeks)
+SHORT_HISTORY_WEEKS   = 50   # smooth short/full boundary (< 50 → short)
+MIN_SIM_HISTORY_WEEKS = 13   # minimum active weeks to be included in segment simulation
+
+# Conformal prediction interval windows
+MAX_CONFORMAL_WINDOWS = 5    # cap on calibration windows per run
+MIN_CONFORMAL_WINDOWS = 2    # below this, skip PIs (1-window conformal is degenerate)
+
 # Seasonal adjustment (see src/deseasonalize.py for full explanation)
 # True  → deseasonalize training data before fitting, reseasonalize forecasts after.
 #          Eliminates post-Q4 January over-prediction without affecting other months.

@@ -170,10 +170,16 @@ def get_engine():
         )
         _engine = create_engine(
             url,
-            pool_size=5,
-            max_overflow=5,
+            pool_size=10,
+            max_overflow=20,
             pool_pre_ping=True,
-            connect_args={"connect_timeout": 10, "sslmode": "require"},
+            pool_recycle=1800,
+            connect_args={
+                "connect_timeout": 10,
+                "sslmode": "require",
+                # Kill any single statement running longer than 2 minutes.
+                "options": "-c statement_timeout=120000",
+            },
         )
     return _engine
 
@@ -459,18 +465,224 @@ def read_segments(weeks: int = 10, product_types: list[str] | None = None) -> di
     }
 
 
-_GLOBAL_START: str | None = None
+# ── Indexes ──────────────────────────────────────────────────────────────────
+_ENSURE_INDEX_SQL = [
+    "CREATE INDEX IF NOT EXISTS idx_fc_vel_fc_sku_date ON shipcore.fc_velocity_link_snapshot_forecast (link_master_sku, order_date)",
+    "CREATE INDEX IF NOT EXISTS idx_fc_vel_fc_date ON shipcore.fc_velocity_link_snapshot_forecast (order_date)",
+    "CREATE INDEX IF NOT EXISTS idx_fc_fwd_forecast_date ON shipcore.fc_forward_forecasts (forecast_date)",
+]
+
+
+def ensure_indexes() -> None:
+    engine = get_engine()
+    with engine.begin() as conn:
+        for stmt in _ENSURE_INDEX_SQL:
+            conn.execute(text(stmt))
+
+
+# ── Job persistence ──────────────────────────────────────────────────────────
+import json
+import uuid as _uuid
+
+_JOBS_TABLE = "shipcore.fc_jobs"
+
+_JOBS_CREATE_SQL = f"""
+CREATE TABLE IF NOT EXISTS {_JOBS_TABLE} (
+    job_id           TEXT PRIMARY KEY,
+    job_type         TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    lines            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    result           JSONB,
+    exit_code        INTEGER,
+    pgid             INTEGER,
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+# At most ONE running job per job_type ('forecast' | 'simulation').
+# The partial unique index makes this race-free even across workers/processes.
+_JOBS_INDEX_SQL = f"""
+CREATE UNIQUE INDEX IF NOT EXISTS fc_jobs_one_running_per_type
+ON {_JOBS_TABLE} (job_type)
+WHERE status IN ('running', 'cancelling')
+"""
+
+_jobs_table_ready = False
+
+
+def ensure_jobs_table() -> None:
+    global _jobs_table_ready
+    if _jobs_table_ready:
+        return
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text(_JOBS_CREATE_SQL))
+        conn.execute(text(_JOBS_INDEX_SQL))
+    _jobs_table_ready = True
+
+
+def create_job(job_type: str) -> str | None:
+    """Insert a new running job. Returns job_id, or None if a job of this
+    type is already running (unique partial index violation)."""
+    from sqlalchemy.exc import IntegrityError
+    ensure_jobs_table()
+    job_id = str(_uuid.uuid4())[:8]
+    engine = get_engine()
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"INSERT INTO {_JOBS_TABLE} (job_id, job_type, status) "
+                     f"VALUES (:jid, :jt, 'running')"),
+                {"jid": job_id, "jt": job_type},
+            )
+    except IntegrityError:
+        return None
+    return job_id
+
+
+def append_job_lines(job_id: str, lines: list[str]) -> None:
+    """Append log lines to the job's JSONB array and bump the heartbeat."""
+    if not lines:
+        return
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"""UPDATE {_JOBS_TABLE}
+                     SET lines = lines || CAST(:new AS jsonb), updated_at = now()
+                     WHERE job_id = :jid"""),
+            {"jid": job_id, "new": json.dumps(lines)},
+        )
+
+
+def touch_job(job_id: str) -> None:
+    """Heartbeat: bump updated_at without changing anything else."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE {_JOBS_TABLE} SET updated_at = now() WHERE job_id = :jid"),
+            {"jid": job_id},
+        )
+
+
+def set_job_pgid(job_id: str, pgid: int) -> None:
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE {_JOBS_TABLE} SET pgid = :pgid, updated_at = now() "
+                 f"WHERE job_id = :jid"),
+            {"jid": job_id, "pgid": pgid},
+        )
+
+
+def finish_job(job_id: str, status: str, exit_code: int | None = None,
+               result: dict | None = None) -> None:
+    """Terminal transition: status must be 'done' | 'failed' | 'cancelled'."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"""UPDATE {_JOBS_TABLE}
+                     SET status = :st, exit_code = :ec,
+                         result = CAST(:res AS jsonb), updated_at = now()
+                     WHERE job_id = :jid"""),
+            {"jid": job_id, "st": status, "ec": exit_code,
+             "res": json.dumps(result) if result is not None else None},
+        )
+
+
+def get_job(job_id: str) -> dict | None:
+    ensure_jobs_table()
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(f"""SELECT job_id, job_type, status, lines, result,
+                            exit_code, pgid, cancel_requested
+                     FROM {_JOBS_TABLE} WHERE job_id = :jid"""),
+            {"jid": job_id},
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "job_id": row[0], "job_type": row[1], "status": row[2],
+        "lines": row[3] or [], "result": row[4],
+        "exit_code": row[5], "pgid": row[6], "cancel_requested": bool(row[7]),
+    }
+
+
+def job_cancel_requested(job_id: str) -> bool:
+    engine = get_engine()
+    with engine.connect() as conn:
+        val = conn.execute(
+            text(f"SELECT cancel_requested FROM {_JOBS_TABLE} WHERE job_id = :jid"),
+            {"jid": job_id},
+        ).scalar()
+    return bool(val)
+
+
+def request_job_cancel(job_id: str) -> dict | None:
+    """Flag a running job for cancellation. Returns the job row (or None)."""
+    job = get_job(job_id)
+    if not job:
+        return None
+    if job["status"] in ("running", "cancelling"):
+        engine = get_engine()
+        with engine.begin() as conn:
+            conn.execute(
+                text(f"""UPDATE {_JOBS_TABLE}
+                         SET cancel_requested = TRUE, status = 'cancelling',
+                             updated_at = now()
+                         WHERE job_id = :jid AND status = 'running'"""),
+                {"jid": job_id},
+            )
+        job = get_job(job_id)
+    return job
+
+
+def recover_orphaned_jobs() -> int:
+    """Mark jobs left 'running'/'cancelling' by a previous process as failed.
+    Called once at app startup. Safe under single-worker deployment (--workers 1).
+    If ever scaled to multiple workers, replace with heartbeat-based recovery:
+    only fail jobs where updated_at < now() - 2min, since running jobs heartbeat every 2s."""
+    ensure_jobs_table()
+    engine = get_engine()
+    with engine.begin() as conn:
+        res = conn.execute(text(f"""
+            UPDATE {_JOBS_TABLE}
+            SET status = 'failed', exit_code = -1,
+                lines = lines || '["Error: job orphaned by server restart"]'::jsonb,
+                updated_at = now()
+            WHERE status IN ('running', 'cancelling')
+        """))
+    return res.rowcount or 0
+
+
+def cleanup_old_jobs(days: int = 14) -> None:
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"DELETE FROM {_JOBS_TABLE} "
+            f"WHERE created_at < now() - (:d || ' days')::interval"
+        ), {"d": days})
+
+
+import time as _time
+_GLOBAL_START: tuple[float, str] | None = None  # (expires_monotonic, value)
+_GLOBAL_START_TTL = 3600.0  # refresh after 1 hour — covers data backfills without restart
 
 def get_global_start() -> str:
-    """Return the earliest order_date across all SKUs, cached for the process lifetime."""
+    """Return the earliest order_date across all SKUs, cached with a 1-hour TTL."""
     global _GLOBAL_START
-    if _GLOBAL_START is None:
-        engine = get_engine()
-        with engine.connect() as conn:
-            result = conn.execute(text("SELECT MIN(order_date) FROM shipcore.fc_velocity_link_snapshot_forecast"))
-            row = result.scalar()
-        _GLOBAL_START = str(row) if row else "2024-06-17"
-    return _GLOBAL_START
+    now = _time.monotonic()
+    if _GLOBAL_START is not None and _GLOBAL_START[0] > now:
+        return _GLOBAL_START[1]
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT MIN(order_date) FROM shipcore.fc_velocity_link_snapshot_forecast"))
+        row = result.scalar()
+    value = str(row) if row else "2024-06-17"
+    _GLOBAL_START = (now + _GLOBAL_START_TTL, value)
+    return value
 
 
 def read_actuals(
@@ -479,45 +691,38 @@ def read_actuals(
     start_date: str | None = None,
     pad_from: str | None = None,
 ) -> pd.DataFrame:
-    """Pull weekly actuals.
+    """Pull weekly actuals aggregated in SQL using the W-MON convention.
 
     - start_date: anchor from a fixed date (overrides n_weeks).
     - pad_from: extend the series back to this date with 0s for missing weeks.
     """
     engine = get_engine()
     fetch_anchor = pad_from or start_date
+    # W-MON week label: first Monday >= order_date. Matches pandas W-MON Grouper
+    # and the expression used in /all-skus, /accuracy-history, /demand-trend.
+    week_expr = "(order_date + ((8 - EXTRACT(ISODOW FROM order_date))::int % 7) * INTERVAL '1 day')::date"
+    base = f"""
+        SELECT {week_expr} AS ds, SUM(link_qty) AS y
+        FROM shipcore.fc_velocity_link_snapshot_forecast
+        WHERE link_master_sku = :uid
+    """
+    params: dict = {"uid": sku_id}
     if fetch_anchor:
         fetch_from = (pd.Timestamp(fetch_anchor) - pd.Timedelta(days=6)).strftime("%Y-%m-%d")
-        query = """
-            SELECT order_date, link_qty
-            FROM shipcore.fc_velocity_link_snapshot_forecast
-            WHERE link_master_sku = :uid AND order_date >= :fetch_from
-        """
-        params: dict = {"uid": sku_id, "fetch_from": fetch_from}
-    else:
-        query = """
-            SELECT order_date, link_qty
-            FROM shipcore.fc_velocity_link_snapshot_forecast
-            WHERE link_master_sku = :uid
-        """
-        params = {"uid": sku_id}
+        base += " AND order_date >= :fetch_from"
+        params["fetch_from"] = fetch_from
+    base += " GROUP BY 1 ORDER BY 1"
 
     with engine.connect() as conn:
-        raw = pd.read_sql(text(query), conn, params=params)
+        raw = pd.read_sql(text(base), conn, params=params)
 
     if raw.empty and not pad_from:
         return pd.DataFrame(columns=["ds", "y"])
 
-    if not raw.empty:
-        raw["order_date"] = pd.to_datetime(raw["order_date"])
-        weekly = (
-            raw.groupby(pd.Grouper(key="order_date", freq="W-MON"))["link_qty"]
-            .sum()
-            .reset_index()
-            .rename(columns={"order_date": "ds", "link_qty": "y"})
-            .sort_values("ds")
-            .reset_index(drop=True)
-        )
+    weekly = raw.copy()
+    if not weekly.empty:
+        weekly["ds"] = pd.to_datetime(weekly["ds"])
+        weekly["y"]  = weekly["y"].fillna(0).astype(int)
     else:
         weekly = pd.DataFrame(columns=["ds", "y"])
 

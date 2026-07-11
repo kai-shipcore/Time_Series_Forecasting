@@ -13,7 +13,7 @@ request time, so responses are fast.
 From the project root (`Time_Series_Forecasting/`):
 
 ```bash
-.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 Interactive docs (test endpoints in browser): `http://localhost:8000/docs`

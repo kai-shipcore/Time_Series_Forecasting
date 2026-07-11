@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from config import SHORT_HISTORY_WEEKS  # noqa: F401 — re-exported so importers don't break
 
 PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 
@@ -26,7 +27,7 @@ RAMP_UP_MIN_DEMAND = MEAN_INTERMITTENT_CUTOFF  # ramp-up only meaningful above t
 # > MEDIUM → 2+ cycles; full seasonal model set
 # SHORT = 50 = 20-week training floor + 3 × 10-week CV windows: a SKU is
 # "medium" exactly when it can support 3-window CV selection.
-SHORT_HISTORY_WEEKS = 50
+# SHORT_HISTORY_WEEKS is imported from config above.
 MEDIUM_HISTORY_WEEKS = 104
 
 
