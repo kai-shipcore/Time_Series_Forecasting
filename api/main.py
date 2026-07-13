@@ -14,7 +14,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import text
 from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
@@ -37,7 +38,7 @@ from src.models import get_models
 from src.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
 from src.v1 import load_raw_for_v1, build_index as build_v1_index, forecast_total as v1_forecast_total
-from src.chat import run_chat
+from src.chat import stream_chat
 
 
 def _parse_product_types(product_type: str) -> list[str] | None:
@@ -1947,8 +1948,8 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-def chat(req: ChatRequest):
-    """Agentic chat assistant for the demand forecast page."""
+async def chat(req: ChatRequest):
+    """Agentic chat assistant — streams SSE events (status + delta + done)."""
     if not os.getenv("LLM_API_KEY"):
         raise HTTPException(status_code=503, detail="LLM_API_KEY not configured")
 
@@ -1956,5 +1957,8 @@ def chat(req: ChatRequest):
     if not messages or messages[-1]["role"] != "user":
         raise HTTPException(status_code=422, detail="Last message must be from the user")
 
-    result = run_chat(messages)
-    return result
+    return StreamingResponse(
+        iterate_in_threadpool(stream_chat(messages)),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

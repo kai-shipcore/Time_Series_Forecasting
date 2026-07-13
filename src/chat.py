@@ -1,5 +1,6 @@
 # Provider is configured entirely via env:
 #   Gemini (free):  LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/  LLM_MODEL=gemini-2.0-flash
+#   Groq (free):    LLM_BASE_URL=https://api.groq.com/openai/v1                           LLM_MODEL=llama-3.3-70b-versatile
 #   Claude (paid):  LLM_BASE_URL=https://api.anthropic.com/v1/  LLM_MODEL=claude-haiku-4-5  (OpenAI-compat layer)
 # Note: Anthropic's OpenAI-compat layer is testing-oriented (no prompt caching);
 # if/when Claude becomes the permanent provider, port run_chat to the native
@@ -7,8 +8,11 @@
 
 import json
 import os
+import re
 import time
+import uuid
 
+import openai
 import pandas as pd
 import requests
 from openai import OpenAI
@@ -204,65 +208,262 @@ Rules:
 - When recommending order amounts, state the horizon (weeks) and whether you used the point forecast or the P85 upper bound, and flag low-confidence forecasts.
 - Be concise. Use small tables for multi-SKU answers. State the time window of any number you quote.
 - Never use LaTeX math notation ($...$). Write everything in plain text: use >=, <=, %, plain numbers, and Unicode symbols (≥ ≤ × ÷) directly. Variable names like k, n go unformatted.
-- If a question is outside forecasting/inventory (HR, pricing strategy, etc.), say it's outside your scope."""
+- If a question is outside forecasting/inventory (HR, pricing strategy, etc.), say it's outside your scope.
+- You have no memory of this company's data. ANY question about SKUs, demand, forecasts, or accuracy REQUIRES a tool call first."""
+
+
+def _rate_limit_delay(exc: openai.RateLimitError, fallback: float) -> float:
+    """Return Retry-After seconds from the response header, or the fallback."""
+    try:
+        val = exc.response.headers.get("retry-after")
+        if val:
+            return max(1.0, float(val))
+    except Exception:
+        pass
+    return fallback
 
 
 def _create_with_retry(client: OpenAI, **kwargs):
-    """Call chat.completions.create with up to 2 retries on rate-limit errors."""
-    delays = [5, 15]
+    """Call chat.completions.create with up to 3 retries on rate-limit errors."""
+    delays = [5, 15, 30]
     last_exc: Exception | None = None
-    for attempt, delay in enumerate(delays + [None]):
+    for delay in delays + [None]:
         try:
             return client.chat.completions.create(**kwargs)
+        except openai.RateLimitError as exc:
+            last_exc = exc
+            if delay is None:
+                raise
+            time.sleep(_rate_limit_delay(exc, delay))
         except Exception as exc:
-            msg = str(exc)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+            if "429" in str(exc):
                 last_exc = exc
-                if delay is not None:
-                    time.sleep(delay)
-                    continue
-            raise
+                if delay is None:
+                    raise
+                time.sleep(delay)
+            else:
+                raise
     raise last_exc  # type: ignore[misc]
 
 
-def _strip_thinking(text: str) -> str:
-    """Remove <thinking>...</thinking> blocks that some models emit."""
-    import re
-    return re.sub(r"<thinking>.*?</thinking>\s*", "", text, flags=re.DOTALL).strip()
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data)}\n\n"
 
 
-def run_chat(messages: list[dict]) -> dict:
-    """Agentic loop: model → tools → model, until a text-only reply."""
-    client = get_client()
-    convo = [{"role": "system", "content": _system_prompt()}]
-    convo += [{"role": m["role"], "content": m["content"]} for m in messages]
+class ThinkingFilter:
+    """Strips <thinking>...</thinking> from a content stream chunk by chunk."""
+    _OPEN  = "<thinking>"
+    _CLOSE = "</thinking>"
+
+    def __init__(self) -> None:
+        self._buf   = ""
+        self._state = "start"   # "start" | "thinking" | "done"
+
+    def feed(self, chunk: str) -> str:
+        if self._state == "done":
+            return chunk
+        self._buf += chunk
+
+        if self._state == "start":
+            if self._OPEN in self._buf:
+                self._state = "thinking"
+                self._buf = self._buf.split(self._OPEN, 1)[1]
+                # fall through to "thinking" check below
+            elif len(self._buf) >= len(self._OPEN):
+                # Enough chars and no opening tag — passthrough
+                self._state = "done"
+                out, self._buf = self._buf, ""
+                return out
+            else:
+                return ""  # accumulate more
+
+        if self._state == "thinking":
+            if self._CLOSE in self._buf:
+                self._state = "done"
+                out = self._buf.split(self._CLOSE, 1)[1].lstrip("\n")
+                self._buf = ""
+                return out
+            # Keep the last N-1 chars so a split closing tag is never lost
+            keep = len(self._CLOSE) - 1
+            self._buf = self._buf[-keep:] if len(self._buf) >= keep else self._buf
+
+        return ""
+
+    def flush(self) -> str:
+        out = self._buf if self._state != "thinking" else ""
+        self._buf = ""
+        return out
+
+
+def _stream_with_retry(client: OpenAI, **kwargs):
+    """Like _create_with_retry but returns a streaming response."""
+    delays = [5, 15, 30]
+    last_exc: Exception | None = None
+    for delay in delays + [None]:
+        try:
+            return client.chat.completions.create(**kwargs, stream=True)
+        except openai.RateLimitError as exc:
+            last_exc = exc
+            if delay is None:
+                raise
+            time.sleep(_rate_limit_delay(exc, delay))
+        except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "503" in msg or "UNAVAILABLE" in msg:
+                last_exc = exc
+                if delay is None:
+                    raise
+                time.sleep(delay)
+            else:
+                raise
+    raise last_exc  # type: ignore[misc]
+
+
+def stream_chat(messages: list[dict]):
+    """Generator that yields SSE strings for the full agentic loop."""
+    try:
+        yield from _stream_chat_inner(messages)
+    except Exception as exc:
+        yield _sse({"type": "error", "text": str(exc)})
+        yield _sse({"type": "done", "tool_calls": []})
+
+
+def _recover_tool_calls(failed_generation: str) -> list[dict]:
+    """Parse tool calls out of Groq's `failed_generation` error payload.
+
+    Llama 3.3 sometimes emits its legacy text format instead of native
+    tool-call tokens — e.g. `<function=name{"arg": 1}</function>` (note the
+    often-missing `>` after the name). Groq's parser rejects it, but the
+    intended call is fully recoverable from the error body, costing zero
+    extra API requests. Returns [] if nothing parseable is found.
+    """
+    recovered = []
+    pattern = r'<function=([A-Za-z0-9_]+)>?\s*(\{.*?\})\s*(?:</function>)?'
+    for i, m in enumerate(re.finditer(pattern, failed_generation, re.DOTALL)):
+        fn, args = m.group(1), m.group(2)
+        if fn not in TOOL_IMPLS:
+            continue
+        try:
+            json.loads(args)
+        except json.JSONDecodeError:
+            continue
+        recovered.append({
+            "id": f"recovered_{i}_{uuid.uuid4().hex[:8]}",
+            "function": {"name": fn, "arguments": args},
+        })
+    return recovered
+
+
+def _stream_chat_inner(messages: list[dict]):
+    client  = get_client()
+    convo   = [{"role": "system", "content": _system_prompt()}]
+    convo  += [{"role": m["role"], "content": m["content"]} for m in messages]
     tool_calls_made: list[dict] = []
 
     for _ in range(MAX_TOOL_ITERATIONS):
-        resp = _create_with_retry(client, model=MODEL, max_tokens=4096, tools=TOOLS, messages=convo)
-        msg = resp.choices[0].message
+        yield _sse({"type": "status", "text": "Thinking…"})
 
-        if not msg.tool_calls:
-            reply = _strip_thinking(msg.content or "")
-            return {"reply": reply, "tool_calls": tool_calls_made}
+        content_parts: list[str] = []
+        raw_tcs: list[dict]      = []
+        tf = ThinkingFilter()
+        last_keepalive = time.monotonic()
 
-        convo.append({
-            "role":       "assistant",
-            "content":    msg.content,
-            "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
-        })
+        stream = _stream_with_retry(
+            client, model=MODEL, max_tokens=4096,
+            tools=TOOLS, tool_choice="auto", messages=convo,
+        )
+        try:
+            for chunk in stream:
+                now = time.monotonic()
+                if now - last_keepalive > 5:
+                    yield ": keepalive\n\n"
+                    last_keepalive = now
 
-        for tc in msg.tool_calls:
-            args = json.loads(tc.function.arguments or "{}")
-            tool_calls_made.append({"tool": tc.function.name, "input": args})
-            impl = TOOL_IMPLS.get(tc.function.name)
-            try:
-                out = impl(**args) if impl else {"error": f"unknown tool {tc.function.name}"}
-                payload = json.dumps(out, default=str)
-                if len(payload) > MAX_TOOL_RESULT_CHARS:
-                    payload = payload[:MAX_TOOL_RESULT_CHARS] + "... [truncated — ask for a smaller limit]"
-            except Exception as exc:
-                payload = f"Tool error: {exc}"
-            convo.append({"role": "tool", "tool_call_id": tc.id, "content": payload})
+                choice = chunk.choices[0]
+                delta  = choice.delta
 
-    return {"reply": "I hit my tool-call limit — try a narrower question.", "tool_calls": tool_calls_made}
+                if delta.tool_calls:
+                    for tcd in delta.tool_calls:
+                        idx = tcd.index
+                        while len(raw_tcs) <= idx:
+                            raw_tcs.append({"id": "", "function": {"name": "", "arguments": ""}})
+                        if tcd.id:
+                            raw_tcs[idx]["id"] = tcd.id
+                        if tcd.function:
+                            if tcd.function.name:
+                                raw_tcs[idx]["function"]["name"] += tcd.function.name
+                            if tcd.function.arguments:
+                                raw_tcs[idx]["function"]["arguments"] += tcd.function.arguments
+
+                if delta.content:
+                    content_parts.append(delta.content)
+                    out = tf.feed(delta.content)
+                    if out:
+                        yield _sse({"type": "delta", "text": out})
+
+        except openai.APIError as exc:
+            # Groq rejects the generation when Llama emits its legacy text
+            # tool-call format instead of native tool-call tokens. The intended
+            # call is in the error body — recover it instead of retrying.
+            body   = getattr(exc, "body", None)
+            failed = body.get("failed_generation") if isinstance(body, dict) else None
+            if not failed:
+                raise
+            raw_tcs = _recover_tool_calls(failed)
+            if not raw_tcs:
+                # Unrecoverable garbage — answer from what we have without tools.
+                stream = _stream_with_retry(
+                    client, model=MODEL, max_tokens=4096, messages=convo,
+                )
+                for chunk in stream:
+                    now = time.monotonic()
+                    if now - last_keepalive > 5:
+                        yield ": keepalive\n\n"
+                        last_keepalive = now
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        content_parts.append(delta.content)
+                        out = tf.feed(delta.content)
+                        if out:
+                            yield _sse({"type": "delta", "text": out})
+
+        out = tf.flush()
+        if out:
+            yield _sse({"type": "delta", "text": out})
+
+        full_content = "".join(content_parts)
+
+        if raw_tcs:
+            convo.append({
+                "role":       "assistant",
+                "content":    full_content or None,
+                "tool_calls": [{"id": tc["id"], "type": "function", "function": tc["function"]} for tc in raw_tcs],
+            })
+            for tc in raw_tcs:
+                fn = tc["function"]["name"]
+                try:
+                    args = json.loads(tc["function"]["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    convo.append({"role": "tool", "tool_call_id": tc["id"],
+                                  "content": "Error: your tool arguments were not valid JSON. Retry the call with corrected arguments."})
+                    continue
+                tool_calls_made.append({"tool": fn, "input": args})
+
+                label = fn.replace("_", " ")
+                yield _sse({"type": "status", "text": f"Checking {label}…"})
+
+                impl = TOOL_IMPLS.get(fn)
+                try:
+                    result  = impl(**args) if impl else {"error": f"unknown tool {fn}"}
+                    payload = json.dumps(result, default=str)
+                    if len(payload) > MAX_TOOL_RESULT_CHARS:
+                        payload = payload[:MAX_TOOL_RESULT_CHARS] + "… [truncated]"
+                except Exception as exc:
+                    payload = f"Tool error: {exc}"
+
+                convo.append({"role": "tool", "tool_call_id": tc["id"], "content": payload})
+        else:
+            yield _sse({"type": "done", "tool_calls": tool_calls_made})
+            return
+
+    yield _sse({"type": "done", "tool_calls": tool_calls_made})
