@@ -32,7 +32,11 @@ from src.ml.dataset import asof_history_length  # noqa: E402
 
 EPS = 1e-9
 MIN_ANCHOR_AGE_WEEKS = 4   # anchors younger than this have no usable level
+WINSOR_Q = 0.995           # ratio-target clip quantile (computed on train)
 
+# Feature sets by model version (design doc Section 6). Every version is the
+# same RatioLGBM class with a different feature list.
+FEATURES_V0 = ["lead"]
 
 
 def long_sku_set(profiles: pd.DataFrame, cutoff) -> set[str]:
@@ -123,3 +127,77 @@ def structural_baseline(
     out["yhat"] = out["level"] * out["tgt_factor"]
     return out.rename(columns={"tgt_ds": "ds"})[["unique_id", "ds", "yhat"]]
 
+
+class RatioLGBM:
+    """Global LightGBM on the ratio target. v0: lead-only features."""
+
+    PARAMS = dict(
+        objective="regression_l1",
+        n_estimators=3000,          # cap; early stopping picks the real count
+        learning_rate=0.05,
+        num_leaves=31,
+        min_child_samples=200,
+        colsample_bytree=1.0,       # v0 has one feature; sampling is meaningless
+        verbose=-1,
+    )
+
+    def __init__(
+        self,
+        horizon: int,
+        features: list[str],
+    ):
+        # `features` is deliberately required, with no default. It used to
+        # default to the current version's feature list, which meant an older
+        # experiment script silently inherited whatever the newest version
+        # used: ml_05 (v0, lead-only) began training on the v1 ramp block when
+        # that block became the default, so v0 stopped being reproducible.
+        # Every experiment must now name the feature set it is testing.
+        self.horizon = horizon
+        self.features = list(features)
+        self.model = None
+        self.clip_hi = None
+
+    def fit(
+        self,
+        train: pd.DataFrame,
+        profiles: pd.DataFrame,
+        cutoff,
+        val_uids: set,
+    ) -> "RatioLGBM":
+        import lightgbm as lgb
+
+        mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=True)
+
+        self.clip_hi = float(mat["ratio"].quantile(WINSOR_Q))
+        mat["ratio"] = mat["ratio"].clip(upper=self.clip_hi)
+
+        is_val = mat["unique_id"].isin(val_uids)
+        tr, va = mat[~is_val], mat[is_val]
+
+        self.model = lgb.LGBMRegressor(**self.PARAMS)
+        self.model.fit(
+            tr[self.features], tr["ratio"],
+            sample_weight=tr["weight"],
+            eval_set=[(va[self.features], va["ratio"])],
+            eval_sample_weight=[va["weight"]],
+            eval_metric="l1",
+            callbacks=[lgb.early_stopping(100, verbose=False)],
+        )
+        return self
+
+    def predict(
+        self, train: pd.DataFrame, profiles: pd.DataFrame, cutoff
+    ) -> pd.DataFrame:
+        mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=False)
+        r_hat = np.clip(self.model.predict(mat[self.features]), 0.0, self.clip_hi)
+        out = mat[["unique_id", "tgt_ds", "level", "tgt_factor"]].copy()
+        out["yhat"] = r_hat * out["level"] * out["tgt_factor"]
+        return out.rename(columns={"tgt_ds": "ds"})[["unique_id", "ds", "yhat"]]
+
+    def importance(self) -> pd.DataFrame:
+        return (
+            pd.DataFrame({
+                "feature": self.features,
+                "gain": self.model.booster_.feature_importance("gain"),
+            }).sort_values("gain", ascending=False).reset_index(drop=True)
+        )
