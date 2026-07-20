@@ -71,18 +71,46 @@ def _engine():
     return create_engine(url, connect_args={"connect_timeout": 10, "sslmode": "require"})
 
 
-def load_raw() -> pd.DataFrame:
+def load_raw(max_age_days: int = 7, refresh: bool = False) -> pd.DataFrame:
+    """Load raw orders, re-pulling from the DB when the cache is stale.
+
+    Cache policy:
+      - fresh enough (newest order_date within `max_age_days` of today) → use it
+      - stale or refresh=True → full re-pull and REPLACE the parquet.
+        Full replace (not incremental append): recent order lines mutate as
+        pending orders register late, so an append-only update would freeze
+        the noisy tail at whatever it looked like on cache day.
+      - DB unreachable → fall back to the stale cache with a warning, so
+        backtests with old cutoffs still work offline.
+    """
+    cached = None
     if RAW_PATH.exists():
-        print(f"Loading cached raw orders from {RAW_PATH}")
-        return pd.read_parquet(RAW_PATH)
+        cached = pd.read_parquet(RAW_PATH)
+        age_days = (pd.Timestamp.now() - cached["order_date"].max()).days
+        if not refresh and age_days <= max_age_days:
+            print(f"Loading cached raw orders from {RAW_PATH} "
+                  f"(data through {cached['order_date'].max().date()})")
+            return cached
+        print(f"Cache is {age_days} days old (> {max_age_days}) — re-pulling...")
 
     print("Pulling raw orders from DB...")
-    engine = _engine()
-    with engine.connect() as conn:
-        raw = pd.read_sql("""
-            SELECT order_date, link_master_sku, link_qty, order_type, channel
-            FROM shipcore.fc_velocity_link_snapshot
-        """, conn, parse_dates=["order_date"])
+    try:
+        engine = _engine()
+        with engine.connect() as conn:
+            # NOTE: _forecast table = UNBOUNDED history (what production v1.py
+            # uses). The plain fc_velocity_link_snapshot is capped at 120 days
+            # — pulling from it here would truncate the cache on every refresh
+            # and break V1 backtests at older cutoffs.
+            raw = pd.read_sql("""
+                SELECT order_date, link_master_sku, link_qty, order_type, channel
+                FROM shipcore.fc_velocity_link_snapshot_forecast
+            """, conn, parse_dates=["order_date"])
+    except Exception as e:
+        if cached is not None:
+            print(f"  WARNING: DB pull failed ({type(e).__name__}) — using stale "
+                  f"cache through {cached['order_date'].max().date()}")
+            return cached
+        raise
 
     raw = raw.rename(columns={"link_master_sku": "unique_id"})
     raw["order_date"] = pd.to_datetime(raw["order_date"]).dt.normalize()

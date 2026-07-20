@@ -16,6 +16,15 @@ TRIM_TRAILING_WEEKS = 0   # train through the last complete week
 TEST_WEEKS = 10           # evaluation window ending at the trimmed tail
 N_CV_SPLITS = 6
 
+# ML track: pinned anchor for the evaluation windows (src/ml/dataset.py).
+# This is the last TRAINING week of the quarantined final-test split. All
+# rolling-origin windows are built by stepping back from this date, so the
+# weekly data refresh cannot silently shift the dev/final windows. New data
+# past the final-test window is ignored until this date is advanced on
+# purpose (which requires re-baselining recorded results). Set to None to
+# fall back to anchoring on the latest week in the data.
+ML_FINAL_TEST_CUTOFF = "2026-05-04"
+
 # Conformal prediction interval levels.
 # level=N in statsforecast means the CENTRAL N% interval: lower = P((100-N)/2), upper = P((100+N)/2).
 # So level=70 → [P15, P85]; level=90 → [P5, P95]. The upper bound is NOT the Nth percentile.
@@ -27,7 +36,8 @@ CV_THRESHOLD = 1.5              # coefficient of variation cutoff for lumpy dema
 MEAN_INTERMITTENT_CUTOFF = 3.0  # SKUs above this mean go to smooth even if high zero_pct
 
 # History-length boundaries (active training weeks)
-SHORT_HISTORY_WEEKS   = 50   # smooth short/full boundary (< 50 → short)
+SHORT_HISTORY_WEEKS   = 50   # < 50 → short
+MEDIUM_HISTORY_WEEKS  = 104  # 50–104 → medium; ≥ 104 → full (2+ seasonal cycles)
 MIN_SIM_HISTORY_WEEKS = 13   # minimum active weeks to be included in segment simulation
 
 # Conformal prediction interval windows
