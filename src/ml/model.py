@@ -38,6 +38,7 @@ WINSOR_Q = 0.995           # ratio-target clip quantile (computed on train)
 # same RatioLGBM class with a different feature list.
 FEATURES_V0 = ["lead"]
 FEATURES_V1 = ["lead", "ramp_4_12", "y_last_r", "lag_1_r"]  # + ramp block
+FEATURES_V4 = FEATURES_V1 + ["is_long"]                      # + segment indicator
 
 
 def long_sku_set(profiles: pd.DataFrame, cutoff) -> set[str]:
@@ -94,10 +95,25 @@ def build_matrix(
     growth response can offset the January over-cut that sank it at baseline
     level (Section 4.17). The structural baseline is unaffected.
     """
-    long_uids = long_sku_set(profiles, cutoff)
+    # Two different notions of "long" that must not be conflated:
+    #   seg_long_uids  the SKU's actual segment as of the cutoff. This is the
+    #                  is_long FEATURE and is never affected by deseas_all.
+    #   seas_long_uids which SKUs get the seasonal round-trip. Under deseas_all
+    #                  (v3+) that is every SKU, which is a treatment choice and
+    #                  says nothing about segment membership.
+    # Deriving the feature from seas_long_uids would make it constant 1 under
+    # deseas_all, so the model would silently learn nothing from it.
+    seg_long_uids = long_sku_set(profiles, cutoff)
+    seas_long_uids = seg_long_uids
     if deseas_all:
-        long_uids = set(train["unique_id"].unique())  # treat every SKU as long
-    df = adjusted_series(train, long_uids)
+        seas_long_uids = set(train["unique_id"].unique())  # treat every SKU as long
+    df = adjusted_series(train, seas_long_uids)
+
+    # Segment indicator (v4, see the Section 6 version log). As-of the cutoff via
+    # asof_history_length, not the present-day snapshot label, for the same
+    # reason scoring is as-of (Section 4.15): a SKU that is long today may have
+    # been short at an older cutoff, and labelling it long would leak.
+    df["is_long"] = df["unique_id"].isin(seg_long_uids).astype("int8")
 
     g = df.groupby("unique_id")["y_adj"]
     df["level"] = (
@@ -145,9 +161,12 @@ def build_matrix(
         mat["ratio"] = mat["tgt_y_adj"] / mat["level"].clip(lower=EPS)
         mat["weight"] = mat["level"]
     else:
-        is_long = mat["unique_id"].isin(long_uids).to_numpy()
+        # Reseasonalization follows the seasonal-treatment set, NOT the segment
+        # feature: a SKU's forecast must be scaled back by the same factor its
+        # level was divided by.
+        gets_factor = mat["unique_id"].isin(seas_long_uids).to_numpy()
         tgt_factors = _factors(mat["tgt_ds"]).to_numpy()
-        mat["tgt_factor"] = np.where(is_long, tgt_factors, 1.0)
+        mat["tgt_factor"] = np.where(gets_factor, tgt_factors, 1.0)
     return mat
 
 

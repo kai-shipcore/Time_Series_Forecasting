@@ -55,3 +55,11 @@ detail lives in the design document and codebase guide, not here.
   different numbers in different tables. None of the conclusions changed. Also wrote down
   the rule for when an accuracy difference counts as real rather than chance, which had
   been applied but never actually defined.
+
+- 2026-07-20: Built and evaluated model version v4, which tells the model whether each
+  product is long-established or new. It fixed the problem it was designed to fix, giving
+  the best result any version has achieved for established products in the post-holiday
+  period, but it did so by shifting effort away from newer products and making those
+  noticeably worse. Rejected on that trade. The finding points clearly at the next step:
+  the model needs to be prevented from favouring one group over the other, rather than
+  simply being told the two groups differ.

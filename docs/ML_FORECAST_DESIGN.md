@@ -858,6 +858,42 @@ no version constraints and `lightgbm` was absent from the project virtual enviro
 entirely, which leaves the solver free to move underneath results that are compared at the
 third decimal.
 
+### 4.23 Rejected: v4 segment indicator. The model trades short SKUs for long ones
+
+v4 added one feature to v3, a binary `is_long` taken as of the cutoff. The hypothesis was
+that the shared global trees could not separate the two populations, so splits driven by
+short SKUs also applied to long ones, and that an explicit indicator would repair the
+Dec-Feb long regression blocking v3 (Section 4.20).
+
+The mechanism worked exactly as predicted for long SKUs. Dec-Feb long improved from 0.3145
+to 0.2367, significantly better than v3 and no longer a regression against the baseline;
+it is the best figure any version has posted in that cell. The indicator was genuinely
+used, carrying 11.4% of total gain in the spring window, and the Dec-Feb tree count rose
+from 37 to 250.
+
+It failed on the other side. The Mar-May short win was lost (0.1863 to 0.2311) and Dec-Feb
+short became a significant regression against the baseline (0.1943 to 0.2474), with
+short-segment bias roughly tripling in both windows. One of three pre-registered criteria
+was met, so v4 is rejected.
+
+The reason appears to be capacity allocation rather than a fault in the feature. Long SKUs
+are a minority of SKUs but carry 72% to 98% of the training weight across the three
+windows, because they have more anchor rows and rows are weighted by demand level. Before
+v4 the model could not act on that imbalance, because it had no way to tell the segments
+apart. The indicator gave it one, and under a demand-weighted loss the profitable move is
+to specialise on the segment carrying the weight. The model did exactly what it was asked
+to do.
+
+This reframes the problem. The Section 4.20 diagnosis, that segment interaction is the
+obstacle, is supported: separating the segments demonstrably fixes the long side. What is
+now clear is that an indicator alone lets the model choose which segment to serve, and the
+loss function makes that choice for it. The remaining candidates from Section 4.20 address
+this directly: per-segment sample weighting, which removes the imbalance the model is
+exploiting, or separate models per segment, which removes the choice entirely. Separate
+models are the cleaner test of the hypothesis, since they cannot trade one segment against
+the other, at the cost of abandoning the cross-segment transfer that motivates a global
+model (Section 1.2). Experiment: `scripts/ml_09_lgbm_v4.py`.
+
 ---
 
 ## 5. Feature Backlog & Open Questions
@@ -960,6 +996,7 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v1 | + ramp feature block | rejected | Section 4.19 |
 | v2 | trajectory features computed on deseasonalized data for all SKUs | rejected | Section 4.20 |
 | v3 | fully deseasonalized ML path for all SKUs (features, targets, output) | closest yet, not adopted | Section 4.20 |
+| v4 | + `is_long` segment indicator | rejected | Section 4.23 |
 
 ### v-base (July 2026)
 
@@ -1073,3 +1110,76 @@ because it was measured after the 2026-07-20 weekly refresh and they were measur
 it. That discrepancy is what prompted pinning the data (Section 4.21). Every table in this
 section has since been re-measured on the pinned snapshot, so the baseline row is now
 identical across all of them.
+
+### v4 (July 2026)
+
+- **Change from v3:** one feature added, `is_long`, a binary segment indicator (1 for
+  medium/full history, 0 for short) taken as of the forecast cutoff via
+  `asof_history_length`, never from the present-day snapshot. Everything else is v3
+  unchanged, including `deseas_all=True`. One hypothesis at a time.
+- **Hypothesis:** across v1, v2 and v3 the Dec-Feb long segment oscillated (0.3208,
+  0.3348, 0.3145) while long SKUs' own features never changed, which points at the shared
+  global trees rather than any feature (Section 4.20). Without a segment feature the trees
+  cannot separate the two populations, so splits driven by the numerous short SKUs also
+  apply to long ones. An explicit indicator gives the model the option to condition on
+  segment, which should repair the Dec-Feb long regression that blocks v3.
+
+**Pass criteria, stated before running:**
+
+1. Dec-Feb long holds the baseline: no significant regression against v-base (0.2764).
+   This is the single criterion v3 failed and the reason v4 exists.
+2. The Mar-May short win survives: still significantly better than v-base (0.2097).
+3. No new significant regression against v-base in any other decision cell relative to v3.
+
+**Disconfirming evidence, also pre-registered:** if `is_long` carries near-zero gain in
+feature importance, the hypothesis is wrong regardless of what the WAPE numbers do, and
+any movement should be read as noise rather than as the indicator working.
+
+**A caution recorded before seeing results.** Long SKUs are a minority of SKUs but a
+majority of the training signal, because they have more history and therefore more anchor
+rows, and because rows are weighted by demand level. Measured on the pinned snapshot:
+
+| window | long share of SKUs | of training rows | of training weight |
+|---|---|---|---|
+| Mar-May | 20.2% | 53.6% | 72.5% |
+| Dec-Feb | 20.2% | 67.8% | 83.8% |
+| Oct-Dec | 22.0% | 91.7% | 98.1% |
+
+If the Dec-Feb long problem is caused by short SKUs dominating the fit, that framing is
+questionable on these numbers, since long SKUs already carry 83.8% of the weight in that
+window. An indicator may therefore be the wrong instrument, and per-segment sample
+weighting or separate models (the other candidates in Section 4.20) may be needed instead.
+This is stated in advance so that a null result is read as informative rather than
+disappointing.
+
+**Status: rejected (Section 4.23). One of three criteria met.**
+
+| Pooled WAPE | v4 | v3 | v-base | V1 | v4 vs base | significant | v4 vs v3 | significant |
+|---|---|---|---|---|---|---|---|---|
+| short, Mar-May | 0.2311 | **0.1863** | 0.2097 | 0.4198 | +0.0214 | no | +0.0448 | yes |
+| short, Dec-Feb | 0.2474 | 0.1943 | **0.1788** | 0.3017 | +0.0686 | yes | +0.0531 | yes |
+| long, Mar-May | 0.1376 | 0.1345 | **0.1321** | 0.3195 | +0.0055 | no | +0.0031 | no |
+| long, Dec-Feb | **0.2367** | 0.3145 | 0.2764 | 0.4044 | −0.0397 | no | −0.0778 | yes |
+| long, Oct-Dec | **0.1004** | 0.1011 | 0.1209 | 0.0847 | −0.0205 | no | −0.0007 | no |
+| short, Oct-Dec (ref) | **0.1799** | 0.1826 | 0.4861 | 0.7893 | −0.3062 | (reference) | −0.0027 | (reference) |
+
+Bias: short +17.6%, +16.9%, −3.2%; long −2.7%, +20.7%, +1.0%.
+Criterion 1 met. Dec-Feb long, the cell that blocked v3, improved from 0.3145 to 0.2367,
+a significant gain over v3 and now below the baseline's 0.2764 rather than significantly
+above it. It is also the best Dec-Feb long figure of any version, and its bias improved
+from +29.2% to +20.7% against a baseline of +24.4%.
+
+Criteria 2 and 3 failed, in the same direction. The Mar-May short win did not survive
+(0.1863 to 0.2311, a significant loss against v3 and no longer a win against the
+baseline), and Dec-Feb short became a new significant regression against the baseline
+(0.1943 to 0.2474). Short-segment bias roughly tripled in both windows, to +17.6% and
++16.9%.
+
+The indicator was used, so the disconfirming check does not apply: `is_long` carried
+11.37% of total gain in Mar-May and 3.54% in Dec-Feb, though only 0.45% in Q4. Tree counts
+also moved sharply in Dec-Feb, from 37 to 250, meaning the model found substantially more
+structure to fit once it could condition on segment.
+
+Ramp cohort: improved in Mar-May (0.2509 against v3's 0.2704) and Q4 (0.1664 against
+0.1691), and degraded badly in Dec-Feb (0.2353 against 0.1847, bias +16.6% against +5.6%),
+which is the same short-segment damage seen in the headline numbers.
