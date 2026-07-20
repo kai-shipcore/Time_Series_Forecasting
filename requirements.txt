@@ -1,12 +1,19 @@
-pandas
-numpy
-statsforecast
+# ML forecasting track: pinned to exact versions. Model results are compared
+# across versions at the third decimal (design doc Section 1.5), which is finer
+# than the drift an unpinned solver or BLAS update can introduce, so these must
+# not float. Pinned to the versions the recorded results were measured on.
+pandas==2.3.3
+numpy==2.4.6
+scikit-learn==1.9.0
+lightgbm==4.7.0
+statsforecast==2.0.3
+
+# Production / API dependencies, intentionally unpinned.
 sqlalchemy
 psycopg2-binary
 python-dotenv
 jupyter
 matplotlib
-scikit-learn
 fastapi
 uvicorn[standard]
 plotly

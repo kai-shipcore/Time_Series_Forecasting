@@ -1,0 +1,31 @@
+{
+  "snapshot": "2026-07-20",
+  "created_at": "2026-07-20T10:38:25-07:00",
+  "source": "/sessions/eloquent-practical-carson/mnt/Time_Series_Forecasting/data/processed",
+  "purpose": "Pinned inputs for the ML development track (src/ml/dataset.py). Immutable: the weekly cron refreshes data/processed/ only.",
+  "weekly_rows": 379390,
+  "weekly_skus": 3449,
+  "week_first": "2024-06-17",
+  "week_last": "2026-07-20",
+  "n_weeks": 110,
+  "profile_rows": 3449,
+  "buckets": {
+    "intermittent": 3002,
+    "smooth": 447
+  },
+  "history_length": {
+    "full": 3043,
+    "short": 377,
+    "medium": 29
+  },
+  "files": {
+    "sales_clean.parquet": {
+      "md5": "c0e73501c9f5bd01a84ed7344bcf5332",
+      "bytes": 148036
+    },
+    "sku_profiles.csv": {
+      "md5": "8481e4868cc4420c8d0b175f92b88659",
+      "bytes": 705593
+    }
+  }
+}

@@ -27,23 +27,71 @@ if str(ROOT) not in sys.path:
 
 from config import (  # noqa: E402
     DATA_PROCESSED,
+    DATA_SNAPSHOTS,
     MEDIUM_HISTORY_WEEKS,
     MIN_SIM_HISTORY_WEEKS,
+    ML_DATA_SNAPSHOT,
     ML_FINAL_TEST_CUTOFF,
     SHORT_HISTORY_WEEKS,
     TEST_WEEKS,
     TRIM_TRAILING_WEEKS,
 )
 
-def load_weekly() -> tuple[pd.DataFrame, pd.DataFrame]:
+_REQUIRED_FILES = ("sales_clean.parquet", "sku_profiles.csv")
+
+
+def data_dir(snapshot: str | None = ML_DATA_SNAPSHOT) -> Path:
+    """Where the ML track reads its inputs from.
+
+    Returns the pinned snapshot directory when `snapshot` is set, otherwise
+    the live data/processed directory. Pinning matters because the weekly cron
+    rewrites data/processed in place: ML_FINAL_TEST_CUTOFF fixes which weeks a
+    window covers, but not the actuals inside it, so unpinned results drift
+    between runs and stop being comparable across model versions.
+
+    Production code does not call this. It reads data/processed directly and
+    keeps following the weekly refresh.
+    """
+    if snapshot is None:
+        return DATA_PROCESSED
+
+    path = DATA_SNAPSHOTS / str(snapshot)
+    if not path.is_dir():
+        available = (
+            ", ".join(sorted(p.name for p in DATA_SNAPSHOTS.iterdir() if p.is_dir()))
+            if DATA_SNAPSHOTS.is_dir()
+            else "none"
+        )
+        raise FileNotFoundError(
+            f"ML_DATA_SNAPSHOT is '{snapshot}' but {path} does not exist. "
+            f"Available snapshots: {available}. Create one with "
+            f"scripts/ml_snapshot_data.py, or set ML_DATA_SNAPSHOT = None in "
+            f"config.py to use the live data in data/processed."
+        )
+
+    missing = [f for f in _REQUIRED_FILES if not (path / f).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"Snapshot '{snapshot}' is incomplete: missing {', '.join(missing)} "
+            f"in {path}. Recreate it with scripts/ml_snapshot_data.py."
+        )
+    return path
+
+
+def load_weekly(snapshot: str | None = ML_DATA_SNAPSHOT) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return (weekly, profiles).
 
     weekly:   unique_id / ds / y — zero-filled W-MON grid, trailing weeks
               trimmed, ramp-up SKUs trimmed to train_start.
     profiles: sku_profiles.csv with parsed dates (bucket, history_length, …).
+
+    Reads from the pinned snapshot (config.ML_DATA_SNAPSHOT) by default so
+    that every experiment is measured on identical data regardless of when it
+    runs. Pass snapshot=None to read the live, weekly-refreshed data instead.
     """
-    weekly = pd.read_parquet(DATA_PROCESSED / "sales_clean.parquet")
-    profiles = pd.read_csv(DATA_PROCESSED / "sku_profiles.csv")
+    src = data_dir(snapshot)
+    weekly = pd.read_parquet(src / "sales_clean.parquet")
+    profiles = pd.read_csv(src / "sku_profiles.csv")
     weekly["ds"] = pd.to_datetime(weekly["ds"])
     profiles["train_start"] = pd.to_datetime(profiles["train_start"])
 

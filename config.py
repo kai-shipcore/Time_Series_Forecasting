@@ -25,6 +25,25 @@ N_CV_SPLITS = 6
 # fall back to anchoring on the latest week in the data.
 ML_FINAL_TEST_CUTOFF = "2026-05-04"
 
+# ML track: pinned DATA snapshot for the evaluation windows (src/ml/dataset.py).
+# ML_FINAL_TEST_CUTOFF pins which WEEKS each window covers; this pins what DATA
+# is in them. The weekly cron rewrites data/processed/ in place, which revises
+# recent actuals and the SKU profile snapshot, so a model evaluated last week
+# and a model evaluated today are not measured on the same numbers even with
+# identical windows (the v3 entry in the design doc records exactly this drift).
+#
+# When set to a folder name under data/snapshots/, the ML harness reads
+# sales_clean.parquet and sku_profiles.csv from there instead of from
+# data/processed/. Set to None to follow the live refreshed data.
+#
+# This affects the ML development track ONLY. The production pipeline
+# (run_forward_forecast.py, backtest.py, the FastAPI app) continues to read
+# data/processed/ and is unaffected by this setting. Advancing the snapshot is
+# a deliberate act that requires re-baselining recorded results; create a new
+# one with scripts/ml_snapshot_data.py.
+ML_DATA_SNAPSHOT = "2026-07-20"
+DATA_SNAPSHOTS = ROOT / "data" / "snapshots"
+
 # Conformal prediction interval levels.
 # level=N in statsforecast means the CENTRAL N% interval: lower = P((100-N)/2), upper = P((100+N)/2).
 # So level=70 → [P15, P85]; level=90 → [P5, P95]. The upper bound is NOT the Nth percentile.
