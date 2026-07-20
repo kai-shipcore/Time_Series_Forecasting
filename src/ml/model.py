@@ -68,6 +68,7 @@ def build_matrix(
     profiles: pd.DataFrame,
     for_training: bool,
     deseas_features: bool = True,
+    deseas_all: bool = False,
 ) -> pd.DataFrame:
     """One row per (unique_id, anchor week, lead).
 
@@ -85,8 +86,17 @@ def build_matrix(
     let short SKUs' holiday bumps read as growth. Identical for long SKUs
     either way.
 
+    deseas_all (v3, design Section 4.20): when True, the ENTIRE path is
+    seasonally consistent for every SKU: levels and targets are computed on
+    the factor-adjusted series, and predictions are reseasonalized by the
+    target week's factor, for short SKUs as well as long. Tests whether full
+    deseasonalization becomes viable for short SKUs once the model's learned
+    growth response can offset the January over-cut that sank it at baseline
+    level (Section 4.17). The structural baseline is unaffected.
     """
     long_uids = long_sku_set(profiles, cutoff)
+    if deseas_all:
+        long_uids = set(train["unique_id"].unique())  # treat every SKU as long
     df = adjusted_series(train, long_uids)
 
     g = df.groupby("unique_id")["y_adj"]
@@ -173,6 +183,7 @@ class RatioLGBM:
         horizon: int,
         features: list[str],
         deseas_features: bool = True,
+        deseas_all: bool = False,
     ):
         # `features` is deliberately required, with no default. It used to
         # default to the current version's feature list, which meant an older
@@ -183,6 +194,7 @@ class RatioLGBM:
         self.horizon = horizon
         self.features = list(features)
         self.deseas_features = deseas_features
+        self.deseas_all = deseas_all
         self.model = None
         self.clip_hi = None
 
@@ -196,7 +208,7 @@ class RatioLGBM:
         import lightgbm as lgb
 
         mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=True,
-                           deseas_features=self.deseas_features)
+                           deseas_features=self.deseas_features, deseas_all=self.deseas_all)
 
         self.clip_hi = float(mat["ratio"].quantile(WINSOR_Q))
         mat["ratio"] = mat["ratio"].clip(upper=self.clip_hi)
@@ -219,7 +231,7 @@ class RatioLGBM:
         self, train: pd.DataFrame, profiles: pd.DataFrame, cutoff
     ) -> pd.DataFrame:
         mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=False,
-                           deseas_features=self.deseas_features)
+                           deseas_features=self.deseas_features, deseas_all=self.deseas_all)
         r_hat = np.clip(self.model.predict(mat[self.features]), 0.0, self.clip_hi)
         out = mat[["unique_id", "tgt_ds", "level", "tgt_factor"]].copy()
         out["yhat"] = r_hat * out["level"] * out["tgt_factor"]
