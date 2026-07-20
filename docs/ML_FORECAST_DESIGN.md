@@ -176,7 +176,18 @@ noise of a single-window paired WAPE difference at roughly ±0.011 to ±0.014 st
 deviation, so single-window differences of that size are indistinguishable from chance.
 For borderline calls, the same bootstrap decides: a change is adopted only if its mean
 improvement exceeds twice the bootstrap standard error of the paired difference. When a
-change fails these criteria, the simpler design wins by default. The smooth/long segment's
+change fails these criteria, the simpler design wins by default.
+
+**The "significant" column** in the Section 6 version tables reports whether a single
+window's difference is distinguishable from SKU sampling noise, by the same
+two-standard-error threshold applied to that one window: `|delta| > 2 x se`, where both
+come from `bootstrap_delta`. It is a noise test, not an adoption test; adoption requires
+the sign consistency and three-window mean above. The rule is implemented as
+`src/ml/evaluate.py:is_significant` so that the tables cannot drift from it. It was
+previously undefined, which meant the labels could not be reproduced or checked. The
+alternative reading, that the 95% interval excludes zero, agrees with this rule on all 24
+version, window and segment cells measured on the pinned snapshot, so the choice does not
+currently change any label. The smooth/long segment's
 former "medium" subgroup, fewer than thirty SKUs, is reported for completeness but never
 decides an adoption on its own. For the smooth/short segment, the Oct-Dec 2025 window is
 excluded from the decision process entirely: only 14 short SKUs were eligible at that
@@ -354,15 +365,16 @@ The segment split of the seasonal treatment is the outcome of measurement, not
 assumption; see Sections 4.10 and 4.17. Segments are as of the forecast cutoff
 (Section 4.15).
 
-Baseline floor on the development windows (pooled WAPE):
+Baseline floor on the development windows (pooled WAPE), measured on the pinned
+2026-07-20 snapshot:
 
 | Window | smooth/short | smooth/long |
 |---|---|---|
-| Mar-May 2026 (dev) | 0.2076 | 0.1326 |
-| Dec-Feb (post-holiday) | 0.1783 | 0.2764 |
-| Oct-Dec (Q4) | 0.4854 (reference only) | 0.1209 |
+| Mar-May 2026 (dev) | 0.2097 | 0.1321 |
+| Dec-Feb (post-holiday) | 0.1788 | 0.2764 |
+| Oct-Dec (Q4) | 0.4861 (reference only) | 0.1209 |
 
-Bias at the same points: short −7.2%, +1.6%, −48.5%; long −5.6%, +24.4%, −8.3%.
+Bias at the same points: short −7.1%, +1.7%, −48.6%; long −5.6%, +24.4%, −8.3%.
 
 The first learned candidate, LightGBM with a lead-only feature (a global growth-drift
 correction), was tested and rejected (Section 4.18); the structural baseline above
@@ -657,8 +669,8 @@ window, where raw WA12 carries the Q4 peak into January and over-forecasts by +5
 0.077 (the Q4 window). It is adopted for the long segment.
 
 For short-history SKUs, deseasonalization failed the decision rule: a trivial improvement
-in spring (0.208 to 0.200) against a large loss in the post-holiday window (0.178 to
-0.287, bias moving from +1.6% to −22.5%). The mechanism: the hand-set factors encode
+in spring (0.2097 to 0.200) against a large loss in the post-holiday window (0.1788 to
+0.287, bias moving from +1.7% to −22.5%). The mechanism: the hand-set factors encode
 mature seasonal behavior, and young SKUs express a muted version of it because their
 growth partially offsets the January trough. An age-damping compromise was then tested
 (`scripts/ml_04_alpha_search.py`): short SKUs received factor^alpha, with alpha searched
@@ -683,10 +695,10 @@ in the December-cutoff model), which is the portfolio's average growth expressed
 number, and the direct cause of the chronic underforecasting that motivates this project.
 
 Applied unconditionally, however, the correction failed the decision rule. It won the
-spring window (short segment: 0.196 versus the baseline's 0.208, bootstrap-significant)
+spring window (short segment: 0.1957 versus the baseline's 0.2097, bootstrap-significant)
 and the Q4 reference window, both periods where demand kept growing. It lost the
-post-holiday window in both segments (long: 0.408 versus 0.276; short: 0.213 versus
-0.178, both significant), because demand contracts there and the model pushed its growth
+post-holiday window in both segments (long: 0.4163 versus 0.2764; short: 0.2160 versus
+0.1788, both significant), because demand contracts there and the model pushed its growth
 correction anyway, on top of the already over-forecasting January reseasonalization. By
 design the model cannot see the calendar (Section 4.9), so it cannot learn an exception
 for the trough.
@@ -709,12 +721,12 @@ as the top feature in every window).
 
 The outcome split exactly along data cleanliness. For long SKUs, whose trajectories are
 measured net of seasonality, v1 met the pre-registered criterion: it repaired v0's
-post-holiday failure (0.268 versus v0's 0.408, significant) and improved the other
+post-holiday failure (0.3208 versus v0's 0.4163, significant) and improved the other
 windows directionally, though no window individually beat the baseline significantly and
 the three-window mean fell short of the adoption bar. For short SKUs, whose trajectories
 are raw, the December cutoff presented holiday-inflated ramps; the model applied its
 correctly learned growth response to a seasonal artifact and over-forecast January by
-+53% (WAPE 0.547 versus the baseline's 0.178). The ramp cohort improved substantially in
++54% (WAPE 0.5555 versus the baseline's 0.1788). The ramp cohort improved substantially in
 spring and Q4 and was destroyed in the post-holiday window by the same mechanism.
 
 Verdict: rejected under the decision rule (inconsistent signs for short; insufficient
@@ -729,8 +741,9 @@ unchanged. Experiment: `scripts/ml_06_lgbm_v1.py`.
 
 v2 implemented the Section 4.19 direction: trajectory features computed on the
 factor-adjusted series for all SKUs, everything else unchanged. It reduced the v1
-short-segment Dec-Feb failure by about a third (0.547 to 0.413) but remained far worse
-than the baseline (0.179), with a +39% residual over-forecast. The residual ruled out
+short-segment Dec-Feb failure by about a third, measured as excess over the baseline
+(0.5555 to 0.4230 against a baseline of 0.1788, so 0.3767 of excess down to 0.2442), but
+remained far worse than the baseline, with a +40% residual over-forecast. The residual ruled out
 the "factors over-clean young SKUs" explanation, which predicts under-forecasting, and
 exposed the deeper issue: for short SKUs the training target itself was still seasonal.
 The model, unable to see the calendar, attributed seasonal target movements to
@@ -744,16 +757,16 @@ targets, output scaling), while the structural baseline kept its Section 4.17 fo
 conditionally reopened Section 4.17 at model level, on the argument that the baseline
 experiment rejected full deseasonalization without its necessary companion: a growth
 model to offset the January over-cut for young, growing SKUs. The argument held. The
-Dec-Feb short catastrophe disappeared (0.196 versus baseline 0.179, a statistical tie),
-the Mar-May short win persisted (0.184 versus 0.210, significant), Oct-Dec short
-(reference) improved dramatically (0.183 versus 0.486), and bias reached the best
+Dec-Feb short catastrophe disappeared (0.1943 versus baseline 0.1788, a statistical tie),
+the Mar-May short win persisted (0.1863 versus 0.2097, significant), Oct-Dec short
+(reference) improved dramatically (0.1826 versus 0.4861), and bias reached the best
 calibration of any version (within ±6% everywhere except the known Dec-Feb long
 segment). The predicted under-forecast signature for muted young-SKU seasonality did not
 appear, so short-specific damped factors remain unneeded for now.
 
 v3 is nevertheless not adopted: Dec-Feb long regressed significantly against the
-baseline (0.312 versus 0.276), violating the third pre-registered criterion. Across
-v1/v2/v3 the Dec-Feb long segment has oscillated (0.268, 0.334, 0.312) while long SKUs'
+baseline (0.3145 versus 0.2764), violating the third pre-registered criterion. Across
+v1/v2/v3 the Dec-Feb long segment has oscillated (0.3208, 0.3348, 0.3145) while long SKUs'
 own features never changed, implicating the shared global trees rather than any feature.
 Candidate directions, undecided at time of writing: a segment indicator feature, separate
 models per segment, per-segment sample weighting, or a volatility feature that damps
@@ -930,6 +943,16 @@ chronology. WAPE numbers are pooled per segment. Short-segment decisions use the
 the Dec-Feb window only; Oct-Dec short is reference (Section 4.16). "BEST" marks the version currently
 serving as the reference to beat.
 
+**All figures in this section were re-measured on the pinned 2026-07-20 snapshot**, so
+every version is scored on identical data and the tables are directly comparable to each
+other. Previously they were not: v0, v1 and v2 had been recorded before the 2026-07-20
+refresh and v3 after it, which left the same model carrying different numbers in different
+tables. A model appearing in more than one table below now shows the same value in each,
+and the v-base row is identical everywhere. The original pre-refresh figures are preserved
+in the git history at the tagged version commits (Section 4.22); they are not reproducible,
+because the data they were measured on was never snapshotted. The verdicts are unchanged:
+re-measurement moved individual numbers but did not reverse any adoption decision.
+
 | Version | Change from previous | Status | Details |
 |---|---|---|---|
 | v-base | structural baseline, no learned parameters | **BEST** | Sections 3, 4.17 |
@@ -946,8 +969,10 @@ serving as the reference to beat.
 
 | Pooled WAPE | Mar-May | Dec-Feb | Oct-Dec |
 |---|---|---|---|
-| smooth/short | 0.208 | 0.178 | (0.485) |
-| smooth/long | 0.133 | 0.276 | 0.121 |
+| smooth/short | 0.2097 | 0.1788 | (0.4861) |
+| smooth/long | 0.1321 | 0.2764 | 0.1209 |
+
+Bias: short −7.1%, +1.7%, −48.6%; long −5.6%, +24.4%, −8.3%.
 
 ### v0 (July 2026)
 
@@ -957,14 +982,16 @@ serving as the reference to beat.
 - **Lesson:** growth correction must be conditioned on each SKU's own trajectory, not
   applied to every SKU equally.
 
-| Pooled WAPE | v0 | v-base | delta | significant |
+| Pooled WAPE | v0 | v-base | v0 vs base | significant |
 |---|---|---|---|---|
-| short, Mar-May | **0.196** | 0.208 | −0.012 | yes |
-| short, Dec-Feb | 0.213 | **0.178** | +0.035 | yes |
-| long, Mar-May | 0.129 | 0.133 | −0.004 | no |
-| long, Dec-Feb | 0.408 | **0.276** | +0.132 | yes |
-| long, Oct-Dec | 0.111 | 0.121 | −0.010 | no |
-| short, Oct-Dec (ref) | 0.418 | 0.485 | −0.067 | (reference) |
+| short, Mar-May | **0.1957** | 0.2097 | −0.0140 | yes |
+| short, Dec-Feb | 0.2160 | **0.1788** | +0.0372 | yes |
+| long, Mar-May | **0.1275** | 0.1321 | −0.0046 | no |
+| long, Dec-Feb | 0.4163 | **0.2764** | +0.1399 | yes |
+| long, Oct-Dec | **0.1117** | 0.1209 | −0.0092 | no |
+| short, Oct-Dec (ref) | **0.4165** | 0.4861 | −0.0696 | (reference) |
+
+Bias: short −2.7%, +15.2%, −41.7%; long −1.0%, +40.0%, +4.4%.
 
 ### v1 (July 2026)
 
@@ -980,12 +1007,14 @@ serving as the reference to beat.
 
 | Pooled WAPE | v1 | v0 | v-base | v1 vs base | significant |
 |---|---|---|---|---|---|
-| short, Mar-May | **0.186** | 0.196 | 0.208 | −0.022 | yes |
-| short, Dec-Feb | 0.547 | 0.213 | **0.178** | +0.369 | yes |
-| long, Mar-May | 0.134 | 0.129 | 0.133 | +0.001 | no |
-| long, Dec-Feb | **0.268** | 0.408 | 0.276 | −0.008 | no (vs v0: −0.140, yes) |
-| long, Oct-Dec | **0.100** | 0.111 | 0.121 | −0.021 | no |
-| short, Oct-Dec (ref) | **0.220** | 0.418 | 0.485 | −0.265 | (reference) |
+| short, Mar-May | **0.1742** | 0.1957 | 0.2097 | −0.0355 | yes |
+| short, Dec-Feb | 0.5555 | 0.2160 | **0.1788** | +0.3767 | yes |
+| long, Mar-May | 0.1346 | **0.1275** | 0.1321 | +0.0025 | no |
+| long, Dec-Feb | 0.3208 | 0.4163 | **0.2764** | +0.0444 | yes |
+| long, Oct-Dec | **0.1030** | 0.1117 | 0.1209 | −0.0179 | no |
+| short, Oct-Dec (ref) | **0.2320** | 0.4165 | 0.4861 | −0.2541 | (reference) |
+
+Bias: short −2.0%, +54.2%, −14.0%; long −0.0%, +30.0%, +1.3%.
 
 Ramp cohort: large improvements in the Mar-May window (0.249 versus baseline 0.324) and the Oct-Dec window (0.196
 versus 0.353); destroyed in the Dec-Feb window (0.540 versus 0.161) by the same mechanism as above.
@@ -1004,12 +1033,14 @@ versus 0.353); destroyed in the Dec-Feb window (0.540 versus 0.161) by the same 
 
 | Pooled WAPE | v2 | v1 | v-base | v2 vs base | significant |
 |---|---|---|---|---|---|
-| short, Mar-May | **0.182** | 0.186 | 0.208 | −0.025 | yes |
-| short, Dec-Feb | 0.413 | 0.547 | **0.178** | +0.235 | yes (vs v1: −0.134, yes) |
-| long, Mar-May | 0.139 | 0.134 | **0.133** | +0.007 | no |
-| long, Dec-Feb | 0.312 | 0.268 | **0.276** | +0.035 | yes |
-| long, Oct-Dec | **0.098** | 0.100 | 0.121 | −0.023 | no |
-| short, Oct-Dec (ref) | 0.229 | 0.220 | 0.485 | −0.256 | (reference) |
+| short, Mar-May | 0.1854 | **0.1742** | 0.2097 | −0.0243 | yes |
+| short, Dec-Feb | 0.4230 | 0.5555 | **0.1788** | +0.2442 | yes |
+| long, Mar-May | 0.1377 | 0.1346 | **0.1321** | +0.0056 | no |
+| long, Dec-Feb | 0.3348 | 0.3208 | **0.2764** | +0.0584 | yes |
+| long, Oct-Dec | **0.1014** | 0.1030 | 0.1209 | −0.0195 | no |
+| short, Oct-Dec (ref) | **0.2287** | 0.2320 | 0.4861 | −0.2574 | (reference) |
+
+Bias: short +0.8%, +40.1%, −14.0%; long −0.6%, +31.5%, +0.8%.
 
 ### v3 (July 2026)
 
@@ -1028,14 +1059,17 @@ versus 0.353); destroyed in the Dec-Feb window (0.540 versus 0.161) by the same 
 
 | Pooled WAPE | v3 | v2 | v-base | v3 vs base | significant |
 |---|---|---|---|---|---|
-| short, Mar-May | **0.184** | 0.185 | 0.210 | −0.026 | yes |
-| short, Dec-Feb | 0.196 | 0.414 | **0.179** | +0.017 | no (statistical tie; vs v2: −0.218, yes) |
-| long, Mar-May | 0.133 | 0.136 | **0.132** | +0.001 | no |
-| long, Dec-Feb | 0.312 | 0.334 | **0.276** | +0.036 | yes |
-| long, Oct-Dec | **0.099** | 0.100 | 0.121 | −0.022 | no |
-| short, Oct-Dec (ref) | **0.183** | 0.229 | 0.486 | −0.303 | (reference) |
+| short, Mar-May | 0.1863 | **0.1854** | 0.2097 | −0.0234 | yes |
+| short, Dec-Feb | 0.1943 | 0.4230 | **0.1788** | +0.0155 | no |
+| long, Mar-May | 0.1345 | 0.1377 | **0.1321** | +0.0024 | no |
+| long, Dec-Feb | 0.3145 | 0.3348 | **0.2764** | +0.0381 | yes |
+| long, Oct-Dec | **0.1011** | 0.1014 | 0.1209 | −0.0198 | no |
+| short, Oct-Dec (ref) | **0.1826** | 0.2287 | 0.4861 | −0.3035 | (reference) |
 
-Note: baseline figures here differ from earlier entries in the third decimal because the
-weekly data refresh (2026-07-20) revised recent actuals and the SKU profile snapshot.
-The pinned windows (Section 4.14) kept all cutoffs identical; only the data content
-updated.
+Bias: short +6.3%, +5.3%, −3.7%; long +0.5%, +29.2%, +1.5%.
+
+Note: this entry's figures used to differ from the earlier entries in the third decimal,
+because it was measured after the 2026-07-20 weekly refresh and they were measured before
+it. That discrepancy is what prompted pinning the data (Section 4.21). Every table in this
+section has since been re-measured on the pinned snapshot, so the baseline row is now
+identical across all of them.

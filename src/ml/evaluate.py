@@ -202,6 +202,33 @@ def cohort_score(
     }
 
 
+def is_significant(boot: dict) -> bool:
+    """The 'significant' column in the design doc's Section 6 version tables.
+
+    Takes a bootstrap_delta() result and returns whether the single-window
+    WAPE difference is distinguishable from SKU sampling noise:
+
+        |delta| > 2 * se
+
+    This is the same 2-standard-error threshold the adoption rule uses
+    (design doc Section 1.5), applied to one window rather than to the
+    three-window mean. It exists as a function because the rule was
+    previously implicit: the tables carried yes/no labels with no stated
+    definition, so it could not be checked or reproduced.
+
+    The alternative reading, "the 95% CI excludes zero", agrees with this
+    rule on all 24 version/window/segment cells measured on the 2026-07-20
+    snapshot, so the choice does not currently change any label. Use this
+    function rather than re-deriving the test, so that if the two ever
+    diverge, every table diverges the same way.
+
+    Note this is a noise test, not an adoption test. Adoption additionally
+    requires a consistent sign across the development windows and a
+    three-window mean improvement of at least 0.01 (Section 1.5).
+    """
+    return abs(boot["delta"]) > 2 * boot["se"]
+
+
 def score_table(results: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Combine {model_name: score() output} into one comparison table."""
     parts = []

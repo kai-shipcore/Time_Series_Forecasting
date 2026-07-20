@@ -48,3 +48,10 @@ detail lives in the design document and codebase guide, not here.
   re-run: it was picking up a later version's settings rather than its own. Checked all
   four versions re-run correctly, and locked the software library versions so results
   cannot shift between machines.
+
+- 2026-07-20: Re-measured every model version's accuracy on the frozen data so all four
+  are scored on identical figures and can be compared directly. Previously the earlier
+  versions were measured on older data than the latest one, so the same model showed
+  different numbers in different tables. None of the conclusions changed. Also wrote down
+  the rule for when an accuracy difference counts as real rather than chance, which had
+  been applied but never actually defined.
