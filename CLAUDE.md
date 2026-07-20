@@ -49,4 +49,9 @@ progress summaries for the user's manager.
 - `load_dotenv` calls should use `override=True`; the user's shell has stale DB_*
   exports that otherwise shadow `.env` (documented incident: truncated password).
 - The weekly cron refreshes `sales_clean.parquet`; evaluation windows are pinned via
-  `ML_FINAL_TEST_CUTOFF` in `config.py` and must not silently move.
+  `ML_FINAL_TEST_CUTOFF` in `config.py` and must not silently move. The ML track reads its
+  inputs from the snapshot named by `ML_DATA_SNAPSHOT`, not from `data/processed/`, so the
+  refresh cannot move results. Advancing it re-baselines every recorded number.
+- ML dependencies are pinned to exact versions in `requirements.txt`, because results are
+  compared at the third decimal. Note `lightgbm` is not currently installed in `.venv`;
+  run `.venv/bin/pip install -r requirements.txt` before any `ml_*` script.

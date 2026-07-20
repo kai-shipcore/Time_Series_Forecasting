@@ -56,6 +56,14 @@ detail lives in the design document and codebase guide, not here.
   the rule for when an accuracy difference counts as real rather than chance, which had
   been applied but never actually defined.
 
+- 2026-07-20: Fixed a date-alignment fault in the benchmark of the current spreadsheet
+  method, which had been scored against a period one day off from the one it was
+  forecasting. Corrected the document's description of that method: it had been described
+  as consistently forecasting too low, but measurement shows its error changes direction
+  by season. Also recorded that the spreadsheet method still beats our baseline for
+  established products in the autumn period, which is the one case where it wins and had
+  not been written down anywhere.
+
 - 2026-07-20: Built and evaluated model version v4, which tells the model whether each
   product is long-established or new. It fixed the problem it was designed to fix, giving
   the best result any version has achieved for established products in the post-holiday
@@ -64,8 +72,26 @@ detail lives in the design document and codebase guide, not here.
   the model needs to be prevented from favouring one group over the other, rather than
   simply being told the two groups differ.
 
+- 2026-07-20: Added two permanent health checks that run alongside every model version:
+  one tests whether the seasonal adjustment actually fits each product group, the other
+  breaks a model's error out month by month. The first check found that the December
+  adjustment fits established and newer products very differently, which had gone
+  undetected under the single headline accuracy number.
+
+- 2026-07-20: Measured the earlier statistical system (the project's stated accuracy
+  target) through the same evaluation used for everything else, for the first time. In
+  doing so found and fixed two faults in its evaluation script, including one where it
+  treated newer products differently from the intended method. Result: the current model
+  already matches or beats that target for newer products across all test periods, with
+  one remaining gap for established products in the post-holiday period.
+
 - 2026-07-20: Tested giving established and newer products different December
   adjustments, based on the health-check finding. Clearly rejected: with only one or two
   Decembers of history the estimates are unreliable, and adjusting one month shifts
   errors into the neighbouring months. Cheap to find out now rather than after building
   it into the model; revisit after this year's holiday season adds a third December.
+
+- 2026-07-20: Confirmed with statistical checks that the current model's only real
+  remaining weakness is established products in the post-holiday period; everywhere else
+  it now matches or beats both the earlier statistical system and the spreadsheet method
+  used in production.

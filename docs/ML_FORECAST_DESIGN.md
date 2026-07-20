@@ -17,10 +17,27 @@ and accessories) to drive inventory planning. Two forecasting systems exist toda
 
 - **V1 (current production method):** the spreadsheet formula the company operates on
   today. It blends recent sales velocity over 7, 15, 30, 60, and 90-day windows and scales
-  the result by hand-set monthly seasonal multipliers. Benchmarking in this project shows
-  that it underforecasts chronically (a bias of −33 to −39% across smooth SKUs, and −43 to
-  −45% on the short-history segment defined below) because trailing velocity averages
-  cannot anticipate growth.
+  the result by hand-set monthly seasonal multipliers. Run through this project's harness
+  on the pinned snapshot (`scripts/ml_02_v1_benchmark.py`), its pooled WAPE and bias are:
+
+  | V1 | Mar-May | Dec-Feb | Oct-Dec |
+  |---|---|---|---|
+  | smooth/short | 0.4198 (−39.8%) | 0.3017 (+5.0%) | 0.7893 (+6.1%) |
+  | smooth/long | 0.3195 (−30.5%) | 0.4044 (+38.7%) | 0.0847 (−1.0%) |
+
+  The structural baseline of Section 3 beats V1 in five of these six cells, usually by a
+  wide margin. The exception is long-history SKUs in the Q4 window, where V1 is the more
+  accurate forecast (0.0847 against the baseline's 0.1209, with bias of −1.0% against
+  −8.3%). That is the only place any incumbent currently beats the baseline, and it is
+  worth understanding before changing how long SKUs are treated.
+
+  A caution on characterising V1's error. Earlier revisions of this document described V1
+  as underforecasting chronically by −33 to −39%, and attributed it to trailing velocity
+  averages being unable to anticipate growth. The table above shows the direction is not
+  constant: V1 underforecasts the spring window heavily, over-forecasts the post-holiday
+  window by +38.7% on long SKUs, and is close to unbiased in Q4. The growth explanation
+  accounts for the spring result and not the others, so V1 is better described as having
+  large, season-dependent error than as a uniform underforecast.
 - **The statistical prototype (phase 1 of this project):** per-SKU models from the
   `statsforecast` library (AutoARIMA, AutoETS, moving averages), selected by
   cross-validation for each SKU. Seasonality is handled by dividing the hand-set monthly
@@ -34,8 +51,8 @@ and accessories) to drive inventory planning. Two forecasting systems exist toda
   recomputed against current actuals; consistent with the 0.218 versus 0.291 recorded in
   `config.py` when the backtest was originally run). The prototype is the accuracy bar the
   ML model must clear. Note that the prototype's short-segment bias in that backtest was
-  +14%: it corrects V1's chronic underforecasting but overshot in that window, which is
-  useful context for the bias goals below.
+  +14%: it corrects V1's underforecast on that segment but overshot in that window, which
+  is useful context for the bias goals below.
 
 **SKU segmentation.** Not every SKU can be meaningfully forecast. Each SKU is classified at
 training time by its demand pattern:
@@ -147,10 +164,10 @@ comparable to it.
 ### 1.4 Secondary metrics
 
 - **Bias**, defined as (Σ forecasts ÷ Σ actuals) − 1, per segment. Bias measures
-  systematic over-forecasting or under-forecasting. For context: V1's chronic
-  underforecasting is a known business problem (−33 to −39% on smooth SKUs overall in this
-  project's benchmarks, and −43 to −45% on the short-history segment). The statistical
-  prototype corrects the chronic underforecast but with imperfect calibration: +0.2% on
+  systematic over-forecasting or under-forecasting. For context: V1's calibration is poor
+  and season-dependent rather than uniformly negative, ranging from −39.8% on short SKUs
+  in spring to +38.7% on long SKUs after the holidays (Section 1.1). The statistical
+  prototype corrects the spring underforecast but with imperfect calibration: +0.2% on
   full-history SKUs over 6 CV windows (`v1_comparison.csv`), −5.0% pooled across smooth
   SKUs on its stored held-out test run (`test_evaluation.csv`, an earlier data snapshot),
   and +14.0% on short-history SKUs in the stored April to June 2026 backtest
@@ -202,8 +219,10 @@ pooled WAPE less than or equal to the statistical prototype's on all three devel
 windows and the held-out final test window, with absolute bias no worse than the
 prototype's. The decision is made per segment: for example, the ML model may become the
 proposal for smooth/short while the statistical models remain the proposal for
-smooth/long. Both tracks already clear V1, the current production method, by a wide
-margin; V1 is reported as the business-as-usual reference in all evaluations.
+smooth/long. Both tracks clear V1, the current production method, in five of the six
+segment-window cells, usually by a wide margin; the exception is long-history SKUs in the
+Q4 window, where V1 is the more accurate forecast (Section 1.1). V1 is reported as the
+business-as-usual reference in all evaluations.
 
 ---
 
@@ -397,6 +416,14 @@ available).
 Entries are numbered in the order they were made. All entries below date from the
 project's design phase in July 2026.
 
+Scope for new entries: design choices only, meaning a question that had alternatives and
+was settled by evidence or argument. Bugs, corrections, and infrastructure changes do not
+belong here even when they matter. A bug fix goes in `WORKLOG.md` and in a comment where
+the code was wrong; a change to how the project is built or stored goes in
+`CODEBASE_GUIDE.md`; a correction to a claim goes in the section making the claim. Entries
+should stay near 200 words; if one needs more, the material probably belongs in the
+section it concerns.
+
 ### 4.1 Evaluation metric: pooled WAPE rather than RMSE
 
 All accuracy evaluation uses pooled WAPE as defined in Section 1.3, with bias as a secondary
@@ -423,8 +450,9 @@ incumbent's, which makes the comparison meaningless.
 
 As validation evidence, the harness reproduced the known baseline numbers (WA12 pooled
 WAPE of approximately 0.23 on smooth/short, matching the recorded 0.218 to 0.222 range
-from the stored April to June backtest), and V1's known weaknesses (chronic underforecasting
-of approximately −20% or worse) appeared exactly where expected.
+from the stored April to June backtest), and V1's large errors appeared where expected.
+Note that the V1 benchmark carried a W-MON alignment fault at that time, corrected later;
+the corrected figures are in Section 1.1.
 
 ### 4.3 A quarantined final test window with three development windows
 
@@ -692,7 +720,7 @@ The first learned model of the restart used a single feature, the forecast lead,
 only thing it could learn was the average ratio at each horizon. It learned a real
 pattern: ratios rise with lead (roughly 1.05 at one week ahead to 1.22 at ten weeks ahead
 in the December-cutoff model), which is the portfolio's average growth expressed as a
-number, and the direct cause of the chronic underforecasting that motivates this project.
+number, and the direct cause of the underforecasting that motivates this project.
 
 Applied unconditionally, however, the correction failed the decision rule. It won the
 spring window (short segment: 0.1957 versus the baseline's 0.2097, bootstrap-significant)
@@ -775,88 +803,35 @@ corrections on erratic SKUs. Experiments: `scripts/ml_07_lgbm_v2.py`,
 
 ### 4.21 ML inputs pinned to a dated data snapshot
 
-Section 4.14 pinned the evaluation windows to a fixed anchor date so that the weekly
-refresh could not shift which weeks a window covers. That fixed the window boundaries but
-not the data inside them. The cron rewrites `data/processed/sales_clean.parquet` and
-`sku_profiles.csv` in place every Monday, revising recent actuals as late orders register
-and regenerating the segment labels. Two consequences were observed directly rather than
-predicted. The v3 evaluation had to carry a note that its baseline figures differed from
-earlier entries in the third decimal because of the 2026-07-20 refresh, and the same
-refresh moved the smooth SKU count from 432 to 447 and the Dec-Feb window's eligible short
-population from 195 to 194. Under the Section 1.5 decision rule, where a mean
-improvement of 0.01 decides adoption and single-window differences under 0.02 are
-inconclusive, third-decimal drift in the comparison baseline is not acceptable: a model
-version evaluated one week and a model version evaluated the next were not being measured
-against the same numbers.
+The window anchor (Section 4.14) fixes which weeks each evaluation window covers. It does
+not fix the values inside them: the weekly cron rewrites `data/processed/` in place,
+revising recent actuals as late orders register and regenerating the segment labels. Under
+the Section 1.5 rule, where a mean improvement of 0.01 decides adoption, a comparison
+baseline that drifts in the third decimal between runs is not usable. The v3 evaluation
+had already had to carry a note to that effect.
 
-The ML harness now reads its two inputs from `data/snapshots/<date>/`, selected by
-`ML_DATA_SNAPSHOT` in `config.py` and currently set to 2026-07-20. The snapshot is a
-physical copy, so the cron and the ML track share no file and cannot desync. Snapshot
-files are written read-only, so an accidental overwrite fails rather than silently
-corrupting the pinned data, and each snapshot carries a `manifest.json` recording file
-checksums, row and SKU counts, the week range, and the segment mix, which makes it
-verifiable that the pinned data has not changed.
+The ML harness therefore reads its two inputs from `data/snapshots/<date>/`, selected by
+`ML_DATA_SNAPSHOT` in `config.py`. The snapshot is a physical copy written read-only with
+a checksum manifest, so the cron and the ML track share no file. The alternative, keeping
+a copy and remembering to restore it before a run, was rejected because forgetting the
+step produces plausible numbers rather than an error.
 
-The alternative considered was pinning by convention, meaning keeping a copy for reference
-and remembering to restore it before an ML run. It was rejected because it fails silently:
-forgetting the step produces plausible numbers rather than an error. The scope was
-deliberately limited to the ML development track. `load_weekly` is called only by
-`scripts/ml_*.py`, so the production pipeline, the statistical prototype's backtest, and
-the FastAPI app were left reading `data/processed/` and continue to follow the weekly
-refresh, which is the intended behavior for production.
+Scope is the development track only. `load_weekly` is called solely by `scripts/ml_*.py`,
+so the production pipeline, the prototype's backtest, and the FastAPI app keep reading
+`data/processed/` and keep following the weekly refresh, which is correct for production.
 
-Verified at adoption: the three development windows resolve to the same cutoffs as before
-(2026-02-23, 2025-12-15, 2025-10-06), and the structural baseline reproduces all six
-recorded v-base figures from the Section 6 v3 table to the third decimal (short 0.2097,
-0.1788, 0.4861; long 0.1321, 0.2764, 0.1209). Refresh immunity was confirmed by pointing
-`DATA_PROCESSED` at perturbed data and observing that the pinned loader returned unchanged
-values while the unpinned loader moved. Implementation: `src/ml/dataset.py:data_dir`, the
-`snapshot` argument of `load_weekly`, and `scripts/ml_snapshot_data.py` for creating and
-verifying snapshots.
+The snapshot ages by design: sales after its date are invisible to the ML track until it
+is advanced deliberately, which requires re-baselining recorded results. Verified at
+adoption: the three dev windows resolve to unchanged cutoffs, the structural baseline
+reproduces all six recorded v-base figures, and pointing `DATA_PROCESSED` at perturbed
+data left the pinned loader unmoved.
 
-A consequence to plan for: the pinned snapshot ages. Sales after the week ending
-2026-07-20 are invisible to the ML track until the snapshot is advanced, which is correct
-during a comparison campaign but means the snapshot must be advanced deliberately, with
-affected results re-measured, before any claim about current demand is made.
+### 4.22 Moved: model-version preservation and the default-drift incident
 
-### 4.22 Model versions preserved as tagged commits; the default-drift incident
-
-Every model version is now a commit tagged `model/v-base` through `model/v3`, carrying
-that version's per-segment results in the commit message. Before this, none of the ML
-track was under version control at all: the harness, the model code, the experiment
-scripts and this document were all untracked, so the only copy of every result in the
-version log was the working tree on one machine.
-
-The decision to preserve versions individually rather than as one checkpoint was made
-because of what the exercise uncovered. Verifying that each version could still be
-reproduced showed that v0 could not. `RatioLGBM` took its feature list from a default
-argument, that default moved from `FEATURES_V0` to `FEATURES_V1` when the ramp block was
-added in v1, and `scripts/ml_05_lgbm_v0.py` had never been updated to name its own feature
-set. The script had silently become a v1 run, and by the time it was tested it failed
-outright, because the lead-only probe at the end of the script passes one feature to a
-model trained on four. A rejected version that cannot be re-run is a rejection that cannot
-be revisited, which matters here because Section 4.18 explicitly nominates v0's growth
-correction for reuse once it can be conditioned properly. The remedy is structural:
-`features` is now a required argument with no default, so no experiment can inherit a
-later version's configuration, and `ml_08` states both seasonal flags explicitly for the
-same reason.
-
-Two limits are recorded honestly. First, the commits were created after the fact, so their
-dates are the date of the reconstruction rather than of the original work; the intermediate
-states of `model.py` were rebuilt by removing the flags each later version added, and each
-reconstructed stage was verified by running that version's script and confirming it
-reproduces the figures in the Section 6 tables. Second, the recorded figures for v0, v1 and
-v2 were measured before the 2026-07-20 refresh, on data that was never snapshotted and
-therefore cannot be recovered. Re-running those versions on the pinned snapshot reproduces
-their qualitative findings and their adoption decisions, but not their exact numbers; the
-largest divergence is the v1 Dec-Feb long segment. Only v3 was recorded on data that still
-exists. This is the concrete cost of having pinned the data one refresh later than the work
-began, and it is the reason the snapshot exists.
-
-Dependency versions are pinned for the same reason. `requirements.txt` previously carried
-no version constraints and `lightgbm` was absent from the project virtual environment
-entirely, which leaves the solver free to move underneath results that are compared at the
-third decimal.
+Recorded here in July 2026, then relocated: the tagged-commit scheme is documented in
+`CODEBASE_GUIDE.md` (file inventory) and the default-drift fix in `WORKLOG.md` and a
+comment in `scripts/ml_05_lgbm_v0.py`, per the scope rule above. The number is retained
+because the commit that introduced the entry cites it as 4.22.
 
 ### 4.23 Rejected: v4 segment indicator. The model trades short SKUs for long ones
 
@@ -979,13 +954,24 @@ chronology. WAPE numbers are pooled per segment. Short-segment decisions use the
 the Dec-Feb window only; Oct-Dec short is reference (Section 4.16). "BEST" marks the version currently
 serving as the reference to beat.
 
+**v-base is the floor, not the bar.** Every comparison in this section is against v-base,
+which is a 12-week moving average with a seasonal round-trip. That makes it the right
+internal control for feature work, because a model that learns nothing predicts a ratio of
+1.0 and reproduces it exactly (Section 4.5), so any movement is attributable to the
+feature under test. It is NOT the standard the project has to meet. The success bar is the
+statistical prototype (Sections 1.2 and 1.6), which for smooth/long uses cross-validation
+selected ARIMA, ETS and ensembles rather than a moving average, and is a materially harder
+target. The prototype has still not been run through this harness, so no version below has
+been compared against the thing that decides adoption. Beating v-base is necessary and not
+sufficient. Closing that gap is backlog item 1 (Section 5.4).
+
 **All figures in this section were re-measured on the pinned 2026-07-20 snapshot**, so
 every version is scored on identical data and the tables are directly comparable to each
 other. Previously they were not: v0, v1 and v2 had been recorded before the 2026-07-20
 refresh and v3 after it, which left the same model carrying different numbers in different
 tables. A model appearing in more than one table below now shows the same value in each,
 and the v-base row is identical everywhere. The original pre-refresh figures are preserved
-in the git history at the tagged version commits (Section 4.22); they are not reproducible,
+in the git history at the `model/v*` tagged commits; they are not reproducible,
 because the data they were measured on was never snapshotted. The verdicts are unchanged:
 re-measurement moved individual numbers but did not reverse any adoption decision.
 
@@ -1020,17 +1006,16 @@ Bias: short −7.1%, +1.7%, −48.6%; long −5.6%, +24.4%, −8.3%.
 - **Lesson:** growth correction must be conditioned on each SKU's own trajectory, not
   applied to every SKU equally.
 
-| Pooled WAPE | v0 | v-base | v0 vs base | significant |
-|---|---|---|---|---|
-| short, Mar-May | **0.1957** | 0.2097 | −0.0140 | yes |
-| short, Dec-Feb | 0.2160 | **0.1788** | +0.0372 | yes |
-| long, Mar-May | **0.1275** | 0.1321 | −0.0046 | no |
-| long, Dec-Feb | 0.4163 | **0.2764** | +0.1399 | yes |
-| long, Oct-Dec | **0.1117** | 0.1209 | −0.0092 | no |
-| short, Oct-Dec (ref) | **0.4165** | 0.4861 | −0.0696 | (reference) |
+| Pooled WAPE | v0 | v-base | V1 | v0 vs base | significant |
+|---|---|---|---|---|---|
+| short, Mar-May | **0.1957** | 0.2097 | 0.4198 | −0.0140 | yes |
+| short, Dec-Feb | 0.2160 | **0.1788** | 0.3017 | +0.0372 | yes |
+| long, Mar-May | **0.1275** | 0.1321 | 0.3195 | −0.0046 | no |
+| long, Dec-Feb | 0.4163 | **0.2764** | 0.4044 | +0.1399 | yes |
+| long, Oct-Dec | **0.1117** | 0.1209 | 0.0847 | −0.0092 | no |
+| short, Oct-Dec (ref) | **0.4165** | 0.4861 | 0.7893 | −0.0696 | (reference) |
 
 Bias: short −2.7%, +15.2%, −41.7%; long −1.0%, +40.0%, +4.4%.
-
 ### v1 (July 2026)
 
 - **Added:** the ramp feature block (`ramp_4_12`, `y_last_r`, `lag_1_r`), computed on the
@@ -1043,17 +1028,16 @@ Bias: short −2.7%, +15.2%, −41.7%; long −1.0%, +40.0%, +4.4%.
   seasonality (long segment: fixed v0's Dec-Feb failure) and fails when it is not (short
   segment: read the raw Q4 bump as growth and pushed it into January, +53% bias).
 
-| Pooled WAPE | v1 | v0 | v-base | v1 vs base | significant |
-|---|---|---|---|---|---|
-| short, Mar-May | **0.1742** | 0.1957 | 0.2097 | −0.0355 | yes |
-| short, Dec-Feb | 0.5555 | 0.2160 | **0.1788** | +0.3767 | yes |
-| long, Mar-May | 0.1346 | **0.1275** | 0.1321 | +0.0025 | no |
-| long, Dec-Feb | 0.3208 | 0.4163 | **0.2764** | +0.0444 | yes |
-| long, Oct-Dec | **0.1030** | 0.1117 | 0.1209 | −0.0179 | no |
-| short, Oct-Dec (ref) | **0.2320** | 0.4165 | 0.4861 | −0.2541 | (reference) |
+| Pooled WAPE | v1 | v0 | v-base | V1 | v1 vs base | significant |
+|---|---|---|---|---|---|---|
+| short, Mar-May | **0.1742** | 0.1957 | 0.2097 | 0.4198 | −0.0355 | yes |
+| short, Dec-Feb | 0.5555 | 0.2160 | **0.1788** | 0.3017 | +0.3767 | yes |
+| long, Mar-May | 0.1346 | **0.1275** | 0.1321 | 0.3195 | +0.0025 | no |
+| long, Dec-Feb | 0.3208 | 0.4163 | **0.2764** | 0.4044 | +0.0444 | yes |
+| long, Oct-Dec | **0.1030** | 0.1117 | 0.1209 | 0.0847 | −0.0179 | no |
+| short, Oct-Dec (ref) | **0.2320** | 0.4165 | 0.4861 | 0.7893 | −0.2541 | (reference) |
 
 Bias: short −2.0%, +54.2%, −14.0%; long −0.0%, +30.0%, +1.3%.
-
 Ramp cohort: large improvements in the Mar-May window (0.249 versus baseline 0.324) and the Oct-Dec window (0.196
 versus 0.353); destroyed in the Dec-Feb window (0.540 versus 0.161) by the same mechanism as above.
 
@@ -1069,17 +1053,16 @@ versus 0.353); destroyed in the Dec-Feb window (0.540 versus 0.161) by the same 
   training TARGET was still seasonal, so the model learned inflated growth responses
   from seasonally lifted labels it could not explain.
 
-| Pooled WAPE | v2 | v1 | v-base | v2 vs base | significant |
-|---|---|---|---|---|---|
-| short, Mar-May | 0.1854 | **0.1742** | 0.2097 | −0.0243 | yes |
-| short, Dec-Feb | 0.4230 | 0.5555 | **0.1788** | +0.2442 | yes |
-| long, Mar-May | 0.1377 | 0.1346 | **0.1321** | +0.0056 | no |
-| long, Dec-Feb | 0.3348 | 0.3208 | **0.2764** | +0.0584 | yes |
-| long, Oct-Dec | **0.1014** | 0.1030 | 0.1209 | −0.0195 | no |
-| short, Oct-Dec (ref) | **0.2287** | 0.2320 | 0.4861 | −0.2574 | (reference) |
+| Pooled WAPE | v2 | v1 | v-base | V1 | v2 vs base | significant |
+|---|---|---|---|---|---|---|
+| short, Mar-May | 0.1854 | **0.1742** | 0.2097 | 0.4198 | −0.0243 | yes |
+| short, Dec-Feb | 0.4230 | 0.5555 | **0.1788** | 0.3017 | +0.2442 | yes |
+| long, Mar-May | 0.1377 | 0.1346 | **0.1321** | 0.3195 | +0.0056 | no |
+| long, Dec-Feb | 0.3348 | 0.3208 | **0.2764** | 0.4044 | +0.0584 | yes |
+| long, Oct-Dec | **0.1014** | 0.1030 | 0.1209 | 0.0847 | −0.0195 | no |
+| short, Oct-Dec (ref) | **0.2287** | 0.2320 | 0.4861 | 0.7893 | −0.2574 | (reference) |
 
 Bias: short +0.8%, +40.1%, −14.0%; long −0.6%, +31.5%, +0.8%.
-
 ### v3 (July 2026)
 
 - **Changed:** the ENTIRE ML path made seasonally consistent for every SKU: levels,
@@ -1095,17 +1078,16 @@ Bias: short +0.8%, +40.1%, −14.0%; long −0.6%, +31.5%, +0.8%.
   while its own features never changed; the shared global trees are the suspect, which
   points at segment interaction handling rather than new features as the next problem.
 
-| Pooled WAPE | v3 | v2 | v-base | v3 vs base | significant |
-|---|---|---|---|---|---|
-| short, Mar-May | 0.1863 | **0.1854** | 0.2097 | −0.0234 | yes |
-| short, Dec-Feb | 0.1943 | 0.4230 | **0.1788** | +0.0155 | no |
-| long, Mar-May | 0.1345 | 0.1377 | **0.1321** | +0.0024 | no |
-| long, Dec-Feb | 0.3145 | 0.3348 | **0.2764** | +0.0381 | yes |
-| long, Oct-Dec | **0.1011** | 0.1014 | 0.1209 | −0.0198 | no |
-| short, Oct-Dec (ref) | **0.1826** | 0.2287 | 0.4861 | −0.3035 | (reference) |
+| Pooled WAPE | v3 | v2 | v-base | V1 | v3 vs base | significant |
+|---|---|---|---|---|---|---|
+| short, Mar-May | 0.1863 | **0.1854** | 0.2097 | 0.4198 | −0.0234 | yes |
+| short, Dec-Feb | 0.1943 | 0.4230 | **0.1788** | 0.3017 | +0.0155 | no |
+| long, Mar-May | 0.1345 | 0.1377 | **0.1321** | 0.3195 | +0.0024 | no |
+| long, Dec-Feb | 0.3145 | 0.3348 | **0.2764** | 0.4044 | +0.0381 | yes |
+| long, Oct-Dec | **0.1011** | 0.1014 | 0.1209 | 0.0847 | −0.0198 | no |
+| short, Oct-Dec (ref) | **0.1826** | 0.2287 | 0.4861 | 0.7893 | −0.3035 | (reference) |
 
 Bias: short +6.3%, +5.3%, −3.7%; long +0.5%, +29.2%, +1.5%.
-
 Note: this entry's figures used to differ from the earlier entries in the third decimal,
 because it was measured after the 2026-07-20 weekly refresh and they were measured before
 it. That discrepancy is what prompted pinning the data (Section 4.21). Every table in this
@@ -1232,3 +1214,19 @@ diagnostic's December finding stands as a description of the misfit, but the cor
 requires joint re-estimation of all months with trend, realistically after Q4 2026 adds a
 third December. The shared factors defended themselves; v3's short-segment qualification
 (measured under them) is unaffected. Experiment: `scripts/ml_11_dec_factor_split.py`.
+
+### The bar, measured (July 2026)
+
+`scripts/ml_10_prototype_benchmark.py` runs the statistical prototype (CV model selection
+for long SKUs, deseasonalized WA12 for short, reusing the prototype pipeline code, with
+as-of history labels and per-window selection) through the harness. First measurement of
+the Section 1.6 bar. Prototype pooled WAPE: short 0.2014 / 0.2863 / 0.4251, long 0.1411 /
+0.2737 / 0.0911 across Mar-May / Dec-Feb / Oct-Dec.
+
+Against it, with bootstrap: v3 is better or tied everywhere except one cell, long
+Dec-Feb (+0.0408, significant). v3 therefore meets the Section 1.6 dev-window criteria
+for smooth/short (lower or equal WAPE on all three windows, bias +6.3/+5.3/−3.7 versus
+the prototype's −7.2/−22.4/−42.5), pending the one-shot final test and the open
+strictness question (Section 5.5.1). Long does not qualify. Against V1, v3's only
+non-win, long Oct-Dec, is a statistical tie (+0.0164, CI spans zero, 1.8 standard
+errors, leaning V1).

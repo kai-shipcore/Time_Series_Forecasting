@@ -25,6 +25,7 @@ experiments import from `src/ml/` and add nothing to it, so the library stays re
 | `src/ml/__init__.py` | 8 | Package marker and a short description of the layout. |
 | `src/ml/dataset.py` | ~230 | Loads the pinned snapshot data, applies the shared cleaning rules, builds rolling-origin train/test splits, and selects the stratified validation SKUs. Fully documented below. |
 | `src/ml/evaluate.py` | ~127 | Scores any model's predictions into a per-segment pooled-WAPE and bias table, guards against data leakage, and provides the bootstrap significance test. Fully documented below. |
+| `src/ml/diagnostics.py` | ~190 | Structural checks a single metric hides: `seasonal_fit` tests whether the seasonal transform actually flattens each segment (no model needed), `residuals_by_month` breaks one model's error out by calendar month and segment. Run alongside every version. |
 | `src/ml/model.py` | ~200 | The current model code (rewritten at the restart, Design Section 4.10): the per-segment seasonal adjustment, the training-matrix builder, the `structural_baseline` prediction function, and `RatioLGBM` (the LightGBM wrapper: fit, predict, feature importance). All modeling continues from this file; pre-restart model code was deleted. |
 | `scripts/ml_snapshot_data.py` | ~200 | Creates a dated, read-only copy of the two ML inputs under `data/snapshots/<date>/` with a checksum manifest, and verifies an existing snapshot against it (`--verify`). Supports Design Section 4.21. |
 | `scripts/ml_00_harness_check.py` | ~63 | Runs the baseline moving averages (WA12, WA8, naive) through the harness to confirm the scorer reproduces known production numbers. Contains no machine learning; retained as evidence for Design Section 4.2. |
@@ -35,6 +36,14 @@ experiments import from `src/ml/` and add nothing to it, so the library stays re
 | `scripts/ml_06_lgbm_v1.py` | ~95 | LightGBM v1 (lead + ramp block) versus v0 and baseline, with the learned-response probe; rejected (Design Section 4.19). |
 | `scripts/ml_07_lgbm_v2.py` | ~85 | LightGBM v2 (deseasonalized trajectory features) versus v1 and baseline; rejected (Design Section 4.20). |
 | `scripts/ml_08_lgbm_v3.py` | ~80 | LightGBM v3 (fully deseasonalized ML path) versus v2 and baseline; closest yet, blocked by a long-segment regression (Design Section 4.20). |
+
+**Model versions are tagged commits.** `model/v-base` onward each hold that version's
+tree, with its per-segment results in the commit message. Check one out to re-run it. Two
+caveats for the reconstructed tags (v-base through v3): the commits were created after
+the fact, so their dates are the reconstruction date rather than when the work happened,
+and the intermediate states of `model.py` were rebuilt by removing the flags each later
+version added, then verified by running that version's script against the Section 6
+figures.
 
 Supporting scripts outside `src/ml/` that the track depends on:
 

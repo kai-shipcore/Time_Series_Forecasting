@@ -39,11 +39,21 @@ def wa_forecast(train, test, window=12):
 
 
 def v1_predictions(index: dict, split, skus: list[str]) -> pd.DataFrame:
-    """One row per SKU: yhat = V1 70-day total, ds = first test week."""
+    """One row per SKU: yhat = V1 70-day total, ds = first test week.
+
+    As-of date is `cutoff - 1 day`, NOT the cutoff itself. Under W-MON a week
+    labelled `ds` covers [ds-7, ds-1], so the cutoff label 2025-10-06 means
+    training ends Sunday 2025-10-05 and the test period starts Monday
+    2025-10-06. v1_forecast treats its date argument as the last day of
+    available history and forecasts the following HORIZON_DAYS, so passing the
+    cutoff label read one day of the test period as history and shifted the
+    whole 70-day span one day late.
+    """
+    asof = split.cutoff - pd.Timedelta(days=1)
     first_week = split.test["ds"].min()
     rows = [
         {"unique_id": uid, "ds": first_week,
-         "yhat": v1_forecast(index, uid, split.cutoff)}
+         "yhat": v1_forecast(index, uid, asof)}
         for uid in skus
     ]
     return pd.DataFrame(rows)

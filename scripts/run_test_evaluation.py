@@ -53,7 +53,11 @@ def _dedupe_models(bucket: str, hist: str) -> list:
 def _forecast_group(train_g: pd.DataFrame, bucket: str, hist: str) -> pd.DataFrame:
     """Fit all models on full training data; return TEST_WEEKS ahead predictions."""
     models     = _dedupe_models(bucket, hist)
-    use_deseas = USE_SEASONAL_ADJUSTMENT and bucket == "smooth" and hist != "short"
+    # Matches run_forward_forecast.py (line ~146): the prototype pipeline
+    # deseasonalizes ALL smooth SKUs, short included. This line previously
+    # excluded short (`and hist != "short"`), which silently diverged when the
+    # routing change landed; see the config comment at ROUTE_SHORT_SMOOTH_TO_V1.
+    use_deseas = USE_SEASONAL_ADJUSTMENT and bucket == "smooth"
 
     fit_data = deseasonalize(train_g) if use_deseas else train_g
     fit_data  = fit_data[["unique_id", "ds", "y"]]
@@ -163,9 +167,15 @@ def refit_and_predict(
                 })
 
     forecasts = pd.DataFrame(rows)
+    # Metadata carried through for reporting only. selector.select() reports
+    # horizon-aggregate metrics (HorizonWAPE/HorizonBias/HorizonMAE); the older
+    # MASE/WAPE names this used to request no longer exist, which made this
+    # function raise KeyError. Only columns actually present are merged, so a
+    # future rename degrades instead of crashing.
+    meta = [c for c in ("forecast_confidence", "HorizonWAPE", "HorizonBias",
+                        "HorizonMAE") if c in selection.columns]
     return forecasts.merge(
-        selection[["unique_id", "forecast_confidence", "MASE", "WAPE"]],
-        on="unique_id", how="left",
+        selection[["unique_id", *meta]], on="unique_id", how="left",
     )
 
 
