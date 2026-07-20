@@ -997,6 +997,7 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v2 | trajectory features computed on deseasonalized data for all SKUs | rejected | Section 4.20 |
 | v3 | fully deseasonalized ML path for all SKUs (features, targets, output) | closest yet, not adopted | Section 4.20 |
 | v4 | + `is_long` segment indicator | rejected | Section 4.23 |
+| v5 (stage 1) | per-segment December/holiday multiplier, tested at baseline level | rejected | Section 6 |
 
 ### v-base (July 2026)
 
@@ -1183,3 +1184,51 @@ structure to fit once it could condition on segment.
 Ramp cohort: improved in Mar-May (0.2509 against v3's 0.2704) and Q4 (0.1664 against
 0.1691), and degraded badly in Dec-Feb (0.2353 against 0.1847, bias +16.6% against +5.6%),
 which is the same short-segment damage seen in the headline numbers.
+
+### v5, stage 1 (July 2026) — rejected
+
+- **Change:** the holiday-window multiplier (currently 1.26 for every smooth SKU) becomes
+  per-segment. The `seasonal_fit` diagnostic measured December residuals of 0.733 for long
+  and 1.494 for short after correction: one shared factor over-corrects mature SKUs and
+  under-corrects young ones simultaneously. No other factor changes; one hypothesis.
+- **Stage 1 tests at baseline level** (deseasonalized WA12 with split factors versus the
+  same with the shared factor), so no model confounds the attribution. Only if it
+  validates does the split factor enter the ML path as v5 proper.
+- **Estimation, leak-free:** the empirical factor is re-estimated per evaluation window
+  from that window's training data only, as 1.26 times the demand-weighted holiday-window
+  residual, then shrunk halfway to the hand-set value: new = 1.26 + 0.5 x (empirical −
+  1.26). The shrinkage weight 0.5 is fixed in advance, not searched. At the older cutoffs
+  the estimate rests on one to two observed Decembers, which is precisely why w is not 1.
+- **Pass criteria, stated before running:**
+  1. Long segment: improves Dec-Feb and Oct-Dec versus the shared-factor baseline, with
+     no significant Mar-May regression. (Long is where 1.26 over-corrects; Dec-Feb long
+     carries a +45.9% December bias today.)
+  2. Short segment: improves Dec-Feb versus the shared-factor deseasonalized WA12
+     (0.2863), with no significant Mar-May regression. Note the honest expectation: only
+     about 1.5 of Dec-Feb's ten test weeks are December, so the December fix alone is
+     unlikely to close the full gap to raw WA12 (0.1788); narrowing it is the test.
+  3. If either segment's sign is inconsistent across its decision windows, the change is
+     rejected per Section 1.5 and the January/February misfit becomes the next suspect.
+
+**Status: rejected. Failed every pre-registered criterion.**
+
+| Pooled WAPE | shared 1.26 | split factor | significant |
+|---|---|---|---|
+| long, Mar-May | 0.1321 | **0.1299** | no |
+| long, Dec-Feb | **0.2764** | 0.2820 | yes |
+| long, Oct-Dec | **0.1209** | 0.1823 | yes |
+| short, Mar-May | **0.2014** | 0.2098 | yes |
+| short, Dec-Feb | **0.2863** | 0.2977 | yes |
+| short, Oct-Dec (ref) | 0.4251 | 0.4251 | (estimator fell back to 1.26) |
+
+Two mechanisms, both instructive. First, year-to-year variance: at the Oct-Dec cutoff the
+leak-free window contains only December 2024, which for long SKUs implied a factor of
+1.006; November-December 2025 then spiked anyway. One observed December is not an
+estimate, and w=0.5 shrinkage cannot rescue n=1. Second, coupling through the level:
+lowering the long December factor raises the deseasonalized level, which raises January
+and February forecasts, 8.5 of Dec-Feb's ten test weeks, which were already
+over-forecast. A single month cannot be corrected in isolation. The `seasonal_fit`
+diagnostic's December finding stands as a description of the misfit, but the correction
+requires joint re-estimation of all months with trend, realistically after Q4 2026 adds a
+third December. The shared factors defended themselves; v3's short-segment qualification
+(measured under them) is unaffected. Experiment: `scripts/ml_11_dec_factor_split.py`.

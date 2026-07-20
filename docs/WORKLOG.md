@@ -63,3 +63,9 @@ detail lives in the design document and codebase guide, not here.
   noticeably worse. Rejected on that trade. The finding points clearly at the next step:
   the model needs to be prevented from favouring one group over the other, rather than
   simply being told the two groups differ.
+
+- 2026-07-20: Tested giving established and newer products different December
+  adjustments, based on the health-check finding. Clearly rejected: with only one or two
+  Decembers of history the estimates are unreliable, and adjusting one month shifts
+  errors into the neighbouring months. Cheap to find out now rather than after building
+  it into the model; revisit after this year's holiday season adds a third December.
