@@ -37,6 +37,7 @@ WINSOR_Q = 0.995           # ratio-target clip quantile (computed on train)
 # Feature sets by model version (design doc Section 6). Every version is the
 # same RatioLGBM class with a different feature list.
 FEATURES_V0 = ["lead"]
+FEATURES_V1 = ["lead", "ramp_4_12", "y_last_r", "lag_1_r"]  # + ramp block
 
 
 def long_sku_set(profiles: pd.DataFrame, cutoff) -> set[str]:
@@ -84,6 +85,20 @@ def build_matrix(
         g.rolling(12, min_periods=1).mean().reset_index(level=0, drop=True)
     )
     df["weeks_live"] = df.groupby("unique_id").cumcount() + 1
+
+    # Trajectory feature block: the SKU's recent path relative to its own
+    # 12-week level, inclusive of the anchor week (a completed week at
+    # prediction time). Scale-free.
+    df["y_feat"] = df["y_adj"]
+    gf = df.groupby("unique_id")["y_feat"]
+    feat_level = (
+        gf.rolling(12, min_periods=1).mean().reset_index(level=0, drop=True)
+    )
+    denom = feat_level.clip(lower=EPS)
+    roll4 = gf.rolling(4, min_periods=1).mean().reset_index(level=0, drop=True)
+    df["ramp_4_12"] = roll4 / denom          # last month vs last quarter
+    df["y_last_r"] = df["y_feat"] / denom    # anchor week vs level
+    df["lag_1_r"] = gf.shift(1) / denom      # week before anchor vs level
 
     if for_training:
         anchors = df[df["weeks_live"] >= MIN_ANCHOR_AGE_WEEKS]
