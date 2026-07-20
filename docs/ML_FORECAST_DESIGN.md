@@ -806,6 +806,45 @@ A consequence to plan for: the pinned snapshot ages. Sales after the week ending
 during a comparison campaign but means the snapshot must be advanced deliberately, with
 affected results re-measured, before any claim about current demand is made.
 
+### 4.22 Model versions preserved as tagged commits; the default-drift incident
+
+Every model version is now a commit tagged `model/v-base` through `model/v3`, carrying
+that version's per-segment results in the commit message. Before this, none of the ML
+track was under version control at all: the harness, the model code, the experiment
+scripts and this document were all untracked, so the only copy of every result in the
+version log was the working tree on one machine.
+
+The decision to preserve versions individually rather than as one checkpoint was made
+because of what the exercise uncovered. Verifying that each version could still be
+reproduced showed that v0 could not. `RatioLGBM` took its feature list from a default
+argument, that default moved from `FEATURES_V0` to `FEATURES_V1` when the ramp block was
+added in v1, and `scripts/ml_05_lgbm_v0.py` had never been updated to name its own feature
+set. The script had silently become a v1 run, and by the time it was tested it failed
+outright, because the lead-only probe at the end of the script passes one feature to a
+model trained on four. A rejected version that cannot be re-run is a rejection that cannot
+be revisited, which matters here because Section 4.18 explicitly nominates v0's growth
+correction for reuse once it can be conditioned properly. The remedy is structural:
+`features` is now a required argument with no default, so no experiment can inherit a
+later version's configuration, and `ml_08` states both seasonal flags explicitly for the
+same reason.
+
+Two limits are recorded honestly. First, the commits were created after the fact, so their
+dates are the date of the reconstruction rather than of the original work; the intermediate
+states of `model.py` were rebuilt by removing the flags each later version added, and each
+reconstructed stage was verified by running that version's script and confirming it
+reproduces the figures in the Section 6 tables. Second, the recorded figures for v0, v1 and
+v2 were measured before the 2026-07-20 refresh, on data that was never snapshotted and
+therefore cannot be recovered. Re-running those versions on the pinned snapshot reproduces
+their qualitative findings and their adoption decisions, but not their exact numbers; the
+largest divergence is the v1 Dec-Feb long segment. Only v3 was recorded on data that still
+exists. This is the concrete cost of having pinned the data one refresh later than the work
+began, and it is the reason the snapshot exists.
+
+Dependency versions are pinned for the same reason. `requirements.txt` previously carried
+no version constraints and `lightgbm` was absent from the project virtual environment
+entirely, which leaves the solver free to move underneath results that are compared at the
+third decimal.
+
 ---
 
 ## 5. Feature Backlog & Open Questions

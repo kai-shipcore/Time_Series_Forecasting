@@ -39,3 +39,12 @@ detail lives in the design document and codebase guide, not here.
   unchanged for the production forecast; only the development track reads the frozen
   copy. Added a tool to create and check these frozen copies, and confirmed all six
   previously recorded baseline accuracy figures reproduce exactly.
+
+- 2026-07-20: Put the forecasting work under version control for the first time and saved
+  each model version as its own labelled checkpoint, so any earlier version can be
+  retrieved and re-run later. None of this work had been backed up before.
+
+- 2026-07-20: Found and fixed a fault that had made the first model version impossible to
+  re-run: it was picking up a later version's settings rather than its own. Checked all
+  four versions re-run correctly, and locked the software library versions so results
+  cannot shift between machines.
