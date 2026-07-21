@@ -53,17 +53,28 @@ ML_SEASONAL = SEASONAL_HOLIDAY if ML_USE_HOLIDAY_FLAG else SEASONAL_BASE
 def ml_is_holiday(ds: pd.Series) -> pd.Series:
     """True for weeks inside the ML track's holiday window.
 
-    Note on W-MON: `ds` labels the Monday a week ENDS on, so a label of
-    2025-12-22 covers Dec 15-21. Window membership is decided on the label,
-    which means the effective boundary sits one week later than the calendar
-    date suggests. That is the prototype's existing behaviour and is preserved
-    here deliberately; changing it is a separate decision from moving the
-    window.
+    Membership is decided on the DAYS a week covers, not on its label. Under
+    W-MON a label of 2025-12-22 covers Dec 15-21, so testing the label puts the
+    effective boundary a week late and, worse, moves it year to year: a fixed
+    (11,20)-(12,15) label test covered Nov 18 to Dec 08 in 2024 but Nov 17 to
+    Dec 14 in 2025. A window pinned to real promotional dates cannot drift like
+    that. A week counts when a majority of its seven days fall inside the range.
+
+    The prototype (src/deseasonalize.py) still uses the label test. That is why
+    matches_prototype() will report False once ML_HOLIDAY_END is moved: the two
+    are then deliberately different, which is the point of the split.
     """
     m0, d0 = ML_HOLIDAY_START
     m1, d1 = ML_HOLIDAY_END
-    m, d = ds.dt.month, ds.dt.day
-    return ((m == m0) & (d >= d0)) | ((m > m0) & (m < m1)) | ((m == m1) & (d <= d1))
+    start = ds - pd.Timedelta(days=7)
+    end = ds - pd.Timedelta(days=1)
+    yr = end.dt.year.where(end.dt.month >= m0, end.dt.year - 1)
+    p0 = pd.to_datetime(dict(year=yr, month=m0, day=d0))
+    p1 = pd.to_datetime(dict(year=yr, month=m1, day=d1))
+    lo = start.where(start > p0, p0)
+    hi = end.where(end < p1, p1)
+    days_in = (hi - lo).dt.days + 1
+    return days_in >= 4
 
 
 def ml_factors(ds: pd.Series) -> pd.Series:
@@ -85,7 +96,10 @@ def matches_prototype() -> bool:
     """
     from src.deseasonalize import _factors
 
-    ds = pd.Series(pd.date_range("2024-01-01", "2027-12-31", freq="D"))
+    # W-MON labels only: the day-based membership rule is defined on the seven
+    # days a week label covers, so evaluating it on arbitrary calendar dates
+    # compares two different questions and always reports a difference.
+    ds = pd.Series(pd.date_range("2024-01-01", "2027-12-31", freq="W-MON"))
     return bool((ml_factors(ds) == _factors(ds)).all())
 
 

@@ -34,10 +34,23 @@ def seg(tbl, name):
 
 def main() -> int:
     ok = True
-    print(f"factors identical to prototype: {matches_prototype()}")
-    ok &= matches_prototype()
-
     weekly, profiles = load_weekly()
+
+    # The ML track now decides holiday membership on the days a week covers,
+    # while the prototype still tests the label, so matches_prototype() is
+    # expected to be False in general. What must hold is that they agree on the
+    # weeks actually present in the pinned data; the rules differ only on weeks
+    # outside it (a week covering Dec 25-31 carries a January label, and a week
+    # covering Nov 16-22 has only three promo days).
+    import pandas as pd
+    from src.deseasonalize import _factors
+    from src.ml.seasonal import ml_factors
+    ds = pd.Series(sorted(pd.to_datetime(weekly["ds"].unique())))
+    same = bool((ml_factors(ds) == _factors(ds)).all())
+    print(f"factors agree on all {len(ds)} weeks in the pinned data: {same}")
+    print(f"  (matches_prototype() over all future weeks: {matches_prototype()}, "
+          f"expected False once the membership rules differ)")
+    ok &= same
     smooth = profiles.loc[profiles["bucket"] == "smooth", "unique_id"]
     weekly = weekly[weekly["unique_id"].isin(set(smooth))]
 

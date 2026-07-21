@@ -109,7 +109,7 @@ ROUTE_SHORT_SMOOTH_TO_V1 = False
 # their own SEASONAL dict and never import from deseasonalize.
 ML_USE_HOLIDAY_FLAG   = USE_HOLIDAY_FLAG
 ML_HOLIDAY_START      = HOLIDAY_START
-ML_HOLIDAY_END        = HOLIDAY_END
+ML_HOLIDAY_END        = (12, 15)   # v9: promotions run late Nov to mid Dec; see Section 6
 ML_HOLIDAY_MULTIPLIER = HOLIDAY_MULTIPLIER
 
 # Metric thresholds (used in select.py)

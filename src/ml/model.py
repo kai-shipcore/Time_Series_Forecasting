@@ -204,6 +204,7 @@ class RatioLGBM:
         deseas_features: bool = True,
         deseas_all: bool = False,
         balance: float = 0.0,
+        uids: set | None = None,
     ):
         # `features` is deliberately required, with no default. It used to
         # default to the current version's feature list, which meant an older
@@ -216,6 +217,9 @@ class RatioLGBM:
         self.deseas_features = deseas_features
         self.deseas_all = deseas_all
         self.balance = balance
+        # Restrict training AND prediction to this SKU set (v8, separate models
+        # per segment). None means all SKUs, which is every earlier version.
+        self.uids = uids
         self.model = None
         self.clip_hi = None
 
@@ -230,6 +234,18 @@ class RatioLGBM:
 
         mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=True,
                            deseas_features=self.deseas_features, deseas_all=self.deseas_all)
+        if self.uids is not None:
+            mat = mat[mat["unique_id"].isin(self.uids)]
+            # The stratified validation draw spans both segments, so a
+            # segment-restricted model must intersect it or its eval set is
+            # empty and early stopping has nothing to stop on.
+            val_uids = set(val_uids) & set(self.uids)
+            if not val_uids:
+                raise ValueError(
+                    "No validation SKUs fall inside this model's segment; "
+                    "draw validation SKUs per segment before fitting."
+                )
+        self.n_train_rows = len(mat)
 
         self.clip_hi = float(mat["ratio"].quantile(WINSOR_Q))
         mat["ratio"] = mat["ratio"].clip(upper=self.clip_hi)
@@ -272,6 +288,8 @@ class RatioLGBM:
     ) -> pd.DataFrame:
         mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=False,
                            deseas_features=self.deseas_features, deseas_all=self.deseas_all)
+        if self.uids is not None:
+            mat = mat[mat["unique_id"].isin(self.uids)]
         r_hat = np.clip(self.model.predict(mat[self.features]), 0.0, self.clip_hi)
         out = mat[["unique_id", "tgt_ds", "level", "tgt_factor"]].copy()
         out["yhat"] = r_hat * out["level"] * out["tgt_factor"]

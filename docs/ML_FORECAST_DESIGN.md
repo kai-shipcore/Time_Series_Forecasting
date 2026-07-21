@@ -902,6 +902,41 @@ supported by those four failures rather than by argument. Its known cost is aban
 cross-segment transfer that motivates a global model (Section 1.2), which the short segment
 may depend on more than the long one. Experiment: `scripts/ml_14_lgbm_v7.py`.
 
+### 4.25 Adopted: the holiday window ends mid-December (v9)
+
+`ML_HOLIDAY_END` moves from (12, 31) to (12, 15). The uplift now covers the promotional
+period the company actually runs, late November to mid-December, and the weeks after it
+fall back to the ordinary December factor that `SEASONAL_HOLIDAY[12] = 1.00` has always
+defined and the code never applied.
+
+The basis is business knowledge, stated plainly because it is not a measurement. The
+company runs promotions from late November to mid-December and expects to continue. That
+also explains why the two observed Decembers disagree so sharply: December 2024 predates
+the practice, so it is a different regime rather than a conflicting sample. `config.py`'s
+own comment has described the intended behaviour since the beginning.
+
+Three earlier findings had to be settled first. The membership test now uses the days a
+week covers rather than its W-MON label, because a fixed date boundary tested on labels
+drifts year to year and covered Nov 18 to Dec 08 in 2024 against Nov 17 to Dec 14 in 2025.
+The ML factors were separated from the prototype's (`src/ml/seasonal.py`) so that changing
+one cannot move the accuracy bar or V1. And v6 established that the change fails at
+baseline level, which is why it was retested inside a model.
+
+Evidence: all three pre-registered criteria met, Dec-Feb long improving from 0.3145 to
+0.2528 with no significant regression anywhere, and v9 at or below the prototype in all six
+cells. Full table in Section 6.
+
+This closes the Dec-Feb long problem that v4, v5, v6, v7 and v8 each failed to fix. The
+reason those failed is now clear: all five treated it as a segment-interaction problem,
+and Section 4.24 and the v8 result together showed the segments genuinely want opposite
+things from a shared model. It was never a segment problem. It was a mis-specified seasonal
+window, and every segment-differentiated remedy was compensating for it in the wrong place.
+
+Two limitations stand. The setting is a judgement about the promotional calendar and
+becomes wrong if that calendar changes, which is why it is a config constant reviewed
+annually rather than a fitted parameter. And the long segment is about 30 effective units
+after accounting for 23 correlated variants, so its intervals overstate confidence.
+
 ---
 
 ## 5. Feature Backlog & Open Questions
@@ -1017,7 +1052,7 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 
 | Version | Change from previous | Status | Details |
 |---|---|---|---|
-| v-base | structural baseline, no learned parameters | **BEST** | Sections 3, 4.17 |
+| v-base | structural baseline, no learned parameters | superseded by v9 | Sections 3, 4.17 |
 | v0 | + LightGBM, lead feature only | rejected | Section 4.18 |
 | v1 | + ramp feature block | rejected | Section 4.19 |
 | v2 | trajectory features computed on deseasonalized data for all SKUs | rejected | Section 4.20 |
@@ -1026,6 +1061,8 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v5 (stage 1) | per-segment December/holiday multiplier, tested at baseline level | rejected | Section 6 |
 | v6 (stage 1) | holiday window ends mid-December, tested at baseline level | two of three criteria met; not adopted, superseded by a design flaw | Section 6 |
 | v7 | + per-segment sample weighting on top of v4 | rejected | Section 4.24 |
+| v8 | separate models per segment | rejected | Section 6 |
+| v9 | holiday window ends mid-December, inside v3 | **BEST**, all criteria met; final test pending | Section 4.25 |
 
 ### v-base (July 2026)
 
@@ -1401,3 +1438,129 @@ worse than v4 on Mar-May short.
 Tree counts rose sharply under rebalancing, from 41 to 117 in Mar-May and 37 to 155 in
 Dec-Feb, so the model fit considerably more structure and got worse, consistent with
 overfitting the upweighted rows. Experiment: `scripts/ml_14_lgbm_v7.py`.
+
+### v8 (July 2026) — rejected
+
+- **Change:** two independent LightGBM models, one fitted on long SKUs and one on short,
+  each on the v3 configuration (`FEATURES_V1`, `deseas_all=True`). `is_long` is omitted
+  because it is constant within each model. Predictions are concatenated and scored
+  exactly as before.
+- **Hypothesis:** the last candidate from Section 4.20, and the only one that structurally
+  cannot trade one segment against the other. Four attempts to fix Dec-Feb long inside a
+  shared model (v4 indicator, v5 seasonal factors, v6 window, v7 weighting) each repaired
+  long at short's expense, and Section 4.24 established that the damage tracks the segment
+  indicator rather than the loss weighting. Separate models remove the shared tree
+  structure entirely.
+- **Known cost:** this abandons the cross-segment transfer that motivates a global model
+  (Section 1.2). Short SKUs have the least history and may depend on it most, so short is
+  where this is expected to hurt if it hurts anywhere.
+
+**Pass criteria, stated before running:**
+
+1. Dec-Feb long improves significantly against v3 (0.3145).
+2. Short retains v3's qualification: pooled WAPE at or below the prototype's on all three
+   windows (0.2014, 0.2863, 0.4251), with no significant regression against v3.
+3. No significant regression against v3 in any other decision cell.
+
+**Two limitations recorded in advance, so a null result is read correctly.** The long model
+has only 6 to 7 validation SKUs for early stopping, because 15% of roughly 54 long SKUs is
+inherently thin; its stopping point will be noisy. The short model has 2,854 training rows
+in the Oct-Dec window against `min_child_samples=200`, roughly fourteen leaves' worth. If
+short underperforms specifically where its matrix is small, that is evidence about
+regularisation rather than about separate models, and should trigger a hyperparameter
+retest rather than a rejection.
+
+**Status: rejected. One of three criteria met.**
+
+| Pooled WAPE | v8 | v3 | prototype | v8 vs v3 | significant |
+|---|---|---|---|---|---|
+| short, Mar-May | 0.2703 | **0.1863** | 0.2014 | +0.0840 | yes |
+| short, Dec-Feb | 0.2423 | **0.1943** | 0.2863 | +0.0481 | yes |
+| long, Mar-May | **0.1340** | 0.1345 | 0.1411 | −0.0004 | no |
+| long, Dec-Feb | **0.2832** | 0.3145 | 0.2737 | −0.0312 | yes |
+| long, Oct-Dec | 0.1013 | **0.1011** | 0.0911 | +0.0002 | no |
+| short, Oct-Dec (ref) | 0.4183 | **0.1826** | 0.4251 | +0.2357 | (reference) |
+
+Criterion 1 met; 2 and 3 failed, with short regressing significantly in all three windows
+and Mar-May short falling below the prototype, losing v3's qualification.
+
+The pre-registered inconclusive clause applies to Oct-Dec: the short model trained ONE tree
+on 2,854 rows, so early stopping fired immediately and it is effectively predicting a
+constant. Its 0.4183 is near the structural baseline's 0.4861 and says nothing about
+separate models, only that `min_child_samples=200` is wrong at that matrix size.
+
+The clause does not cover Mar-May, where the short model had 37,130 rows and 200 trees and
+still returned 0.2703 against v3's 0.1863. That is direct evidence for the cost anticipated
+in Section 1.2: cross-segment transfer does real work for short SKUs, and removing it hurts
+them even with ample data.
+
+Taken with v4, v5, v6 and v7, the pattern is now consistent rather than merely repeated:
+shared structure helps short and hurts long, isolating the segments helps long and hurts
+short, and v3 sits at the best available compromise. Note also that long is nearly
+indifferent to all of it, moving 0.1345 to 0.1340 in Mar-May and 0.1011 to 0.1013 in
+Oct-Dec. Only Dec-Feb long responds, which suggests that cell is not primarily a segment
+problem. Experiment: `scripts/ml_15_lgbm_v8.py`.
+
+### v9 (July 2026) — BEST
+
+- **Change:** `ML_HOLIDAY_END` moves from (12, 31) to (12, 15), inside v3. Two supporting
+  corrections land with it: holiday membership is now decided on the days a week covers
+  rather than its label, and the ML factors are separate from the prototype's, so neither
+  the prototype nor V1 moves.
+- **Why this is not v6 again.** v6 tested the same window change at baseline level and was
+  not adopted. v3 succeeded precisely where the baseline failed once before (Section 4.20:
+  full deseasonalization became viable for short SKUs only when a learned growth response
+  could offset it), so the window change deserves the same treatment. This is the first
+  test of it inside a model.
+- **Basis:** business knowledge, not fitting. Promotions run late November to mid-December
+  and are expected to continue; December 2024 predates that practice. The measured support
+  is deliberately weak and secondary: weeks covering Dec 16-29 sat at or below the typical
+  level in both regimes.
+
+**Pass criteria, stated before running:**
+
+1. Dec-Feb long improves significantly against v3 (0.3145).
+2. Short retains v3's qualification: at or below the prototype on all three windows
+   (0.2014, 0.2863, 0.4251), with no significant regression against v3. At baseline level
+   this is where v6 failed, so it is the criterion under test.
+3. No significant regression against v3 elsewhere.
+
+**Recorded in advance:** if this fails the same way every segment-differentiated attempt
+has failed, the Dec-Feb long cell should be accepted as a limitation of two years of data
+rather than pursued further, and effort moved to hyperparameters and external signals.
+
+**Status: all three criteria met. First version to do so. Final test not yet run.**
+
+| Pooled WAPE | v9 | v3 | v-base | prototype | v9 vs v3 | significant |
+|---|---|---|---|---|---|---|
+| short, Mar-May | **0.1961** | 0.1863 | 0.2097 | 0.2014 | +0.0098 | no |
+| short, Dec-Feb | 0.2000 | 0.1943 | **0.1788** | 0.2863 | +0.0057 | no |
+| long, Mar-May | 0.1394 | 0.1345 | **0.1302** | 0.1411 | +0.0049 | no |
+| long, Dec-Feb | **0.2528** | 0.3145 | 0.2167 | 0.2737 | −0.0616 | yes |
+| long, Oct-Dec | 0.1023 | **0.1011** | 0.1209 | 0.0911 | +0.0012 | no |
+| short, Oct-Dec (ref) | **0.1783** | 0.1826 | 0.4861 | 0.4251 | −0.0043 | no |
+
+Bias: short +9.4%, −1.5%, −4.3%; long +2.9%, +22.2%, +1.3%.
+
+Criterion 1 met: Dec-Feb long fell from 0.3145 to 0.2528 and is below the prototype's
+0.2737 for the first time. That cell has blocked every version since v1.
+
+Criterion 2 met, and it is the one that matters. v6 tested the identical window change at
+baseline level and failed here, with Dec-Feb short regressing significantly. Inside v3 it
+does not: short stays under the prototype in all three windows with no significant
+regression. This is the second time the pattern from Section 4.20 has held, where a
+seasonal change that a fixed baseline cannot absorb becomes viable once a learned growth
+response can offset it.
+
+Criterion 3 met: the three small increases are all statistical ties.
+
+**v9 is at or below the prototype in all six segment-window cells**, which is the Section
+1.6 dev-window condition for both segments rather than short alone. Bias improves where it
+mattered: Dec-Feb long from +29.2% to +22.2%, Dec-Feb short from +5.3% to −1.5%.
+
+Two cautions carried forward. The change rests on business knowledge about the promotional
+calendar, not on measurement; the supporting data is two contradictory Decembers, and if
+the promotional pattern changes the setting becomes wrong. It is a config constant so that
+it can be revised. And the long segment is roughly 30 effective units once the 23
+correlated `CC-CN-03`/`CC-CP-03` variants are accounted for, so the Dec-Feb long interval
+is narrower than the true uncertainty. Experiment: `scripts/ml_16_lgbm_v9.py`.

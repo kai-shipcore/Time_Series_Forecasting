@@ -116,3 +116,15 @@ detail lives in the design document and codebase guide, not here.
   a product belongs to, which helps established products and harms newer ones no matter
   how the training is balanced. Four different approaches have now hit this same trade-off,
   which points clearly at keeping separate models for the two groups.
+
+- 2026-07-21: Tried training separate models for established and newer products, the last
+  of the structural options. Rejected: it helped established products slightly but made
+  newer ones significantly worse, confirming that newer products benefit from being
+  trained alongside established ones.
+
+- 2026-07-21: Corrected the holiday period used by the forecast so it matches the
+  promotional period the company actually runs, late November to mid-December, rather than
+  running to the end of December. This resolved the long-standing post-holiday accuracy
+  problem for established products, which five previous attempts had failed to fix by
+  treating it as a difference between product groups. The forecast now matches or beats
+  the earlier statistical system for both product groups across all three test periods.
