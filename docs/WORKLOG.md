@@ -146,3 +146,9 @@ detail lives in the design document and codebase guide, not here.
   earlier statistical system in five of six test cases. The feature generalises to any
   temporary spike, not just the holidays. Still to do before this can replace the current
   spreadsheet method: the final held-out test, which is run only once.
+
+- 2026-07-21: Added a backlog item to check whether preorders are handled correctly.
+  Preorders book demand when placed but ship later, so if sales are counted on the order
+  date the demand is recorded in the wrong weeks, which would distort the whole forecast
+  and hit newly launched products hardest. Flagged to verify how the data is recorded and
+  correct it if needed.

@@ -1039,6 +1039,18 @@ model changes around them.
    `compare_v1.load_raw`; export scripts exist for the forecast tables).
 5. Correct the internal project documentation where it describes `fc_forecast_history`
    with a schema the real table does not have.
+6. Check how preorders are recorded and correct for them. A preorder books demand when the
+   order is placed but ships weeks or months later, so if the weekly series is built on
+   order date the demand lands in the wrong weeks: an artificial spike at order time and a
+   gap at fulfilment. This corrupts every derived quantity at once, since levels, ramp,
+   elevation, and the seasonal round-trip are all built from the weekly series, and it
+   would be most damaging for newly launched SKUs, whose launch preorders can dominate
+   their short history. First establish whether the ingest keys demand off order date or
+   ship date (inspect `orders_raw` and the velocity snapshot), and whether preorders are
+   flagged at all. If they land on order date, the fix is to attribute preorder demand to
+   the intended fulfilment week, or to exclude the preorder window from training, in the
+   same spirit as the stockout target-cleaning in Section 5.3. This is a data-integrity
+   correction, not a model feature.
 
 Completed items are recorded in the Decision Log: stratified internal validation
 (Section 4.13) and pinned evaluation windows (Section 4.14).
