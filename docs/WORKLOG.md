@@ -128,3 +128,11 @@ detail lives in the design document and codebase guide, not here.
   problem for established products, which five previous attempts had failed to fix by
   treating it as a difference between product groups. The forecast now matches or beats
   the earlier statistical system for both product groups across all three test periods.
+
+- 2026-07-21: Ran a broad hyperparameter search over the model's main tuning settings,
+  after an initial narrow attempt had tested too little to conclude anything. Result: the
+  model is essentially already well configured; the best settings found gave no meaningful
+  improvement and made one test period slightly worse. More importantly, this settles that
+  the remaining post-holiday weakness for established products is not a tuning problem. It
+  comes from the model expecting continued growth into a period where demand falls, which
+  will need a new signal that anticipates the turn rather than any tuning change.

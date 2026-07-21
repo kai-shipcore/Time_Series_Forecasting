@@ -205,6 +205,7 @@ class RatioLGBM:
         deseas_all: bool = False,
         balance: float = 0.0,
         uids: set | None = None,
+        patience: int = 100,
     ):
         # `features` is deliberately required, with no default. It used to
         # default to the current version's feature list, which meant an older
@@ -220,6 +221,10 @@ class RatioLGBM:
         # Restrict training AND prediction to this SKU set (v8, separate models
         # per segment). None means all SKUs, which is every earlier version.
         self.uids = uids
+        # Early-stopping patience. Searchable because it, not capacity, was the
+        # binding constraint in the first tuning attempt: every configuration
+        # halted at 30-46 trees regardless of num_leaves or min_child_samples.
+        self.patience = patience
         self.model = None
         self.clip_hi = None
 
@@ -279,7 +284,7 @@ class RatioLGBM:
             eval_set=[(va[self.features], va["ratio"])],
             eval_sample_weight=[va["weight"]],
             eval_metric="l1",
-            callbacks=[lgb.early_stopping(100, verbose=False)],
+            callbacks=[lgb.early_stopping(self.patience, verbose=False)],
         )
         return self
 

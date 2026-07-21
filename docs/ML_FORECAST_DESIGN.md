@@ -937,6 +937,27 @@ becomes wrong if that calendar changes, which is why it is a config constant rev
 annually rather than a fitted parameter. And the long segment is about 30 effective units
 after accounting for 23 correlated variants, so its intervals overstate confidence.
 
+### 4.26 Rejected: hyperparameter tuning. The model is not misconfigured
+
+A random search of 81 configurations over eight LightGBM parameters, scored on the
+validation slice with no test-window contact, produced a validation-loss spread of 1.24%
+end to end and a best-versus-current gap of 0.138%. Only `min_child_samples` showed a real
+effect, and the current 200 is a mild misconfiguration rather than a serious one: values
+from 5 to 100 tie, 200 is marginally worse, 500 and 1000 are clearly worse. Carried to the
+development windows (v10), the search winner produced a significant regression on Mar-May
+short and ties everywhere else, failing the adoption rule.
+
+Two things are settled by this. First, an earlier suspicion that `min_child_samples=200`
+was badly wrong, raised when v8's short model trained a single tree on 2,854 rows, does not
+hold for the shared model: at 34,000-plus training rows the setting barely matters. It
+could still matter for genuinely small matrices, which keeps the v8 separate-models
+question open rather than closed. Second, and more useful, the two Dec-Feb losses to the
+structural baseline are invariant to hyperparameters: 81 configurations move them by under
+0.001. That relocates the problem definitively. It is not capacity, regularisation, or
+early stopping; it is the growth drift of Section 4.18, and it lives in the features or the
+target, not the fit. The next candidates are therefore a turning-point feature and the
+external signals of Section 5.3, not further tuning.
+
 ---
 
 ## 5. Feature Backlog & Open Questions
@@ -1062,7 +1083,8 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v6 (stage 1) | holiday window ends mid-December, tested at baseline level | two of three criteria met; not adopted, superseded by a design flaw | Section 6 |
 | v7 | + per-segment sample weighting on top of v4 | rejected | Section 4.24 |
 | v8 | separate models per segment | rejected | Section 6 |
-| v9 | holiday window ends mid-December, inside v3 | **BEST**, all criteria met; final test pending | Section 4.25 |
+| v9 | holiday window ends mid-December, inside v3 | **BEST**, beats the prototype in all six cells; loses to v-base in the two Dec-Feb cells | Section 4.25 |
+| v10 | hyperparameters tuned on the internal validation slice | rejected; current settings retained | Section 6 |
 
 ### v-base (July 2026)
 
@@ -1536,7 +1558,7 @@ rather than pursued further, and effort moved to hyperparameters and external si
 | short, Mar-May | **0.1961** | 0.1863 | 0.2097 | 0.2014 | +0.0098 | no |
 | short, Dec-Feb | 0.2000 | 0.1943 | **0.1788** | 0.2863 | +0.0057 | no |
 | long, Mar-May | 0.1394 | 0.1345 | **0.1302** | 0.1411 | +0.0049 | no |
-| long, Dec-Feb | **0.2528** | 0.3145 | 0.2167 | 0.2737 | −0.0616 | yes |
+| long, Dec-Feb | 0.2528 | 0.3145 | **0.2167** | 0.2737 | −0.0616 | yes |
 | long, Oct-Dec | 0.1023 | **0.1011** | 0.1209 | 0.0911 | +0.0012 | no |
 | short, Oct-Dec (ref) | **0.1783** | 0.1826 | 0.4861 | 0.4251 | −0.0043 | no |
 
@@ -1564,3 +1586,78 @@ the promotional pattern changes the setting becomes wrong. It is a config consta
 it can be revised. And the long segment is roughly 30 effective units once the 23
 correlated `CC-CN-03`/`CC-CP-03` variants are accounted for, so the Dec-Feb long interval
 is narrower than the true uncertainty. Experiment: `scripts/ml_16_lgbm_v9.py`.
+
+### v10 (July 2026) — rejected
+
+`RatioLGBM.PARAMS` has never been tuned. `min_child_samples=200` and `num_leaves=31` were
+set once and never revisited, and `colsample_bytree=1.0` still carries the comment "v0 has
+one feature; sampling is meaningless", true with one feature and stale with four. Two
+results make this pressing rather than cosmetic: v8's short model trained a single tree on
+2,854 rows, so `min_child_samples=200` is demonstrably wrong at small matrix sizes, and v9
+loses significantly to a 12-week moving average in both Dec-Feb cells, which is consistent
+with a badly regularised model.
+
+**Protocol, and why it differs from every other version here.** Tuning is a
+multiple-comparison problem, unlike the single structural changes the Section 1.5 rule was
+written for. Searching a grid on the three development windows would fit those windows and
+quietly spend them. So:
+
+1. Candidates are scored ONLY on the internal validation slice (Section 2.3), the 15% of
+   SKUs already held out from tree fitting. The selection metric is the weighted L1 that
+   early stopping already computes on that slice, which by Section 4.6 equals the
+   pooled-WAPE numerator, averaged across the three training sets. No test-window data is
+   touched at any point in the search.
+2. The grid is fixed in advance at 12 configurations: `min_child_samples` in
+   {20, 50, 100, 200} crossed with `num_leaves` in {15, 31, 63}. `learning_rate` stays at
+   0.05 and `n_estimators` stays a cap that early stopping resolves. `colsample_bytree` is
+   tested only on the winner, as two further fits.
+3. The single winning configuration is then evaluated ONCE against v9 on the development
+   windows. That one comparison is the only contact the search has with them.
+
+**Pass criteria, stated before running:** adopt only if the winner improves the
+three-window mean pooled WAPE by at least 0.01 with a consistent sign, per Section 1.5,
+and produces no significant regression in any cell. A tuned model that merely ties is not
+adopted, because the current settings are already recorded and a tie is not evidence.
+
+**Recorded in advance:** the most interesting outcome is not a better mean. It is whether
+the two Dec-Feb losses to v-base survive tuning. If they do, the growth-drift mechanism of
+Section 4.18 is the cause rather than regularisation, and the fix belongs in the features
+or the target rather than the hyperparameters.
+
+**Status: rejected. Current hyperparameters retained.**
+
+The search ran in two stages as pre-registered. Stage 1 scored 81 configurations on the
+validation slice only: the current settings plus 80 random draws over eight parameters
+(learning_rate, num_leaves, min_child_samples, colsample_bytree, subsample, reg_alpha,
+reg_lambda, patience). The surface was nearly flat: the full spread of validation L1 was
+1.24%, and the best config beat the current settings by 0.138%. The only parameter with a
+clear effect was `min_child_samples` (Spearman +0.70 with loss); values from 5 to 100
+formed a plateau and the current 200 sat just past it, with 500 and 1000 clearly worse.
+`patience` correlated +0.00, which retired the theory that early stopping was the binding
+constraint.
+
+Stage 2 evaluated the single winner (learning_rate 0.010, num_leaves 127,
+min_child_samples 10, colsample 0.96, subsample 0.72, reg_alpha 1.0, reg_lambda 0.01,
+patience 30), refit at the full tree cap, once against v9:
+
+| Pooled WAPE | v9 | v10 | v-base | v10 vs v9 | significant |
+|---|---|---|---|---|---|
+| short, Mar-May | **0.1961** | 0.2024 | 0.2097 | +0.0063 | yes |
+| short, Dec-Feb | 0.2000 | 0.1986 | **0.1788** | −0.0014 | no |
+| long, Mar-May | 0.1394 | 0.1427 | **0.1302** | +0.0033 | no |
+| long, Dec-Feb | 0.2528 | 0.2521 | **0.2167** | −0.0008 | no |
+| long, Oct-Dec | 0.1023 | 0.1009 | 0.1209 | −0.0014 | no |
+| short, Oct-Dec (ref) | **0.1783** | 0.1818 | 0.4861 | +0.0036 | no |
+
+Rejected on all three criteria: no 0.01 mean improvement, a significant regression in
+Mar-May short, and five of six cells statistical ties.
+
+The pre-registered question is answered decisively. Both Dec-Feb losses to v-base survive
+tuning intact (long 0.2521 versus 0.2167, short 0.1986 versus 0.1788): the best
+hyperparameters found across 81 configurations move them by under 0.001. The Dec-Feb gap
+is therefore not a regularisation problem. It is the growth-drift mechanism of Section 4.18,
+the model learning ratios that rise with lead, which is correct on average and wrong
+exactly when demand contracts after the holidays. Closing it needs a feature that
+anticipates the turn or the external signals of Section 5.3, not tuning. The current
+hyperparameters, `min_child_samples=200` included, are retained. Experiment:
+`scripts/ml_18_tune_wide.py`, verified by `scripts/ml_19_tune_verify.py`.
