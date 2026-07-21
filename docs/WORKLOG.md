@@ -152,3 +152,10 @@ detail lives in the design document and codebase guide, not here.
   date the demand is recorded in the wrong weeks, which would distort the whole forecast
   and hit newly launched products hardest. Flagged to verify how the data is recorded and
   correct it if needed.
+
+- 2026-07-21: Tested adding product age as a feature for newer products. Rejected: it made
+  the most recent test period dramatically worse. The reason is a known modelling pitfall,
+  age always increases, and the forecast is made at each product's oldest point, beyond
+  what the model saw in training, so the model extrapolated wildly. Recorded as a caution
+  against any ever-increasing feature of this kind. Newer-product accuracy is already
+  strong, so this line is not pursued further.

@@ -51,6 +51,11 @@ FEATURES_ELEV_REP = ["lead", "ramp_short_only", "y_last_r", "lag_1_r", "elev_lon
 # elevation, keeping recent-level ratios so gradual growth is still tracked.
 # Only used inside a long-only model, so no gating column is needed.
 FEATURES_V11_LONG = ["lead", "y_last_r", "lag_1_r", "elev_long"]
+# v12 short-model candidate: SKU age added to the shared model, which serves
+# short SKUs in the hybrid. Elevation was considered but not tested: short SKUs
+# genuinely ramp, so "above own baseline" is often healthy growth, and the
+# existing ramp feature already captures reversion better for them.
+FEATURES_SHORT_AGE = FEATURES_V1 + ["sku_age"]
 
 
 def long_sku_set(profiles: pd.DataFrame, cutoff) -> set[str]:
@@ -157,6 +162,10 @@ def build_matrix(
     df["elev_long"] = (roll4 / roll52.clip(lower=EPS))          # 4wk vs annual level
     prior48 = gf.shift(4).rolling(4, min_periods=4).mean().reset_index(level=0, drop=True)
     df["accel_long"] = (roll4 / prior48.clip(lower=EPS))        # 4wk vs the 4wk before it
+    # v12 short-SKU feature: SKU maturity. Lets the model modulate its ramp
+    # expectation by age (a young SKU ramps steeper than a near-mature one).
+    df["sku_age"] = df["weeks_live"].astype("float32")
+
     for col in ("elev_long", "accel_long"):
         # Clip to [0, 5]: a 4wk window running 5x its reference is already
         # saturated "extreme high", and the raw ratio explodes when the prior

@@ -990,6 +990,23 @@ gradual growth. As with every recent gain, the standing status is BEST on the de
 windows only; the quarantined final test (Section 2.2) has never been run and is what v11
 must clear before it can be proposed to replace V1.
 
+### 4.28 Rejected: SKU age feature. Monotonic trend features extrapolate badly
+
+`sku_age` (weeks since first sale) was added to the shared model to let it modulate ramp
+expectation by maturity. It failed hard: Mar-May short tripled to 0.6146 with +59% bias, a
+significant regression, while the other windows were mild and insignificant.
+
+The cause is not the hypothesis but the encoding. Age is monotonic and unbounded, and every
+forecast is made at a SKU's maximum age, past the ages its own training anchors cover. A
+tree cannot extrapolate a monotonic feature beyond its training support, so the learned
+age-to-ratio slope produced runaway predictions at the latest cutoff, where ages are
+highest. This is a general caution for any trend-like feature (age, cumulative volume, a raw
+time index) in this tree model, recorded so it is not rediscovered.
+
+The `sku_age` backlog candidate (Section 5.2) is marked accordingly: retest only with a
+bounded encoding, and only if short-SKU error is shown to have a systematic age component,
+which it does not currently appear to.
+
 ---
 
 ## 5. Feature Backlog & Open Questions
@@ -1010,7 +1027,7 @@ model changes around them.
 |---|---|
 | Ramp ratio (4-week average ÷ 12-week average) | Recent acceleration persists into the near future; directly targets WA12's inability to see growth. |
 | Recent-level ratios (last week ÷ 12-week average, and similar lags) | The most recent weeks carry the most information about next week, especially at short leads. |
-| SKU age (weeks since first sale) | Young SKUs are systematically in ramp-up; their dynamics differ from mature SKUs. |
+| SKU age (weeks since first sale) | Young SKUs are systematically in ramp-up; their dynamics differ from mature SKUs. Raw age rejected (Section 4.28): a monotonic feature extrapolates badly at the prediction boundary. Retest only with a bounded encoding. |
 | Demand level (log of 12-week average) | Larger SKUs have steadier demand; corrections should shrink for small, noisy SKUs. |
 | Volatility (rolling standard deviation ÷ mean) | For erratic SKUs the model should stay close to the baseline; for steady SKUs it can act on smaller signals. |
 | Zero-recency (weeks since last zero week, recent zero count) | Recent zeros signal dormancy or supply gaps; expected demand should discount accordingly. |
@@ -1130,6 +1147,7 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v9 | holiday window ends mid-December, inside v3 | superseded by v11 | Section 4.25 |
 | v10 | hyperparameters tuned on the internal validation slice | rejected; current settings retained | Section 6 |
 | v11 | hybrid: shared short model + dedicated long model with an elevation feature | **BEST**, all criteria met; final test pending | Section 4.27 |
+| v12 | + SKU age feature in the shared (short) model | rejected | Section 4.28 |
 
 ### v-base (July 2026)
 
@@ -1773,3 +1791,56 @@ The within-long re-stratification improved the result over the exploration (Dec-
 long-only model's early stopping benefits from validation SKUs chosen to represent the long
 volume tiers rather than sliced from a whole-portfolio draw. Experiment:
 `scripts/ml_22_v11_hybrid.py`.
+
+### v12 (July 2026) — rejected
+
+- **Change:** add `sku_age` (weeks since first sale, already computed but never used as a
+  feature) to the shared model, which serves short SKUs in the v11 hybrid. The dedicated
+  long model is unchanged, so only short predictions can move. Feature set
+  `FEATURES_SHORT_AGE = FEATURES_V1 + [sku_age]`.
+- **Hypothesis:** short SKUs are young and mostly ramping; a young SKU ramps steeper than
+  one approaching maturity. Age lets the model modulate its ramp expectation by maturity.
+  The pre-check found age carries growth signal not captured by the existing ramp feature
+  (Spearman +0.22 to +0.27 with the ratio target in Dec-Feb and Oct-Dec, and low
+  correlation with `ramp_4_12`), though it is weak in Mar-May (+0.04).
+- **Elevation not tested for short, and why:** short SKUs genuinely ramp, so being above
+  their own baseline is often healthy growth rather than a spike to revert, and the
+  existing ramp already captures short-SKU reversion better than a longer-baseline
+  elevation would (−0.56 versus −0.52). Short SKUs also have too little history for a stable
+  long baseline (Dec-Feb median about 16 weeks).
+
+**Pass criteria, stated before running:**
+1. Short improves against v11 (= v9) with a consistent sign and no significant regression
+   in any window.
+2. Long is unchanged (the long model is not touched; verified identical).
+
+**Recorded expectation:** the signal is moderate, short is already good (beats the
+prototype in all three windows), and its remaining error is more dispersion than systematic
+bias, so a null or marginal result is the likely outcome and would itself be informative.
+
+**Status: rejected. Criterion 1 failed catastrophically.**
+
+| Pooled WAPE | v12 | v11 | v-base | v12 vs v11 (short) |
+|---|---|---|---|---|
+| short, Mar-May | 0.6146 | 0.1961 | 0.2097 | +0.4185, significant |
+| short, Dec-Feb | 0.2146 | 0.2000 | 0.1788 | +0.0146, no |
+| short, Oct-Dec (ref) | 0.2002 | 0.1783 | 0.4861 | +0.0219, no |
+| long (all) | = v11 | | | +0.0000 |
+
+Criterion 2 met (long identical). Criterion 1 failed, and not marginally: Mar-May short
+tripled, with bias jumping to +59.4%.
+
+The cause is a boundary-extrapolation pathology of a monotonic feature. `sku_age` grows
+without bound, and every forecast is made at the SKU's oldest age, older than nearly all of
+its own training anchors, which stop about ten weeks before the cutoff because they need a
+realized target inside the training window. The model learned a positive age-to-ratio slope
+from the SKU cross-section (the +0.22 to +0.27 pre-check correlation) and then applied it at
+ages beyond where it had per-SKU signal, extrapolating to large over-forecasts. Mar-May is
+the latest cutoff, so ages are highest and the extrapolation most extreme; the earlier
+windows were milder and not significant.
+
+The lesson generalises: raw monotonic trend features are unsafe in a tree model evaluated at
+the edge of the age distribution. A bounded encoding (a young/mature indicator, or capped
+age) would not extrapolate, but short SKUs are already strong and their residual error is
+dispersion rather than a systematic age effect, so this is not pursued further. Experiment:
+`scripts/ml_23_v12_age.py`.
