@@ -39,6 +39,18 @@ WINSOR_Q = 0.995           # ratio-target clip quantile (computed on train)
 FEATURES_V0 = ["lead"]
 FEATURES_V1 = ["lead", "ramp_4_12", "y_last_r", "lag_1_r"]  # + ramp block
 FEATURES_V4 = FEATURES_V1 + ["is_long"]                      # + segment indicator
+# v11 candidates: turning-point features, gated to long SKUs (neutral 1.0 for
+# short, which lack the history to compute them). Target the Section 4.18 growth
+# drift that no hyperparameter touched (4.26).
+FEATURES_ELEV  = FEATURES_V1 + ["elev_long"]                  # + elevation vs annual
+FEATURES_ACCEL = FEATURES_V1 + ["accel_long"]                # + acceleration
+FEATURES_BOTH  = FEATURES_V1 + ["elev_long", "accel_long"]
+# "replace ramp for long" variant: ramp neutralised for long, elevation added
+FEATURES_ELEV_REP = ["lead", "ramp_short_only", "y_last_r", "lag_1_r", "elev_long"]
+# v11 long model (hybrid): drops ramp_4_12 (the growth-drift feature) for
+# elevation, keeping recent-level ratios so gradual growth is still tracked.
+# Only used inside a long-only model, so no gating column is needed.
+FEATURES_V11_LONG = ["lead", "y_last_r", "lag_1_r", "elev_long"]
 
 
 def long_sku_set(profiles: pd.DataFrame, cutoff) -> set[str]:
@@ -137,6 +149,22 @@ def build_matrix(
     df["ramp_4_12"] = roll4 / denom          # last month vs last quarter
     df["y_last_r"] = df["y_feat"] / denom    # anchor week vs level
     df["lag_1_r"] = gf.shift(1) / denom      # week before anchor vs level
+
+    # v11 turning-point features, on the same deseasonalized y_feat, gated to
+    # long SKUs. Neutral 1.0 for short SKUs and for long SKUs lacking history.
+    is_long_row = df["is_long"].to_numpy() == 1
+    roll52 = gf.rolling(52, min_periods=52).mean().reset_index(level=0, drop=True)
+    df["elev_long"] = (roll4 / roll52.clip(lower=EPS))          # 4wk vs annual level
+    prior48 = gf.shift(4).rolling(4, min_periods=4).mean().reset_index(level=0, drop=True)
+    df["accel_long"] = (roll4 / prior48.clip(lower=EPS))        # 4wk vs the 4wk before it
+    for col in ("elev_long", "accel_long"):
+        # Clip to [0, 5]: a 4wk window running 5x its reference is already
+        # saturated "extreme high", and the raw ratio explodes when the prior
+        # window is near zero (division by the EPS floor). Neutral 1.0 for
+        # short SKUs and where history is insufficient.
+        df[col] = df[col].clip(upper=5.0).where(is_long_row, 1.0).fillna(1.0)
+    # ramp neutralised for long SKUs only (for the replace variant)
+    df["ramp_short_only"] = np.where(is_long_row, 1.0, df["ramp_4_12"])
 
     if for_training:
         anchors = df[df["weeks_live"] >= MIN_ANCHOR_AGE_WEEKS]

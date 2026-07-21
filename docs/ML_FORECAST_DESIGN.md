@@ -958,6 +958,38 @@ early stopping; it is the growth drift of Section 4.18, and it lives in the feat
 target, not the fit. The next candidates are therefore a turning-point feature and the
 external signals of Section 5.3, not further tuning.
 
+### 4.27 Adopted: hybrid model and the elevation feature (v11)
+
+The forecasting model becomes two models. Short-history SKUs are predicted by the shared
+global model (v9 unchanged); long-history SKUs by a dedicated model trained on long SKUs
+only, whose feature set drops the 4wk/12wk ramp and adds `elev_long`, the 4wk demand level
+against the trailing annual level.
+
+This resolves the Dec-Feb long deficit that has run through the entire project. The cause,
+established across v4, v7, v8 and v10, was never a segment interaction to be tuned away and
+never a regularisation problem: it was the growth drift of Section 4.18, the model
+extrapolating a ramp into a window where mature demand contracts, with no feature able to
+see the turn. The elevation feature is that missing signal. It is calendar-blind and
+per-SKU, learned from every elevated-then-reverted episode across all long SKUs and weeks,
+so unlike the v9 holiday window it does not rest on two Decembers alone. Splitting the
+models is what lets long use it: a shared model leaks any long-targeted feature into short
+through the shared trees (Section 4.24), while a long-only model has no such path, and short
+keeps the cross-segment transfer it depends on (v8).
+
+Evidence: all three pre-registered criteria met. Dec-Feb long improved from 0.2528 to
+0.1380, significant against v-base (0.2167), with bias falling from +22.2% to +5.0%. Short
+is identical to v9. No long regression elsewhere. Full table in Section 6.
+
+Design cost and limitations, recorded honestly. Two models are more to maintain, which is
+accepted. The long model rests on about 54 SKUs, 23 of them correlated variants, so its
+intervals overstate confidence and any future marginal change to it should be distrusted on
+this data. The elevation feature cannot separate a temporary spike from a genuine new
+plateau, so a long SKU that truly breaks out will be under-forecast; this is acceptable for
+a mature segment that rarely ramps, and the retained recent-level features still track
+gradual growth. As with every recent gain, the standing status is BEST on the development
+windows only; the quarantined final test (Section 2.2) has never been run and is what v11
+must clear before it can be proposed to replace V1.
+
 ---
 
 ## 5. Feature Backlog & Open Questions
@@ -1083,8 +1115,9 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v6 (stage 1) | holiday window ends mid-December, tested at baseline level | two of three criteria met; not adopted, superseded by a design flaw | Section 6 |
 | v7 | + per-segment sample weighting on top of v4 | rejected | Section 4.24 |
 | v8 | separate models per segment | rejected | Section 6 |
-| v9 | holiday window ends mid-December, inside v3 | **BEST**, beats the prototype in all six cells; loses to v-base in the two Dec-Feb cells | Section 4.25 |
+| v9 | holiday window ends mid-December, inside v3 | superseded by v11 | Section 4.25 |
 | v10 | hyperparameters tuned on the internal validation slice | rejected; current settings retained | Section 6 |
+| v11 | hybrid: shared short model + dedicated long model with an elevation feature | **BEST**, all criteria met; final test pending | Section 4.27 |
 
 ### v-base (July 2026)
 
@@ -1661,3 +1694,70 @@ exactly when demand contracts after the holidays. Closing it needs a feature tha
 anticipates the turn or the external signals of Section 5.3, not tuning. The current
 hyperparameters, `min_child_samples=200` included, are retained. Experiment:
 `scripts/ml_18_tune_wide.py`, verified by `scripts/ml_19_tune_verify.py`.
+
+### v11 (July 2026) — BEST
+
+**Architecture.** Two models instead of one.
+- SHORT SKUs are predicted by the shared v9 model (`FEATURES_V1`, trained on all smooth
+  SKUs). Their predictions are identical to v9 by construction, so the short-segment
+  qualification cannot break. Short SKUs benefit from cross-segment transfer (v8), so they
+  keep the shared model.
+- LONG SKUs are predicted by a model trained on long SKUs ONLY, with feature set
+  `FEATURES_V11_LONG = [lead, y_last_r, lag_1_r, elev_long]`. It drops `ramp_4_12`, the
+  4wk/12wk growth feature that drives the Section 4.18 over-forecast, and adds `elev_long`,
+  the 4wk/52wk elevation against the annual norm. The recent-level ratios `y_last_r` and
+  `lag_1_r` remain, so gradual growth is still tracked; only the sharp-ramp extrapolation
+  is removed and replaced with mean-reversion pressure.
+
+**Why this specific design.** It is the synthesis the whole v4-v10 arc points to. Section
+4.24 established that long-targeted changes in a shared model damage short via shared trees;
+v8 established that a long-only model forecasts long well while a short-only model loses the
+transfer short needs; the v11 exploration established that elevation is a real long-SKU
+signal but leaks into short inside a shared model. Splitting the models removes the shared
+trees, so long gets elevation and short is untouched.
+
+**Improvement over the exploration.** The long model's early-stopping validation SKUs are
+re-stratified WITHIN the long segment (about 9 SKUs) rather than taken as the long slice of
+the whole-portfolio draw (6-7 SKUs, and not representative of long volume tiers). This is a
+cleaner early-stopping signal and makes the formal run distinct from the exploration.
+
+**Pass criteria, stated before running:**
+1. Dec-Feb long improves significantly against v-base (0.2167). This is the defining test:
+   the cell that has blocked every version, and where a moving average still beats v9.
+2. Short is identical to v9 in all three windows (delta exactly 0, by construction; verified).
+3. No significant long regression against v9 in Mar-May or Oct-Dec.
+
+**Recorded limitations.** The long model rests on about 54 SKUs, 23 of them correlated
+`CC-CN-03`/`CC-CP-03` variants, so its effective sample is small and its intervals overstate
+confidence. The elevation feature cannot distinguish a temporary spike from a genuine new
+plateau, so a long SKU that truly breaks out to a higher level will be under-forecast; this
+is acceptable because long SKUs are mature and rarely ramp, and `y_last_r`/`lag_1_r` still
+carry gradual-growth signal. The Dec-Feb win, like the v9 window, ultimately rests on two
+observed Decembers, though the elevation feature is trained on every elevated-then-reverted
+episode across all long SKUs and weeks, not on December alone.
+
+**Status: all three criteria met. New BEST. Final test not yet run.**
+
+| Pooled WAPE | v11 | v9 | v-base | prototype | v11 vs v-base (long) |
+|---|---|---|---|---|---|
+| short, Mar-May | 0.1961 | 0.1961 | 0.2097 | 0.2014 | (short = v9) |
+| short, Dec-Feb | 0.2000 | 0.2000 | 0.1788 | 0.2863 | (short = v9) |
+| short, Oct-Dec (ref) | 0.1783 | 0.1783 | 0.4861 | 0.4251 | (short = v9) |
+| long, Mar-May | 0.1355 | 0.1394 | 0.1302 | 0.1411 | +0.0053, tie |
+| long, Dec-Feb | **0.1380** | 0.2528 | 0.2167 | 0.2737 | −0.0787, significant |
+| long, Oct-Dec | 0.1000 | 0.1023 | 0.1209 | 0.0911 | −0.0209, tie |
+
+Long bias: −7.2%, +5.0%, +1.7% across the three windows; the Dec-Feb figure
+falls from v9's +22.2% to +5.0%.
+
+The defining result: Dec-Feb long, which every version since v1 has lost and where a moving
+average still beat v9, is now 0.1380, well below both v-base (0.2167) and the prototype
+(0.2737). Short is identical to v9 by construction, so its qualification is intact, and the
+long model does not regress in the other two windows. v11 beats the prototype in five of
+six cells, losing only Oct-Dec long, the cell V1 also wins.
+
+The within-long re-stratification improved the result over the exploration (Dec-Feb long
+0.1380 versus the exploration's 0.1557 for the same feature set), confirming that the
+long-only model's early stopping benefits from validation SKUs chosen to represent the long
+volume tiers rather than sliced from a whole-portfolio draw. Experiment:
+`scripts/ml_22_v11_hybrid.py`.

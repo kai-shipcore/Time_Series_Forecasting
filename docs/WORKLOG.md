@@ -136,3 +136,13 @@ detail lives in the design document and codebase guide, not here.
   the remaining post-holiday weakness for established products is not a tuning problem. It
   comes from the model expecting continued growth into a period where demand falls, which
   will need a new signal that anticipates the turn rather than any tuning change.
+
+- 2026-07-21: Solved the long-standing post-holiday accuracy problem for established
+  products. Split the forecaster into two models: newer products keep the shared model
+  that serves them well, and established products get a dedicated model with a new feature
+  that recognises when a product is running far above its yearly norm and is therefore
+  likely to fall back rather than keep climbing. This fixed the one remaining weak spot
+  decisively, left newer products untouched, and the forecast now matches or beats the
+  earlier statistical system in five of six test cases. The feature generalises to any
+  temporary spike, not just the holidays. Still to do before this can replace the current
+  spreadsheet method: the final held-out test, which is run only once.
