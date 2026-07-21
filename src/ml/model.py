@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.deseasonalize import _factors  # noqa: E402
+from src.ml.seasonal import ml_factors as _factors  # noqa: E402
 from src.ml.dataset import asof_history_length  # noqa: E402
 
 EPS = 1e-9
@@ -203,6 +203,7 @@ class RatioLGBM:
         features: list[str],
         deseas_features: bool = True,
         deseas_all: bool = False,
+        balance: float = 0.0,
     ):
         # `features` is deliberately required, with no default. It used to
         # default to the current version's feature list, which meant an older
@@ -214,6 +215,7 @@ class RatioLGBM:
         self.features = list(features)
         self.deseas_features = deseas_features
         self.deseas_all = deseas_all
+        self.balance = balance
         self.model = None
         self.clip_hi = None
 
@@ -231,6 +233,25 @@ class RatioLGBM:
 
         self.clip_hi = float(mat["ratio"].quantile(WINSOR_Q))
         mat["ratio"] = mat["ratio"].clip(upper=self.clip_hi)
+
+        # Per-segment sample weighting (v7). Rows are weighted by demand level,
+        # which makes the loss equal the pooled-WAPE numerator (Section 4.6) but
+        # leaves long SKUs carrying 72-98% of total weight despite being ~20% of
+        # SKUs. Under a demand-weighted loss the profitable move is to serve the
+        # heavy segment, which is what v4 did once it could tell them apart.
+        # balance=0 keeps today's behaviour exactly; 1.0 fully equalises the two
+        # segments' total weight; 0.5 moves half way.
+        self.seg_scale = None
+        if self.balance > 0:
+            w = mat["weight"].to_numpy()
+            is_long = mat["is_long"].to_numpy() == 1
+            share_long = w[is_long].sum() / max(w.sum(), EPS)
+            share_short = 1.0 - share_long
+            if min(share_long, share_short) > EPS:
+                f_long = (0.5 / share_long) ** self.balance
+                f_short = (0.5 / share_short) ** self.balance
+                mat["weight"] = w * np.where(is_long, f_long, f_short)
+                self.seg_scale = (round(f_long, 3), round(f_short, 3))
 
         is_val = mat["unique_id"].isin(val_uids)
         tr, va = mat[~is_val], mat[is_val]

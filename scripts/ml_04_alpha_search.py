@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 import pandas as pd
 
-from src.deseasonalize import _factors
+from src.ml.seasonal import ml_factors as _factors
 from src.ml.dataset import asof_history_length, dev_splits, load_weekly
 from src.ml.evaluate import bootstrap_delta, score
 

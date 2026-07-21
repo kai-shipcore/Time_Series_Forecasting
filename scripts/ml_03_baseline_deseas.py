@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 
-from src.deseasonalize import _factors
+from src.ml.seasonal import ml_factors as _factors
 from src.ml.dataset import dev_splits, load_weekly
 from src.ml.evaluate import (
     bootstrap_delta, cohort_score, ramp_cohort, score, score_table,

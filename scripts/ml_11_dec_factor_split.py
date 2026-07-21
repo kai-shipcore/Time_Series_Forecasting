@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from config import HOLIDAY_MULTIPLIER
-from src.deseasonalize import _factors, _is_holiday
+from src.ml.seasonal import ml_factors as _factors, ml_is_holiday as _is_holiday
 from src.ml.dataset import dev_splits, load_weekly
 from src.ml.evaluate import bootstrap_delta, is_significant, score, score_table
 from src.ml.model import long_sku_set

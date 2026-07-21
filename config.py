@@ -93,6 +93,25 @@ HOLIDAY_MULTIPLIER        = 1.26       # CV-optimised: overall MAE 39.71, Jan bi
 # is safe for level-only models (a wash in mild seasons, Q4 protection in peak).
 ROUTE_SHORT_SMOOTH_TO_V1 = False
 
+# ML track's own holiday window (src/ml/seasonal.py).
+#
+# The settings above are shared by the statistical prototype (backtest.py,
+# run_forward_forecast.py). The prototype is the accuracy bar the ML model must
+# clear (design Section 1.6), so changing a shared factor to improve the ML
+# model would move the target at the same time and make the comparison
+# meaningless. These ML_ settings let the two diverge deliberately.
+#
+# They default to the prototype's values, so the ML track's results are
+# unchanged until one is edited. src/ml/seasonal.py:matches_prototype() asserts
+# that equivalence over a multi-year daily range.
+#
+# V1 is unaffected either way: src/v1.py and scripts/compare_v1.py each carry
+# their own SEASONAL dict and never import from deseasonalize.
+ML_USE_HOLIDAY_FLAG   = USE_HOLIDAY_FLAG
+ML_HOLIDAY_START      = HOLIDAY_START
+ML_HOLIDAY_END        = HOLIDAY_END
+ML_HOLIDAY_MULTIPLIER = HOLIDAY_MULTIPLIER
+
 # Metric thresholds (used in select.py)
 WAPE_ACCEPTABLE = 0.25          # flag SKUs above this in reports
 

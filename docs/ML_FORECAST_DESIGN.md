@@ -869,6 +869,39 @@ models are the cleaner test of the hypothesis, since they cannot trade one segme
 the other, at the cost of abandoning the cross-segment transfer that motivates a global
 model (Section 1.2). Experiment: `scripts/ml_09_lgbm_v4.py`.
 
+### 4.24 Rejected: v7 per-segment weighting. The segment indicator itself is the problem
+
+Section 4.23 diagnosed v4's failure as capacity allocation: long SKUs carry 72% to 98% of
+the training weight, so under a demand-weighted loss the model specialises on them once
+`is_long` lets it tell the segments apart. v7 tested the implied remedy, partially
+equalising the two segments' weight (`BALANCE = 0.5`, fixed in advance) on top of v4.
+
+The remedy failed, and in a way that disconfirms the diagnosis. Upweighting short rows made
+short forecasts worse, not better: Mar-May short went 0.2311 under v4 to 0.2554 under v7,
+against v3's 0.1863. If the mechanism were the loss declining to spend capacity on short
+SKUs, paying it more to do so should have helped.
+
+The reference arm settles it. `v7ref` applies the same weighting WITHOUT `is_long`, and it
+is the best short model in two of three windows while being the worst long model. Sorting
+every version by whether it carries the indicator separates the results cleanly: v3 and
+v7ref protect short and cannot fix long; v4 and v7 fix long and damage short. Weighting
+moves nothing across that line.
+
+The corrected reading is that the indicator is not a neutral capability the loss then
+misuses. Giving the trees an explicit segment split lets them fit long-specific structure,
+and that structure actively misleads short SKUs, which are the numerous but individually
+light population. Rebalancing does not undo it because the split is in the tree geometry,
+not in the weights. Section 4.23's capacity-allocation account is superseded by this.
+
+What this closes: of the four candidates named in Section 4.20 for the Dec-Feb long
+problem, three are now spent. The segment indicator is v4, per-segment weighting is v7, and
+per-segment seasonal factors are v5, all rejected. Every one of them repaired long at
+short's expense, across four independent attempts. The remaining candidate, separate models
+per segment, is the only one that structurally cannot make that trade, and it is now
+supported by those four failures rather than by argument. Its known cost is abandoning the
+cross-segment transfer that motivates a global model (Section 1.2), which the short segment
+may depend on more than the long one. Experiment: `scripts/ml_14_lgbm_v7.py`.
+
 ---
 
 ## 5. Feature Backlog & Open Questions
@@ -943,6 +976,13 @@ Completed items are recorded in the Decision Log: stratified internal validation
    window weakly suggested an uplift would help, but it could not be measured reliably on
    14 SKUs. Revisit before Q4 2026, ideally once GA4 traffic signals are available as a
    leading indicator of the holiday ramp. The production system faces the same question.
+7. Regime change in the holiday period. The company began running late-November to
+   mid-December promotions after December 2024, so the training data spans two different
+   seasonal regimes and the older one is not representative of the future. This affects
+   more than the holiday window: any seasonal estimate pooled across both years mixes
+   them, and the Oct-Dec evaluation window sits entirely inside the older regime. Consider
+   whether pre-2025 holiday weeks should be down-weighted or excluded once a third
+   December is available to confirm the newer pattern.
 
 ---
 
@@ -984,6 +1024,8 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v3 | fully deseasonalized ML path for all SKUs (features, targets, output) | closest yet, not adopted | Section 4.20 |
 | v4 | + `is_long` segment indicator | rejected | Section 4.23 |
 | v5 (stage 1) | per-segment December/holiday multiplier, tested at baseline level | rejected | Section 6 |
+| v6 (stage 1) | holiday window ends mid-December, tested at baseline level | two of three criteria met; not adopted, superseded by a design flaw | Section 6 |
+| v7 | + per-segment sample weighting on top of v4 | rejected | Section 4.24 |
 
 ### v-base (July 2026)
 
@@ -1230,3 +1272,132 @@ the prototype's −7.2/−22.4/−42.5), pending the one-shot final test and the
 strictness question (Section 5.5.1). Long does not qualify. Against V1, v3's only
 non-win, long Oct-Dec, is a statistical tie (+0.0164, CI spans zero, 1.8 standard
 errors, leaning V1).
+
+### v6, stage 1 (July 2026) — not adopted
+
+- **Change:** `ML_HOLIDAY_END` moves from (12, 31) to (12, 15), so the holiday uplift
+  covers the weeks spanning Nov 17 to Dec 14 and stops there. Weeks covering Dec 15 to 28
+  fall back to `SEASONAL_HOLIDAY[12] = 1.00`, a value the code currently defines and never
+  applies. Note the W-MON boundary: membership is tested on the label, so (12, 15) keeps
+  the week covering Dec 8-14 while (12, 14) would drop it. Nothing else changes.
+- **Tested at baseline level first**, as with v5: deseasonalized WA12 under both windows,
+  no model involved, so the attribution is unambiguous.
+
+**Basis for the change, stated plainly.** This rests on business knowledge, not on fitting
+the data. The company runs promotions from late November to mid-December, and expects to
+continue doing so. December 2024 predates that practice, which is why the two observed
+Decembers disagree so sharply: 2024 shows a collapse through December and a January
+rebound, 2025 a Black Friday peak then a flat December. They are different regimes, not
+conflicting samples of one. `config.py`'s own comment already describes the intended
+behaviour ("Dec 1-14 captures the pre-Christmas peak; Dec 15-31 reverts to the normal
+December factor"), which the code has never implemented.
+
+The supporting measurement is weak by construction and should not be leaned on: the weeks
+covering Dec 16-29 sat at or below the typical level in both years (0.49 and 0.39 in 2024,
+1.00 and 0.95 in 2025), so the uplift is unsupported in both regimes even though the
+regimes differ in every other respect.
+
+**Pass criteria, stated before running:**
+
+1. Dec-Feb long improves against the current window. This is the segment-window the change
+   targets, where December currently carries +45.9% bias.
+2. No significant regression in Mar-May or Oct-Dec, in either segment. The change touches
+   only weeks inside the old window, so Mar-May should be untouched; Oct-Dec contains
+   affected weeks and is the real risk.
+3. Dec-Feb short does not regress significantly.
+
+**Known limitation, recorded in advance.** The Oct-Dec evaluation window and the training
+data both contain December 2024, the pre-promotional regime. If the regime change is real,
+that data is misleading for the future regardless of what this experiment shows, and the
+Oct-Dec result in particular should be read as evidence about 2024's behaviour rather than
+about the change's merit. This is a broader problem than the holiday window and is
+recorded as an open question (Section 5.5).
+
+**Status: two of three criteria met, not adopted.**
+
+| Pooled WAPE | end 12-31 | end 12-15 | significant |
+|---|---|---|---|
+| long, Mar-May | 0.1321 | **0.1302** | no |
+| long, Dec-Feb | 0.2764 | **0.2167** | yes |
+| long, Oct-Dec | 0.1209 | 0.1209 | no weeks affected |
+| short, Mar-May | 0.2014 | **0.1927** | yes |
+| short, Dec-Feb | **0.2863** | 0.3181 | yes |
+| short, Oct-Dec | 0.4251 | 0.4251 | no weeks affected |
+
+Criterion 1 met, and by the largest margin any change has produced in that cell: Dec-Feb
+long fell from 0.2764 to 0.2167, with bias improving from +24.4% to +16.9%. Mar-May
+improved in both segments. Criterion 3 failed: Dec-Feb short regressed significantly.
+
+The reason is the same segment divergence that sank v4. In that window long over-forecasts
+at +24.4% while short under-forecasts at −22.4%, so removing holiday uplift helps one and
+hurts the other. Criterion 2 passed but tested nothing: the Oct-Dec test period ends at the
+label 2025-12-15, which is inside the window under both settings, so zero weeks changed.
+
+Not adopted for a second and independent reason found after the run. Window membership is
+tested on the W-MON label rather than the days a week covers, so a fixed (month, day)
+boundary drifts year to year: (11,20)-(12,15) covers Nov 18 to Dec 08 in 2024 but Nov 17
+to Dec 14 in 2025. The 2024 window silently loses the second week of December. A window
+pinned to real promotional dates cannot be defined this way, so the tested configuration is
+not the one that would be deployed. Any future attempt should decide membership on covered
+days. Experiment: `scripts/ml_13_holiday_window.py`.
+
+### v7 (July 2026) — rejected
+
+- **Change:** per-segment sample weighting. Training rows are currently weighted by the
+  SKU's demand level alone, which makes the loss equal the pooled-WAPE numerator
+  (Section 4.6) but also means long SKUs carry 72% to 98% of the total training weight
+  across the three windows despite being about 20% of SKUs. This rescales weights so the
+  two segments contribute more equally, partially: each segment's weight is multiplied by
+  `(0.5 / its current share) ** BALANCE` with `BALANCE = 0.5` fixed in advance, not
+  searched. `BALANCE = 0` is exactly today's behaviour, `1.0` would fully equalise.
+- **Tested on top of v4, not v3.** v4 established that the model *can* separate segments
+  when given `is_long`, and that it then specialises on the segment carrying the weight
+  (Section 4.23). Weighting without the indicator would change which rows dominate the
+  shared trees but would not let the model treat the segments differently, so it does not
+  test the diagnosed mechanism. v3 + weighting is run alongside as a reference to keep the
+  attribution clear.
+
+**Pass criteria, stated before running:**
+
+1. Dec-Feb long improves significantly against v3 (0.3145). This is the only cell where
+   any version still loses to the prototype, and it is what the change targets.
+2. The short segment retains v3's qualification: short pooled WAPE at or below the
+   prototype's on all three windows (0.2014, 0.2863, 0.4251). This is the result v4
+   destroyed and the main risk of reintroducing the indicator.
+3. No significant regression against v3 in any other decision cell.
+
+**Recorded in advance:** this deliberately breaks the Section 4.6 property that the
+training loss equals the deployment metric. That property was defined against pooled WAPE
+across all SKUs, whereas adoption is decided per segment (Section 1.6), so per-segment
+weighting arguably aligns the loss with the actual decision rule. If v7 is adopted,
+Section 4.6 needs amending to say so.
+
+**Status: rejected (Section 4.24). One of three criteria met, and the hypothesis is
+disconfirmed rather than merely unsupported.**
+
+| Pooled WAPE | v7 | v4 | v3 | v7ref | prototype | v7 vs v3 | significant |
+|---|---|---|---|---|---|---|---|
+| short, Mar-May | 0.2554 | 0.2311 | **0.1863** | 0.1898 | 0.2014 | +0.0691 | yes |
+| short, Dec-Feb | 0.2363 | 0.2474 | **0.1943** | 0.2029 | 0.2863 | +0.0421 | yes |
+| long, Mar-May | 0.1424 | 0.1376 | **0.1345** | 0.1389 | 0.1411 | +0.0079 | no |
+| long, Dec-Feb | 0.2507 | **0.2367** | 0.3145 | 0.3305 | 0.2737 | −0.0638 | yes |
+| long, Oct-Dec | 0.1024 | **0.1004** | 0.1011 | 0.1025 | 0.0911 | +0.0014 | no |
+| short, Oct-Dec (ref) | 0.2092 | 0.1799 | 0.1826 | **0.1761** | 0.4251 | +0.0266 | no |
+
+Bias: short +20.7%, +16.2%, −10.0%; long −2.8%, +22.2%, +1.5%.
+
+Criterion 1 met: Dec-Feb long improved significantly against v3. Criteria 2 and 3 failed:
+short regressed significantly in both decision windows, and Mar-May short (0.2554) is now
+worse than the prototype (0.2014), so v3's short-segment qualification is lost.
+
+`v7ref` (weighting WITHOUT the segment indicator) is the informative arm and was included
+for exactly this reason. It is the best short model in two of three windows (0.1898,
+0.2029, 0.1761) and the worst long model (0.3305 in Dec-Feb). So the damage to short
+tracks the indicator, not the weighting: every version carrying `is_long` (v4, v7) harms
+short, every version without it (v3, v7ref) protects short and cannot repair long.
+Rebalancing the weights did not change that, and v7 landed close to v4 on long while being
+worse than v4 on Mar-May short.
+
+Tree counts rose sharply under rebalancing, from 41 to 117 in Mar-May and 37 to 155 in
+Dec-Feb, so the model fit considerably more structure and got worse, consistent with
+overfitting the upweighted rows. Experiment: `scripts/ml_14_lgbm_v7.py`.

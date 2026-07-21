@@ -95,3 +95,24 @@ detail lives in the design document and codebase guide, not here.
   remaining weakness is established products in the post-holiday period; everywhere else
   it now matches or beats both the earlier statistical system and the spreadsheet method
   used in production.
+
+--- SUMMARY PRODUCED 2026-07-21 (covering all 2026-07-20 entries above) ---
+
+- 2026-07-21: Investigated why forecasts run high after the holidays and found the cause
+  is the seasonal adjustment rather than the model: a holiday uplift is being applied to
+  the last two weeks of December, which in both years of available data were at or below
+  normal demand rather than above it. The code also contradicts its own documented
+  intent, which says that period should revert to the normal December level.
+
+- 2026-07-21: Gave the machine-learning work its own copy of the seasonal settings so that
+  adjusting them cannot alter the older statistical system we measure ourselves against.
+  Verified the separation changes no existing result, and added a permanent check that
+  will catch it if the two ever drift apart unintentionally.
+
+- 2026-07-21: Tested rebalancing how much each product group influences training, on the
+  theory that established products were crowding out newer ones. Rejected: it made newer
+  products worse rather than better, which rules out that explanation. A control version
+  included in the same test showed the real cause is simply telling the model which group
+  a product belongs to, which helps established products and harms newer ones no matter
+  how the training is balanced. Four different approaches have now hit this same trade-off,
+  which points clearly at keeping separate models for the two groups.
