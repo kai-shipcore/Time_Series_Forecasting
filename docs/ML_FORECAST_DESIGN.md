@@ -1148,6 +1148,7 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v10 | hyperparameters tuned on the internal validation slice | rejected; current settings retained | Section 6 |
 | v11 | hybrid: shared short model + dedicated long model with an elevation feature | **BEST**, all criteria met; final test pending | Section 4.27 |
 | v12 | + SKU age feature in the shared (short) model | rejected | Section 4.28 |
+| v13 | acceleration feature: two independent tests (short model, and long model) | both rejected | Section 6 |
 
 ### v-base (July 2026)
 
@@ -1844,3 +1845,52 @@ the edge of the age distribution. A bounded encoding (a young/mature indicator, 
 age) would not extrapolate, but short SKUs are already strong and their residual error is
 dispersion rather than a systematic age effect, so this is not pursued further. Experiment:
 `scripts/ml_23_v12_age.py`.
+
+### v13 (July 2026) — both rejected
+
+Two independent single-feature tests of `accel` (4wk demand versus the 4wk before it, the
+scale-free second-order trajectory term), each isolating one half of the v11 hybrid.
+
+- **v13-short:** add `accel` to the shared model. Only short predictions can move; long is
+  the unchanged dedicated model. Hypothesis: a decelerating short SKU is near the top of
+  its ramp, which the first-order ramp feature cannot see.
+- **v13-long:** add `accel` to the dedicated long model (`FEATURES_V11_LONG + accel`). Only
+  long predictions can move. Hypothesis and main target: Oct-Dec is the ramp-UP into Q4,
+  and acceleration is the mirror of what elevation did for the post-holiday decline, so its
+  best shot is Oct-Dec long, the one cell where v11 still loses to V1 (0.1000 vs 0.0847).
+  A shared-model version of this was marginal in the v11 exploration; the retry is in the
+  dedicated long model, which is the changed condition.
+
+**Pass criteria, stated before running (each test judged on its own segment):**
+1. The feature improves its segment with a consistent sign across windows and no
+   significant regression in any window.
+2. The untouched segment is identical (verified).
+
+**Recorded expectation:** acceleration was marginal in the earlier shared-model test, so a
+null result is likely for both; the long/Oct-Dec cell is the one place a real gain is
+plausible.
+
+**Status: both tests rejected.**
+
+| Pooled WAPE | v11 | v13-short | v13-long |
+|---|---|---|---|
+| short, Mar-May | 0.1961 | 0.2160 (+0.0200, sig) | 0.1961 (—) |
+| short, Dec-Feb | 0.2000 | 0.2268 (+0.0269, sig) | 0.2000 (—) |
+| short, Oct-Dec (ref) | 0.1783 | 0.1818 (+0.0035) | 0.1783 (—) |
+| long, Mar-May | 0.1355 | 0.1355 (—) | 0.1370 (+0.0016) |
+| long, Dec-Feb | 0.1380 | 0.1380 (—) | 0.1440 (+0.0059) |
+| long, Oct-Dec | 0.1000 | 0.1000 (—) | 0.1035 (+0.0035) |
+
+v13-short significantly regressed short in two windows. Acceleration is noisy for short
+SKUs (feature variance 1.4 versus long's 0.65), redundant with the ramp they already carry,
+and the added noise hurt a segment whose residual error is dispersion rather than a missing
+signal. v13-long tied everywhere and, notably, its pre-registered target, Oct-Dec long, got
+slightly worse rather than better (0.1000 to 0.1035): the ramp-up mirror hypothesis did not
+hold, because the long model already handles the Q4 ramp through elevation and recent
+levels. Experiment: `scripts/ml_24_v13_accel.py`.
+
+This closes the productive sales-history features. Of everything tried, only elevation (in
+the long model) improved on v9, and only for the decline it targets. Age, acceleration, and
+per-segment weighting all failed; the model is at or near the information ceiling of the
+sales series, and further error reduction needs the external leading indicators of Section
+5.3 or the target-cleaning of preorders and stockouts.

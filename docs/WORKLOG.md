@@ -159,3 +159,11 @@ detail lives in the design document and codebase guide, not here.
   what the model saw in training, so the model extrapolated wildly. Recorded as a caution
   against any ever-increasing feature of this kind. Newer-product accuracy is already
   strong, so this line is not pursued further.
+
+- 2026-07-21: Tested an acceleration feature (is the recent trend speeding up or slowing?)
+  for both product groups. Both rejected: it made newer products worse and did nothing for
+  established products, including the autumn ramp-up period it was aimed at. This was the
+  last promising feature from sales history alone. The conclusion is that the model is now
+  close to the best achievable on sales data; further accuracy gains will need external
+  leading signals such as website traffic, or cleaning the sales record itself for
+  preorders and stockouts.

@@ -56,6 +56,11 @@ FEATURES_V11_LONG = ["lead", "y_last_r", "lag_1_r", "elev_long"]
 # genuinely ramp, so "above own baseline" is often healthy growth, and the
 # existing ramp feature already captures reversion better for them.
 FEATURES_SHORT_AGE = FEATURES_V1 + ["sku_age"]
+# v13 acceleration retries: short (added to shared model) and long (added to the
+# dedicated long model). Oct-Dec is the ramp-UP into Q4, so acceleration is the
+# mirror of what elevation did for the post-holiday decline.
+FEATURES_SHORT_ACCEL = FEATURES_V1 + ["accel"]
+FEATURES_V11_LONG_ACCEL = FEATURES_V11_LONG + ["accel"]
 
 
 def long_sku_set(profiles: pd.DataFrame, cutoff) -> set[str]:
@@ -165,6 +170,11 @@ def build_matrix(
     # v12 short-SKU feature: SKU maturity. Lets the model modulate its ramp
     # expectation by age (a young SKU ramps steeper than a near-mature one).
     df["sku_age"] = df["weeks_live"].astype("float32")
+
+    # v13 acceleration: 4wk vs the 4wk before it, UNGATED (defined for all SKUs
+    # that have >=8 weeks; 1.0 fallback otherwise). accel_long above is the
+    # long-gated version kept for the older v11 experiments.
+    df["accel"] = (roll4 / prior48.clip(lower=EPS)).clip(upper=5.0).fillna(1.0)
 
     for col in ("elev_long", "accel_long"):
         # Clip to [0, 5]: a 4wk window running 5x its reference is already
