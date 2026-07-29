@@ -462,3 +462,138 @@ def order_quantity_breakdown(row: pd.Series, params: dict | None = None) -> pd.D
                      "Units": round(excluded), "Sign": None})
     rows.append({"Component": "Recommended order quantity", "Units": round(roq), "Sign": 0})
     return pd.DataFrame(rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SKUs the model does not forecast.
+#
+# 87% of the SKU count and about a fifth of recent unit volume is intermittent:
+# demand too sporadic for a weekly forecast, so segmentation excludes it by
+# design. Excluding it from the planning screen as well leaves a fifth of the
+# business invisible, which is why this exists.
+#
+# Nothing here is forecast-derived, and the columns say so. There is no coverage
+# demand, no safety stock, no recommended order quantity and no reliability
+# tier, because none of those can be computed without a forecast. What can be
+# stated honestly is what a SKU has recently sold, what is in stock, and how long
+# that stock lasts at the recent rate. The reorder flag is arithmetic on those,
+# not a recommendation: it says stock runs out before a replacement could arrive,
+# which is a fact about timing rather than a quantity to buy.
+#
+# Keeping this in a separate function with different column names, rather than
+# padding the forecast table with blanks, is the point. A cover figure derived
+# from a 13-week average and one derived from a scored forecast are not the same
+# kind of number, and putting them under one heading would invite reading them
+# as though they were.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Weeks of recent history the demand rate is averaged over. Matches the window
+#: profiling itself uses to decide whether a SKU is intermittent, so the rate and
+#: the classification describe the same period.
+NOT_FORECAST_WEEKS = 13
+
+
+@_cache(show_spinner=False)
+def build_not_forecast_table(params: dict | None = None) -> pd.DataFrame:
+    """One row per SKU the model does not forecast.
+
+    Returns unique_id, product_name, product_category, recent demand over
+    NOT_FORECAST_WEEKS weeks and the weekly and daily rates implied by it, the
+    stock position, days of cover at that rate, the week of the last sale, and
+    a reorder flag.
+
+    ``days_of_cover`` is NaN where nothing has sold recently: dividing by a zero
+    rate would give infinity, which reads on a screen as "never runs out" when
+    the truth is that the question does not apply.
+    """
+    p = {**DEFAULT_PARAMS, **(params or {})}
+    lead_days = int(p["lead_time_weeks"]) * 7
+
+    profiles = D.load_profiles()
+    if profiles.empty:
+        return pd.DataFrame()
+    # Defined by absence from the PLANNING TABLE, not from the forecast file.
+    # Those differ by the SKUs demoted to intermittent since the run: they are in
+    # the forecast, so keying on it would exclude them here, while
+    # build_planning_table drops them there. Fifteen SKUs fell through that gap
+    # on the first attempt. Keying on what the other section actually shows makes
+    # the two a partition by construction rather than by coincidence.
+    served = set(build_planning_table(p)["unique_id"])
+    df = profiles[~profiles["unique_id"].isin(served)].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    sales = D.load_sales()
+    if not sales.empty:
+        cutoff = sales["ds"].max() - pd.Timedelta(weeks=NOT_FORECAST_WEEKS)
+        recent = sales[sales["ds"] > cutoff]
+        agg = recent.groupby("unique_id")["y"].sum().rename("recent_units")
+        last = (sales[sales["y"] > 0].groupby("unique_id")["ds"].max()
+                .rename("last_sale_week"))
+        df = df.merge(agg, on="unique_id", how="left").merge(last, on="unique_id", how="left")
+    else:
+        df["recent_units"] = np.nan
+        df["last_sale_week"] = pd.NaT
+
+    df["recent_units"] = df["recent_units"].fillna(0.0)
+    df["weekly_rate"] = df["recent_units"] / NOT_FORECAST_WEEKS
+    df["daily_rate"] = df["recent_units"] / (NOT_FORECAST_WEEKS * 7.0)
+
+    inv = D.load_inventory().drop(columns=["is_sample", "source"], errors="ignore")
+    df = df.merge(inv, on="unique_id", how="left")
+
+    # Left blank, not zeroed. A SKU absent from the inventory source has no
+    # record, which is a different statement from a record showing none, and the
+    # screen should not turn the first into the second.
+    for col in ("available_inventory", "preorder_backlog", "confirmed_inbound"):
+        if col not in df.columns:
+            df[col] = np.nan
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        df["days_of_cover"] = np.where(
+            df["daily_rate"] > 0,
+            df["available_inventory"] / df["daily_rate"].replace(0, np.nan),
+            np.nan,
+        )
+
+    # Stock runs out before a replacement could land. Stated as timing, not as a
+    # quantity: how much to buy would need a demand model this SKU does not have.
+    df["reorder_signal"] = (
+        df["days_of_cover"].notna()
+        & (df["days_of_cover"] < lead_days)
+        & (df["recent_units"] > 0)
+    )
+    df["product_category"] = [D.product_category(u) for u in df["unique_id"]]
+    df["last_sale_week"] = pd.to_datetime(df["last_sale_week"], errors="coerce")
+
+    cols = ["unique_id", "product_name", "product_category", "bucket",
+            "recent_units", "weekly_rate", "daily_rate", "last_sale_week",
+            "available_inventory", "preorder_backlog", "confirmed_inbound",
+            "inbound_eta", "days_of_cover", "reorder_signal", "active_weeks",
+            "zero_pct"]
+    out = df[[c for c in cols if c in df.columns]].copy()
+    # Sorted by what needs attention: flagged first, then by how little cover is
+    # left, then by recent volume so the larger SKUs lead among equals.
+    return out.sort_values(
+        ["reorder_signal", "days_of_cover", "recent_units"],
+        ascending=[False, True, False], kind="mergesort",
+    ).reset_index(drop=True)
+
+
+def not_forecast_metrics(table: pd.DataFrame, params: dict | None = None) -> dict:
+    """Headline counts for the non-forecast section."""
+    p = {**DEFAULT_PARAMS, **(params or {})}
+    if table.empty:
+        return {"skus": 0, "selling": 0, "dormant": 0, "reorder_signal": 0,
+                "out_of_stock": 0, "recent_units": 0,
+                "lead_time_days": int(p["lead_time_weeks"]) * 7}
+    return {
+        "skus": int(len(table)),
+        "selling": int((table["recent_units"] > 0).sum()),
+        "dormant": int((table["recent_units"] <= 0).sum()),
+        "reorder_signal": int(table["reorder_signal"].sum()),
+        "out_of_stock": int((table["available_inventory"] <= 0).sum()),
+        "recent_units": int(table["recent_units"].sum()),
+        "lead_time_days": int(p["lead_time_weeks"]) * 7,
+    }

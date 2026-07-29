@@ -1027,3 +1027,131 @@ detail lives in the design document and codebase guide, not here.
   FastAPI runs inside this repo and is the blocker if it ever does not.
   Decided: Streamlit is retired once the Next.js page reaches parity, so the duplication is
   temporary by design rather than a permanent second surface.
+
+- 2026-07-29: Inventory now reads the databases directly instead of an exported CSV. Those tables
+  belong to the Commerce Integration application and refresh on its schedule, so holding a copy
+  only created a way to be confidently wrong when nobody re-ran the export. The SQL moved into
+  `src/planning/inventory.py` and the export script imports it, so the live path and the export
+  cannot produce different figures. Three sources are tried in order, each a degradation of the
+  one before: the databases, then the exported CSV, then generated sample data, with a `source`
+  column recording which applied. Falling back rather than raising is deliberate, so a working
+  copy without credentials still starts. Results are memoised for five minutes, in the module
+  rather than through Streamlit, because FastAPI shares this code and has no caching of its own.
+  Two things the move nearly lost. The engine builder promised to return None when unusable but
+  only checked for missing variables; `create_engine` resolves the driver eagerly and raises when
+  psycopg2 is absent, which is a real environment here, so the whole body is now guarded and the
+  fallback actually works. And the export script had an explicit numeric coercion guarding the
+  case where a query matches nothing and pandas infers an object dtype, which is live today
+  because transit stock is zero for every SKU; that guard is carried into the shared path and
+  widened to every numeric column, since the same holds for any of them the moment a query
+  returns nothing. Verified against mocked database responses that a SKU with no stock record
+  stays null while a recorded zero stays zero, which is the distinction the whole thing rests on.
+  The v11 forecast stays on parquet by choice: the model is still moving, and putting it in
+  Postgres now would mean re-uploading on every iteration. That remains the one prerequisite for
+  running the API away from this repo.
+
+- 2026-07-29: The action list now exists as a page in the Commerce Integration application, at
+  /planning/action-list, registered in the navigation with Korean and English labels and visible
+  by default for the roles that already see the other planning pages. Two proxy routes forward to
+  the FastAPI planning endpoints through one shared helper rather than repeating the base URL,
+  token header, timeout and error envelope the way the fifteen forecast routes each do. Status
+  codes pass through untouched, because a 404 there carries meaning: it distinguishes a SKU that
+  is no longer forecastable from one that does not exist, and the page words those differently.
+  Settled first what to reuse from the existing demand-forecast page. Its screen-level components
+  turn out not to be reusable: all-skus-table hardcodes its row type and sort keys to forecast
+  fields and fetches its own endpoint, and demand-trend is shaped for portfolio accuracy with
+  lead selection and prediction bands. Two smaller ones looked like wholesale candidates and were
+  not, on inspection: page-headers has no generic header component, only one specific header per
+  page, and sku-global-search is bound to the forecast segment taxonomy and routes into the
+  forecast page. What is genuinely shared is the substrate, and it is most of the value: the ui
+  primitives, the internationalisation provider, the API path helper, the proxy pattern, the
+  SSR-safe Plotly import and the styling conventions. The line drawn is to reuse the substrate
+  and not the screens, on the grounds that the demand forecast page answers how the model is
+  doing and this one answers what to order today, and forcing one to serve the other would
+  recreate the problem the dashboard was built to escape.
+  Verified end to end against a running server on the port AI_SERVICE_URL points at: all six
+  summary figures identical to the Streamlit screen, 432 rows either way, every field the table
+  renders present in the payload, no TypeScript errors from the new files and lint clean.
+  Two faults the checks caught rather than review. The lint rule on synchronous setState inside
+  an effect was correct: loading is now derived from whether the loaded parameters match the
+  requested ones, which removes the cascading render and incidentally keeps the previous table on
+  screen while a new lead time is in flight instead of blanking to a spinner. And the priority
+  badges keyed on "Best seller" and "No stock" while the API emits "Best Seller" and "No Stock",
+  which does not fail: the lookup falls through to the Routine style and the badge looks
+  deliberate, while the best-seller chip filter matches nothing. The labels now live in one
+  exported constant that both the table and the filter use, with a check asserting the set
+  matches what the API emits.
+
+- 2026-07-29: SKU detail built at /planning/action-list/[sku], so the rows on the list now lead
+  somewhere. The SKU sits in the path rather than a query string, which makes each row a real
+  URL: shareable, bookmarkable, and openable in a new tab. One request serves the whole screen,
+  since a partial render is worse than a marginally slower one.
+  The screen carries what the Streamlit version did: quality flags, the falling-demand callout
+  above the order card because it is a caveat about the number in it, the order quantity as
+  checkable arithmetic with its plausible band, the reliability card with its per-window
+  evidence, the inventory position, and both charts. Where a SKU has no measured error the
+  reliability card names the basis being used instead of presenting an inherited figure as
+  though it belonged to that SKU. The 404 for a demoted SKU is worded as a normal outcome and
+  explains itself, rather than reading as a failure.
+  Types were written from the live payload rather than from memory, which was worth doing: the
+  order breakdown carries a Sign column of +1, -1, 0 and null, where null marks an aside shown
+  for context and outside the sum, and 0 marks the total line. Inferring direction from the
+  value instead would render a component of zero as an addition when it is a subtraction.
+  Two lint rules caught real hazards again. Deriving the operator column mutated a flag inside
+  the render map, which React may re-enter, carrying the previous value in; the operators are
+  now resolved in a memo so the render is a pure function of that array. And the loading state
+  is derived from whether the loaded SKU matches the requested one rather than set inside an
+  effect, the same fix the action list needed.
+  Verified against the live endpoint across five archetypes: poor tier with an order, no
+  backtest history, falling demand, zero order, and an unmeasured promoted SKU. Order totals and
+  bands match the Streamlit figures in every case, every field the page reads is present in the
+  payload, and both 404 shapes are distinguished. TypeScript and lint clean, with the repository
+  baseline of 57 pre-existing Prisma errors unchanged.
+
+- 2026-07-29: A parity check against the Streamlit screens found the two Next.js pages
+  disagreeing with each other. Streamlit keeps the planning parameters in a sidebar that
+  persists across pages, so changing the lead time on the list changed it on the detail view
+  too. In Next.js each page mounts independently, and the detail view was requesting with no
+  parameters at all, so it answered at the default eight-week lead while the row the user had
+  clicked answered at theirs. On one SKU at a sixteen-week lead the list said 620 units and the
+  detail said 326, with nothing on screen to explain the difference. That is precisely the
+  failure this migration was structured to prevent, arriving through the interface rather than
+  through a second implementation of the arithmetic.
+  The parameters now travel in the URL across all four hops: the list builds them into each row
+  link, the detail view forwards them to the API and carries them back on its return link, and
+  both pages seed from the query string. They are clamped on read to the same bounds FastAPI
+  enforces, so a hand-edited URL cannot produce a rejected request. A side benefit over the
+  sidebar it replaces: a shared link now reproduces the assumptions the figures were computed
+  under, which sidebar state never could.
+  The same audit lists what the Next.js pages still lack against Streamlit, none of it wrong,
+  all of it absent: sorting and pagination on the list, the history filter, the portfolio demand
+  chart, the reliability legend and the quality summary line; and on the detail view the SKU
+  selector for moving between SKUs without going back, and the weekly figures table.
+
+- 2026-07-29: Sorting added to the action list, following the convention the existing all-SKUs
+  table set: clickable headers, shift-click to add a criterion, position markers when more than
+  one is active. Two departures. A third click clears back to the server's worklist order, which
+  is priority then quantity and is not reproducible from any single column, so it is represented
+  as the absence of a sort rather than an entry in the list. And nulls sort last in both
+  directions, because a SKU with no stockout date is not the most urgent one and would otherwise
+  lead every ascending sort. The missing history filter went in alongside.
+  Then the intermittent tail, which turned out larger than assumed: 2,977 SKUs, 87% of the
+  catalogue by count and about a fifth of recent unit volume. Leaving it off the page would have
+  meant retiring the demand forecast page while losing the only place those SKUs were visible.
+  They now have their own section behind a toggle, fetched only when opened, with columns that
+  are honest without a forecast: 13-week demand, the weekly rate it implies, stock position,
+  days of cover at that rate, and a flag where stock runs out inside the lead time. There is
+  deliberately no recommended order quantity, and the section says so in as many words, because
+  it cannot be derived without a demand model these SKUs do not have. Column names differ from
+  the forecast table throughout, so a rate computed from a 13-week average is never sitting
+  under the same heading as one from a scored model.
+  The inventory read was widened from the 447 forecastable SKUs to all 3,409 profiled ones,
+  which is a one-line change now that it queries the database rather than reading an export.
+  A partition check caught the design failing its own claim. The non-forecast set was defined as
+  absence from the forecast file, while the forecast section is built from the planning table,
+  and those differ by the fifteen SKUs demoted since the run: they sat in neither section.
+  Keying on what the other section actually shows makes the two a partition by construction,
+  and the check now asserts no overlap and no SKU unaccounted for. Also asserted that no
+  forecast-derived column reaches the non-forecast payload, that cover is null rather than
+  infinite wherever nothing has sold, and that a missing inventory record stays null rather than
+  becoming a zero.

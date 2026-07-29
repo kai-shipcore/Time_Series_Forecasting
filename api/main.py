@@ -2044,6 +2044,12 @@ def planning_action_list(
         "rows": rows,
         "meta": {
             "sku_count": len(plan),
+            # How many SKUs the other section holds. Returned here so the page
+            # can label both halves of its toggle without fetching the
+            # non-forecast payload, which is seven times the size and mostly
+            # goes unread. It is the complement of this section by construction,
+            # so the two always sum to the profiled universe.
+            "not_forecast_count": max(int(len(_plan_data.load_profiles())) - len(plan), 0),
             # SKUs the forecast covered that the current profile has since
             # demoted to intermittent, and which are therefore not in `rows`.
             # Surfaced so a caller can reconcile against the forecast file
@@ -2114,5 +2120,39 @@ def planning_sku_detail(
         "backtest": {
             "windows": _jsonable(windows.sort_values("cutoff")),
             "weekly": _jsonable(_plan_data.sku_backtest_weekly(sku_id, version)),
+        },
+    })
+
+
+@app.get("/planning/not-forecast")
+def planning_not_forecast(
+    lead_time_weeks: int = Query(default=8, ge=1, le=52),
+    review_period_weeks: int = Query(default=1, ge=1, le=13),
+    service_z: float = Query(default=1.0, ge=0.0, le=4.0),
+    stockout_horizon_days: int = Query(default=30, ge=1, le=365),
+):
+    """SKUs the model does not forecast: the intermittent tail.
+
+    Roughly 87% of the SKU count and a fifth of recent unit volume. Nothing here
+    is forecast-derived, and the payload deliberately carries no recommended
+    order quantity: what can be stated without a forecast is recent demand, the
+    rate it implies, the stock position, and how long that stock lasts at that
+    rate. The reorder signal is a statement about timing, not a quantity.
+
+    Only `lead_time_weeks` affects the result, through the reorder signal. The
+    other parameters are accepted so a caller can forward the same query string
+    it sends to the action list, rather than having to know which subset applies.
+    """
+    params = _planning_params(lead_time_weeks, review_period_weeks, service_z,
+                              stockout_horizon_days)
+    table = _plan_calc.build_not_forecast_table(params)
+    return JSONResponse({
+        "params": params,
+        "metrics": _plan_calc.not_forecast_metrics(table, params),
+        "rows": _jsonable(table),
+        "meta": {
+            "sku_count": int(len(table)),
+            "window_weeks": _plan_calc.NOT_FORECAST_WEEKS,
+            "inventory_is_sample": bool(_plan_data.inventory_is_sample()),
         },
     })
