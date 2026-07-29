@@ -17,5 +17,7 @@ matplotlib
 fastapi
 uvicorn[standard]
 plotly
+altair
+vl-convert-python
 openai
 requests

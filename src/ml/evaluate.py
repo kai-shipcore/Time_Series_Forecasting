@@ -1,6 +1,6 @@
 # ML Stage 3: model-agnostic scoring.
 #
-# Every experiment — statistical baseline, LightGBM v1, v2 with GA4 — scores
+# Every experiment (statistical baseline and the LightGBM versions) scores
 # through this one function, so numbers are comparable by construction.
 #
 # Metric = the production convention (run_test_evaluation.py):
@@ -18,24 +18,23 @@ from config import MIN_SIM_HISTORY_WEEKS
 from src.ml.dataset import Split, asof_history_length, eligible_skus
 
 
-def score(
+def per_sku_totals(
     preds: pd.DataFrame,
     split: Split,
     profiles: pd.DataFrame,
     min_history_weeks: int | None = MIN_SIM_HISTORY_WEEKS,
 ) -> pd.DataFrame:
-    """Score predictions against a split's test window.
+    """Per-SKU actual vs. predicted window totals, before segment aggregation.
 
-    preds: unique_id / ds / yhat  (one row per SKU per test week; a model
-           that predicts window totals directly may pass one row per SKU
-           with ds = first test week and yhat = the total).
-    Returns one row per segment (bucket × history_length) + TOTAL row:
-    n_skus, actual_units, pooled WAPE, bias_pct.
+    This is score()'s per-SKU intermediate, extracted so per-SKU detail
+    reporting (e.g. the dashboard's accuracy-by-SKU view) can reuse the exact
+    same leakage guard, eligibility filter, and totals score() uses, so the
+    two always agree by construction. score() itself is unchanged: it calls
+    this function and aggregates the result.
 
-    Eligibility: by default only SKUs with at least `min_history_weeks` weeks
-    of history at the split's cutoff are scored (dataset.eligible_skus), so
-    backtest windows do not score SKUs that had too little history at the
-    time. Pass min_history_weeks=None to score every SKU (not recommended).
+    preds: unique_id / ds / yhat (see score()'s docstring for shape).
+    Returns unique_id, yhat_total, y_total, bucket, history_length, ae, bias
+    (bias = yhat_total - y_total, signed; ae = |bias|).
     """
     test_weeks = set(split.test["ds"].unique())
     bad = preds.loc[~preds["ds"].isin(test_weeks), "ds"].unique()
@@ -59,7 +58,7 @@ def score(
         import warnings
 
         warnings.warn(
-            f"score(): {len(missing)} eligible SKUs have no predictions and are "
+            f"per_sku_totals(): {len(missing)} eligible SKUs have no predictions and are "
             f"scored as zero forecasts (e.g., {sorted(missing)[:3]}).",
             stacklevel=2,
         )
@@ -75,7 +74,43 @@ def score(
         df["unique_id"].map(asof).astype("object")
         .replace({"medium": "long", "full": "long"})
     )
-    df["ae"] = (df["yhat_total"] - df["y_total"]).abs()
+    df["bias"] = df["yhat_total"] - df["y_total"]
+    df["ae"] = df["bias"].abs()
+    return df
+
+
+def score(
+    preds: pd.DataFrame,
+    split: Split,
+    profiles: pd.DataFrame,
+    min_history_weeks: int | None = MIN_SIM_HISTORY_WEEKS,
+) -> pd.DataFrame:
+    """Score predictions against a split's test window.
+
+    preds: unique_id / ds / yhat  (one row per SKU per test week; a model
+           that predicts window totals directly may pass one row per SKU
+           with ds = first test week and yhat = the total).
+    Returns one row per segment (bucket × history_length) + TOTAL row:
+    n_skus, actual_units, pooled WAPE, bias_pct.
+
+    Eligibility: by default only SKUs with at least `min_history_weeks` weeks
+    of history at the split's cutoff are scored (dataset.eligible_skus), so
+    backtest windows do not score SKUs that had too little history at the
+    time. Pass min_history_weeks=None to score every SKU (not recommended).
+    """
+    df = per_sku_totals(preds, split, profiles, min_history_weeks)
+    return aggregate_by_segment(df)
+
+
+def aggregate_by_segment(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse a per_sku_totals()-shaped table into one row per segment
+    (bucket × history_length) + TOTAL: n_skus, actual_units, pooled WAPE,
+    bias_pct. score() uses this for a single split; it is also reusable for
+    detail reports that aggregate per_sku_totals() rows pooled across
+    multiple splits or model versions (e.g. scripts/ml_accuracy_report.py),
+    so a multi-window summary can be built from one training pass instead of
+    training once for validate_version() and again for its detail.
+    """
 
     def _row(g: pd.DataFrame, label: str) -> dict:
         actual = g["y_total"].sum()

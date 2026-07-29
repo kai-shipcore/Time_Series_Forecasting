@@ -1,0 +1,9 @@
+unique_id,product_name,size,product_status,available_inventory,preorder_backlog,confirmed_inbound,inbound_eta
+CA-CL-AT-CBL,,,In Stock,41,0,0,
+CA-FM-TX-80-T1-CH-S117,,80,Discontinued,0,0,0,2026-09-28
+CA-SC-10-B-10-BE-1TO,,10,-NEW-,0,0,0,
+CA-SC-10-B-10-BK-1TO,,10,In Stock,165,0,0,
+CA-SC-10-B-10-BR-1TO,,10,In Stock,16,0,0,
+CA-SC-10-B-10-DB-1TO,,10,In Stock,51,0,0,
+CA-SC-10-B-10-DG-1TO,,10,In Stock,0,0,0,
+CA-SC-10-B-10-GR-1TO,,10,-INV-,79,0,0,

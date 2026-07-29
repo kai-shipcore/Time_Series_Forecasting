@@ -92,9 +92,9 @@ Three reasons for this design:
 - **Attribution.** A model that learns nothing predicts a multiplier of 1.0 and reproduces a
   plain moving average. That moving average is the floor. So every point of accuracy the
   model adds is clearly the model's doing, which makes honest comparison possible.
-- **Extensibility.** A feature-based model can absorb new signals later (website traffic,
-  inventory, marketplace data) that a fixed formula cannot. The whole architecture was
-  chosen so those signals can drop in when they arrive.
+- **Extensibility.** A feature-based model can absorb a corrected demand signal later (for
+  example, sales cleaned for stockouts and misplaced preorders) that a fixed formula cannot
+  use. The architecture was chosen so those improvements can drop in when the data is ready.
 
 **Why this specific architecture (the evidence-based part).** The design borrows from the
 two largest public forecasting competitions, which point in different directions depending
@@ -227,17 +227,18 @@ Stated plainly, because naming them is a credibility marker, not a weakness:
 
 ## 11. Next Steps
 
-- **Run the final validation test** on v11, then wire it into the forecast pipeline and the
-  Commerce Integration UI so the company can use it.
-- **Verify the sales record** for preorders and stockouts before trusting the forecast in
-  production; these are data fixes that would improve every method at once.
-- **The real next lever is external data**, not more modelling on sales history. Website
-  traffic and marketplace signals lead demand by days to weeks, which is information the
-  sales series structurally cannot contain, and it is most valuable exactly where the model
-  is weakest (new products, and anticipating turns). This is why the feature-based model was
-  chosen in the first place.
+- **Run the final validation test** on v11, then wire it into the forecast pipeline so the
+  company can use it.
+- **Correct the sales record for stockouts and preorders, and feed the corrected demand into
+  the model.** Stockout weeks understate true demand, and preorders can record demand in the
+  wrong week; both distort the training data. Fixing them improves every method at once and
+  is the primary remaining lever on accuracy, most valuable where the model is weakest (new
+  products). This is why the feature-based model was chosen in the first place.
+- **Build a proper frontend** so the forecasts can be viewed and used day to day, rather than
+  read out of scripts and tables.
 
-→ Depth: feature backlog and external-data candidates in ML_FORECAST_DESIGN.md, Section 5.
+→ Depth: data-quality corrections in ML_FORECAST_DESIGN.md, Section 5.3; process backlog in
+Section 5.4.
 
 ---
 
@@ -250,4 +251,5 @@ Stated plainly, because naming them is a credibility marker, not a weakness:
 3. The quarantined-test discipline and why it is never touched during development.
 4. The whole v4-to-v11 story: the segments want opposite things from a shared model, which
    is why the hybrid was the answer, and elevation was the missing signal.
-5. Why the model is near the ceiling on sales data, and why external signals are next.
+5. Why the model is near the ceiling on the sales record as recorded, and why cleaning it
+   (stockouts, preorders) is the next lever.

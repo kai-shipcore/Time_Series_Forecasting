@@ -164,6 +164,866 @@ detail lives in the design document and codebase guide, not here.
   for both product groups. Both rejected: it made newer products worse and did nothing for
   established products, including the autumn ramp-up period it was aimed at. This was the
   last promising feature from sales history alone. The conclusion is that the model is now
-  close to the best achievable on sales data; further accuracy gains will need external
-  leading signals such as website traffic, or cleaning the sales record itself for
-  preorders and stockouts.
+  close to the best achievable on the sales record as recorded; further accuracy gains will
+  need the sales record itself cleaned for stockouts and misplaced preorders.
+
+- 2026-07-22: Wrote a non-technical project summary for management
+  (Demand_Forecasting_Project_Summary.docx, saved at the repo root). Plain-language
+  overview of purpose, the newer-versus-established product split and why it exists, method,
+  the accuracy measure and why it suits demand, a like-for-like results table comparing the
+  current production formula (V1) against the new model on the same products and test
+  windows, current limitations, project stage, and next steps (stockout and preorder
+  correction, a proper frontend, and the final quarantined test). Figures drawn from the
+  pinned 2026-07-20 snapshot version log (v11 vs V1).
+
+- 2026-07-22: Dropped third-party external data (site traffic, marketplace analytics) from
+  the roadmap for the foreseeable future and removed it from the design doc, project
+  write-up, and code comments. The planned model extension is now the corrected demand
+  target only: stockouts and misplaced preorders. Section 5.3 reframed from "feature
+  candidates pending external data" to "data-quality corrections pending source data."
+
+- 2026-07-22: Expanded the management summary and independently verified every figure in
+  it against the pinned 2026-07-20 snapshot. Reran the V1 benchmark and the WA12/v-base
+  baselines through the harness: V1 reproduced to the fourth decimal (short Mar-May 0.4198
+  bias -39.8%, long Dec-Feb 0.4044 bias +38.7%, long Oct-Dec 0.0847) and v-base matched the
+  pinned floor, confirming the seasonal multipliers, the preorder-plus-sales weighted V1
+  windows, and the pooled-WAPE pipeline are all wired correctly. Added to the doc: the exact
+  V1 formula, the data source table (shipcore.fc_velocity_link_snapshot_forecast), the M4/M5
+  rationale for the method choice, concrete 10-week unit totals and forecast-error-in-units
+  per segment/window (actual vs V1 vs new model), the business-impact framing (total error
+  roughly halved, ~24,300 to ~11,700 units off across the two complete windows), and an
+  inventory-aware-ordering item under the interface work. Reproduction scripts kept in the
+  scratch outputs, not committed.
+
+- 2026-07-22: Added visuals and a demand-mix breakdown to the management summary. Computed
+  the last-90-day demand split from the snapshot (Established 81 SKUs / 31% of demand, Newer
+  366 / 49%, Occasional 3,002 / 20%; regular-selling ~80% of demand) and put it in a table
+  plus a donut chart. Added two line charts (established and newer) plotting 10-week actual
+  demand against the current method and the new model across the three test windows, which
+  make the tracking difference visible at a glance. Also reworked the results tables to show
+  bias next to the forecast totals, and rewrote the current-method section as the actual
+  formula (weighted velocity windows, dampening, seasonal modifier) rather than a plain-
+  language walkthrough. Stopped referring to the current formula by its internal name in the
+  boss-facing document. Chart/compute scripts kept in scratch outputs, not committed.
+
+- 2026-07-22: Reran the v11 hybrid model locally to produce real week-by-week forecasts for
+  the three development windows (lightgbm 4.7.0). Reproduced the recorded window totals to
+  within a handful of units per segment, confirming the weekly series is consistent with the
+  reported figures. Replaced the three-point summary charts in the management document with
+  continuous weekly time-series charts (Altair, monotone-smoothed): actual weekly demand
+  against the current formula and the new model, one for established and one for newer
+  products. These show the week-to-week reality, including where the model runs smoother than
+  actual demand rather than tracking it perfectly. Also clarified the current-method section
+  (plain-language lead-in, defined the (days, weight) window pairs and every symbol),
+  explained the 12-week moving-average baseline in the model section, and replaced the
+  season nicknames with month-range labels (Oct-Dec 2025, Dec-Feb 2026, Mar-May 2026)
+  throughout. Model-run and chart scripts kept in scratch outputs, not committed.
+
+- 2026-07-22: Refined the management document's charts and limitations. Made the new model's
+  forecast line dashed like the current method's (only actual demand is solid now, since both
+  others are predictions), and labelled each dashed retraining boundary directly on the charts
+  as "new 10-week forecast" with an explanatory paragraph, so the ten-week-test structure is
+  unambiguous. Removed the "cautious model" limitation (the model is not conservative relative
+  to the current formula) and moved the stockout/preorder data-correction item out of
+  Limitations into the next-steps section, keeping Limitations to things that genuinely cannot
+  be corrected (short history, small established group, backtesting-only status, out-of-scope
+  sporadic SKUs).
+
+--- SUMMARY PRODUCED 2026-07-22 (covering the 2026-07-21 and 2026-07-22 entries above) ---
+
+- 2026-07-22: Committed the management-summary chart generator to the repo
+  (scripts/plot_management_forecast_charts.py), previously scratch-only. It regenerates the
+  two continuous weekly charts end to end (runs the v9 and v11 models plus the current
+  formula on the pinned snapshot, builds the weekly series, renders the Altair charts to
+  outputs/reports/) and reproduces the figures in the document exactly. Added altair and
+  vl-convert-python to the unpinned viz dependencies in requirements.txt.
+
+- 2026-07-23: Reworked the management summary (Demand_Forecasting_Project_Summary). Added
+  plain-language definitions of demand and forecast as two set-apart paragraphs at the top of
+  Purpose, shortened the Purpose paragraph, and relabelled every "product" as "SKU" through the
+  body, tables, and chart captions (leaving "production" intact). Moved the document source to
+  Markdown (Demand_Forecasting_Project_Summary.md) with a custom pandoc reference template
+  (custom-reference.docx) and a one-command build (build_docx.sh), so the Word file is
+  regenerated from Markdown in a single pass; the build needs pandoc --columns=20 or LibreOffice
+  collapses the narrower tables. Added scripts/plot_demand_breakdown_donut.py to regenerate the
+  demand-breakdown donut with SKU labels, matching the breakdown table; it writes to
+  outputs/reports/ like the weekly-chart generator. Full modeling content (current-method
+  formula, M4/M5 rationale, moving-average and backtesting explanations) was kept unchanged.
+
+- 2026-07-23: Investigated why the current method still beats the new model on long-history SKUs
+  in the Oct-Dec 2025 window, for the management summary. From orders_raw, preorders are only 0.2%
+  of long-history demand in that window (1.2% Dec-Feb, 2.4% Mar-May), far below the 10% the current
+  formula's weight assumes, so preorders do not explain the result. The window is a gentle,
+  predictable Q4 rise (about +18 units/week for long SKUs) where both methods are accurate (current
+  8% error, new 10%, a gap of about 277 units); the new model's trend and elevation features add a
+  small over-forecast (+1.7% bias) where a trailing average is already well calibrated (-1.0% bias).
+  This matches the design doc's growth-drift account (Sections 4.18 and 4.27). Added a short
+  justification and a consolidated error-and-bias table to the summary.
+
+- 2026-07-23: Tested a second hypothesis for the Oct-Dec 2025 long-history result, that the
+  seasonal multipliers were calibrated to that window. Not supported by the repo. The base monthly
+  multipliers (deseasonalize.py SEASONAL_BASE, and v1.py) are the hand-set legacy Google Sheet
+  values, deliberately not fit to data (design doc 4.9/4.10, only two seasonal cycles). The one
+  optimized seasonal term is the holiday multiplier (1.26, holiday_multiplier_search.csv), and it is
+  used by the new model, not V1, and is fit across both Decembers rather than this one window, so if
+  anything it favors the new model. Q4 is confirmed as the demand peak (long SKUs ~2,047 units/week
+  vs ~1,350-1,560 elsewhere) where V1 is well calibrated (bias -1.0%), but a de-trended monthly
+  seasonal estimate is too noisy on two cycles to isolate per-month multiplier accuracy. Left the
+  summary's existing "easy window" justification unchanged and did not add the multiplier claim.
+
+- 2026-07-23: Built the Phase 1 Streamlit inventory/forecast dashboard prototype's data
+  layer under dashboard/lib/, which reads the real forward forecasts, sales history,
+  segmentation, and the model-vs-V1 accuracy exports. Inventory, preorder, inbound, product
+  name, size, and status are not present in this repo, so the dashboard reads them from
+  dashboard/data/inventory_snapshot.csv and falls back to a clearly labelled sample seeded
+  from real sales until a real export is dropped in. Documented the priority logic,
+  recommended-order-quantity formula, and known limitations in dashboard/README.md.
+
+- 2026-07-23: Added scripts/export_forward_forecasts.py and exported the live
+  shipcore.fc_forward_forecasts table to data/processed/fc_forward_forecasts.parquet,
+  replacing the stale test snapshot the dashboard was reading. Current run (2026-07-20)
+  covers 447 smooth SKUs, matching expectation. The live table turned out to hold four
+  accumulated weekly runs rather than one, so the export script reports counts per run
+  as well as the total, to avoid a misleading combined figure.
+
+- 2026-07-23: Reset the dashboard front end to rebuild it collaboratively rather than in one
+  pass. Removed the five auto-generated pages, kept the dashboard/lib data and calculation
+  layer, and corrected the segmentation labels from new/established to short/long to match the
+  design doc. Rebuilt the home page as a stub and the SKU detail page (actual sales against the
+  model and spreadsheet forecasts). Wrote dashboard/PAGES_BUILD_SPEC.md, a step by step build
+  specification for the remaining pages that composes the existing lib functions and marks which
+  screens run on real data versus sample inventory.
+
+- 2026-07-23: Found that the dashboard was reading the legacy statsforecast and spreadsheet
+  forecast tables, not the LightGBM model that is the focus of the project. The forward forecast
+  table and the accuracy exports contain only the production statistical models (WindowAverage,
+  AutoETS, AutoARIMA, ensembles) and the V1 formula, with no LightGBM output. Confirmed the
+  LightGBM track currently produces only evaluation scores inside the experiment scripts
+  (src/ml/evaluate.py and the ml_*.py scripts), retraining the model inline on each run, with no
+  saved model and no per-SKU forward forecast. Concluded the next step is to extract the current
+  best version (v11) into standalone, reusable model files that can be retrained and produce
+  per-SKU forward forecasts, built so later model improvements drop in and flow straight to the
+  dashboard. Deferred to a later session.
+
+--- SUMMARY PRODUCED 2026-07-24 (covering the 2026-07-23 entries above) ---
+
+- 2026-07-24: Extracted the best model version (v11) from its experiment script into a
+  standalone, reusable serving package under src/ml/serving/ (base.py defines a ForecastModel
+  interface, models.py holds V11Hybrid plus a version REGISTRY and CURRENT_BEST, persist.py
+  saves and loads a fitted model, forecast.py provides forward_forecast and validate_version).
+  The package composes the frozen src/ml primitives rather than reimplementing them, so an
+  existing version cannot change when a new one is added. Added scripts/ml_forward_forecast.py,
+  the LightGBM counterpart to run_forward_forecast.py, which trains the current best model on
+  all history and writes a per-SKU forward forecast to data/processed/ml_forward_forecasts.parquet
+  and the fitted model to outputs/models/. Verified the extraction reproduces the recorded v11
+  per-segment pooled WAPE exactly on all three development windows (short 0.1961, 0.2000, 0.1783;
+  long 0.1355, 0.1380, 0.1000), that the forward run covers all 447 smooth SKUs over 13 weeks,
+  and that a saved model reloads and predicts identically. To add a future version, subclass
+  ForecastModel, register it, and point CURRENT_BEST at it once it wins; the forward pipeline and
+  dashboard then pick it up with no further change.
+
+- 2026-07-24: Decided how V1 fits the LightGBM dashboard and wrote the implementation task
+  (docs/V1_AND_DASHBOARD_WIRING_TASK.md). V1 stays a separate artifact keyed by SKU and week,
+  joined into the dashboard at read time rather than written into the model forecast rows, and
+  is always recomputed from a fresh database pull at forecast time using the existing
+  scripts/compare_v1.py formula. V1 cannot be computed from the model's weekly sales table
+  because its formula needs daily order lines split across five fulfillment streams
+  (west/east sales and preorder, plus FBA), which the weekly totals discard. The task covers a
+  new forward-pipeline V1 step, a V1 accuracy baseline scored on the same development windows,
+  and pointing the dashboard at the model outputs and a precomputed accuracy file instead of
+  the legacy statsforecast tables.
+
+- 2026-07-24: Carried out the V1-and-dashboard wiring task end to end. Added a V1 forecast
+  step to the forward pipeline that recomputes V1 fresh from the database on every run and
+  writes it as its own file on the same SKU/week grid as the model (scripts/ml_forward_forecast.py;
+  all 447 forecast SKUs covered, none missing from the velocity pull). Added a V1 accuracy
+  baseline scored on the same three development windows as the model and wrote a combined
+  comparison file (scripts/ml_accuracy_report.py); the model reproduced its recorded numbers
+  exactly and beat V1 in five of six window and segment cells, losing only long SKUs in the
+  Oct-Dec window, matching the design document. Pointed the dashboard at the LightGBM forecast
+  and the new comparison file instead of the legacy statistical tables, updated the SKU detail
+  page's model label to match, and fixed a data layer function that would have broken once the
+  old columns disappeared. Flagged the forecast accuracy page's build plan as needing a
+  rewrite, since the new comparison file is pre-aggregated per window and segment rather than
+  one row per SKU.
+
+- 2026-07-24: Added a per-SKU accuracy file alongside the pooled one, so the forecast accuracy
+  page can still show a largest-errors view. The per-SKU actual-versus-predicted numbers were
+  already being computed inside the shared scoring function and then thrown away after
+  pooling; pulled that step out into its own function and rebuilt pooling on top of it, so the
+  existing scorer's behavior is unchanged by construction, and re-ran the full harness
+  regression check plus an independent re-aggregation of the new per-SKU file to confirm it
+  reproduces the pooled numbers exactly (zero mismatches). scripts/ml_accuracy_report.py now
+  trains once and writes both files instead of training separately for each.
+
+- 2026-07-24: Built the Forecast Accuracy dashboard page (Step 3), the third of five planned
+  screens. Shows the LightGBM model against V1 on the three historical backtest windows: a
+  headline card per window with the win/loss margin, a pooled-error and bias breakdown by
+  window and short/long segment, the share of individual SKUs the model wins on, and the
+  largest over- and under-forecasts for a selected window. Confirmed the numbers read
+  correctly: the model wins clearly in two of the three windows and loses only the one
+  segment already known to favor V1. All three built pages pass the smoke check.
+
+- 2026-07-24: Reworked the SKU detail page against the original source requirements (the
+  forecasting product owner's spec, one level up from the derived build plan): it now shows
+  current inventory, confirmed inbound, preorder backlog, estimated stockout date, and the
+  recommended order quantity calculation alongside the actual-versus-forecast chart, with the
+  weekly forecast numbers also shown as a table rather than only a chart. The inventory-derived
+  fields carry the sample-data warning banner until real inventory is wired in. Also reworked
+  the forecast accuracy page's comparison section after feedback that it was hard to read:
+  replaced two bar charts with one table breaking every window into total, short, and long
+  rather than only the combined total, which surfaces a result the combined view was hiding
+  (the model loses on long SKUs in the Oct-Dec window specifically, not the window overall).
+
+- 2026-07-24: Saved the forecasting product owner's original dashboard requirements
+  (dashboard/REQUIREMENTS.md), which had only existed in chat history until now, and pointed
+  the derived build spec at it as the source of truth when the two disagree.
+
+- 2026-07-24: Built the Inventory Overview page (Step 4), replacing the placeholder home page.
+  Six headline counts (forecasted SKUs, preorder priority, out of stock, best sellers at risk,
+  total recommended order quantity, SKUs stocking out within 30 days), a priority mix chart, a
+  short-versus-long split chart, and a preview of the top ten recommended orders. Sample
+  inventory data, banner included. Numbers check out internally: the priority and short/long
+  counts each sum to the full 447-SKU total. Four of six planned dashboard pages now built.
+
+- 2026-07-24: Renamed the dashboard's main script from app.py to Inventory_Overview.py so the
+  sidebar shows an accurate name instead of "app" (Streamlit derives that label from the
+  filename, with no way to override it in code for the main script). Updated every launch
+  command and reference accordingly. Reviewed all four built pages against the requirements
+  doc, the codebase's own conventions, and Streamlit best practices; fixed three small issues
+  (a number missing thousands separators, priority labels not using the existing colour-coded
+  markers, a table with no caption explaining it), and flagged three bigger ones for a decision
+  rather than deciding alone: the shared planning table is recomputed from scratch, uncached,
+  on every page interaction; two of the summary bar charts may have the same readability
+  problem the forecast accuracy ones did; and the accuracy page may be missing an aggregate
+  actual-versus-forecast view the requirements doc calls for.
+
+- 2026-07-24: Resolved the three flagged items. Cached the shared planning table (0.13s cold,
+  instant when parameters are unchanged, correctly recomputes when they change; verified both
+  ways). Replaced the inventory overview's two bar charts with count cards, following the
+  visualization guideline that a handful of plain counts belongs in stat tiles, not a bar
+  chart, which matches the original complaint. Added the missing portfolio-level view to the
+  accuracy page: total actual demand against both methods' total predicted demand, in units,
+  per backtest window, using the same visualization guideline in the other direction (three
+  distinct series over three periods is exactly what a grouped bar chart is for). The new
+  numbers independently confirm the bias pattern already on record: the model stays close to
+  actual in all three windows while the spreadsheet method overshoots by about 23% in one
+  window and undershoots by about 31% in another.
+
+- 2026-07-24: Gave the shared metric-card helper an actual border and switched it to a
+  responsive wrapping row instead of a fixed column grid, since it was called a "card" but had
+  no visual boundary. Fixed in the one shared function every page's stat tiles go through, so
+  it applied everywhere at once rather than page by page.
+
+- 2026-07-24: Added a theme file (.streamlit/config.toml) since the dashboard had none and was
+  running on unmodified defaults, whose default border color turned out too faint to notice.
+  Set an explicit, clearly visible border color and a light card-tint background. Locks the
+  app to light mode as a side effect (a single base theme can't offer the dark-mode toggle);
+  flagged rather than silently accepted.
+
+- 2026-07-24: Switched the theme to dark by default after the light version came back as too
+  bright. Kept the override minimal this time (just border color and corner radius) and let
+  Streamlit's own dark theme handle everything else, rather than guessing a second full palette
+  after the first guess missed.
+
+- 2026-07-24: Built the Purchase Priorities page (Step 5), the fifth of six planned screens,
+  while blocked on the real inventory-data credentials. Filterable, searchable priority list
+  with a CSV export and a jump into SKU Detail for a chosen row. Verified the filters actually
+  filter (priority, search) and not just that the page loads. One page left: Data Quality
+  Alerts.
+
+- 2026-07-24: Removed a locally-invented "master SKU" field that turned out to correspond to
+  nothing real. It was computed by stripping the trailing colour/size token off the SKU string,
+  a guess made before we had access to the real inventory tables. Checked those tables directly
+  once we had access: their own "master_sku" field is the same identifier as our SKU, not a
+  coarser grouping, so there was never a real distinction to approximate. Removed the field and
+  every place it was displayed or filtered on, fixed a data-quality check that referenced it
+  directly (would have broken once it was gone), and recorded the finding in the requirements
+  document as a deviation from the original spec's column list, since that document names it
+  as a separate column.
+
+- 2026-07-24: Started a page-by-page review of the dashboard against the requirements document,
+  with the business owner reviewing and giving feedback on each page in person before the next
+  one starts. First page: Inventory Overview. Clarified why "out of stock" and the "No Stock"
+  priority count differ (out of stock is broader; a SKU that is both out of stock and on
+  preorder is labelled Preorder, since preorder outranks no-stock), added a plain-language
+  explanation of what each priority label means, and folded the preorder count into the priority
+  mix section instead of a separate card, since the requirement is only that the count appear
+  somewhere on the page. Reworked the priority mix into a combined view: four count cards in a
+  condensed 2x2 grid beside a donut chart of the same breakdown, with the short-history/
+  long-history split moved to sit directly under the top summary cards as its own row rather
+  than a separate section. Iterated on the chart's colours and the gap style between segments
+  several rounds based on visual feedback, landing on a lighter four-colour palette, a donut
+  (rather than a full pie, whose wedges bunched together at the centre) with rounded gaps between
+  segments, and on-chart percentage labels confirmed to line up with the correct segment. Rest of
+  the page not yet reviewed.
+
+--- DAILY SUMMARY 2026-07-24 ---
+- Found that the new dashboard was still showing forecasts from the old method, and that our best new forecasting model only existed as a one-off experiment we couldn't reuse.
+- Rebuilt that model into a proper, reusable tool that produces a demand forecast for every product, and got it running to generate a fresh 13-week forecast across all ~450 active products.
+- Set the old spreadsheet method to run beside it as a benchmark, always on the latest sales data, and confirmed the new model is more accurate in five of six comparisons.
+- Connected the dashboard to the new model and built most of its screens for the purchasing and inventory teams: an overview, a per-product detail view, a forecast-accuracy view, and a purchase-priority list.
+- Some inventory figures on those screens are still placeholders until we get access to the live inventory data; everything forecasting-related is real.
+
+--- SUMMARY PRODUCED 2026-07-24 (covering the 2026-07-24 entries above) ---
+
+- 2026-07-27: Started docs/BACKLOG.md for decided-but-unbuilt work, so future items stop living
+  only in chat history. Seeded it with two entries. First, a stockout-aware demotion rule for
+  src/profile.py: only demote a SKU to intermittent when its recent 13-week mean is below the
+  threshold and it actually had stock, since demotion removes a SKU from the forecast entirely
+  and a long stockout currently triggers it. Blocked on inventory data, which the profiler has
+  no access to today, and on whether inventory history exists, since a current snapshot cannot
+  answer an as-of question without leaking into backtests. Second, the broader censored-demand
+  problem the forecasting team's two reference analyses both measure: during stockouts,
+  pre-order periods and post-restock recovery, units sold understates demand, and the model
+  reads that as demand falling. Recorded the data position for both: pre-order streams are
+  already in orders_raw, stockout and restock event dates are not available anywhere.
+
+- 2026-07-27: Rebuilt the dashboard front end from the new plan. Wrote dashboard/PLAN.md,
+  which starts from the decisions users actually make rather than from a screen list, records
+  a verified inventory of which data is real, sample and missing, and maps four screens plus
+  one deferred against those decisions. Validated the map with a worked walkthrough of one
+  weekly cycle using real forecast figures, which surfaced two gaps rather than hiding them.
+  Deleted the four previously built screens and the old presentation helper, keeping the data,
+  calculation and data-quality modules, since those hold verified business logic rather than
+  layout assumptions. Added a reliability module that turns the stored per-SKU backtest errors
+  into a good/fair/poor tier plus an explicit no-history state, which covers 260 of 447 SKUs
+  and splits them 102/107/51 with 187 unmeasured. Built the Action List screen: summary counts
+  that act as filters instead of a separate overview page, a banded scrollable table with a
+  pinned SKU column, priority and reliability shown with glyph and text rather than colour
+  alone, search and filters, CSV export, and a drill-down control. Confirmed every filter
+  returns the count it should and the page runs without exceptions in each state.
+
+- 2026-07-27: Fixed a fault in the dashboard's per-SKU reliability figure. The accuracy export
+  holds one row per SKU per window for the model and another for the spreadsheet baseline, and
+  the reliability calculation was pooling both, mixing two methods' errors and double-counting
+  the actuals. It now scores only the model version actually being served. The correction moves
+  the portfolio median error from 0.231 to 0.176 and reclassifies 94 of the 260 measured SKUs,
+  so the tier boundaries were re-cut against the corrected distribution (good under 15%, fair to
+  30%, poor above), giving 107 good, 90 fair, 63 poor and 187 with no measured history.
+
+- 2026-07-27: Built the SKU Detail screen, the second of four planned. Shows the recommended
+  order quantity as a line-item calculation beside a reliability panel, on the reasoning that a
+  user arrives already knowing the number and needs to know how it was derived and whether to
+  trust it. The reliability panel shows the per-window forecast against actual rather than only
+  a headline error, and states whether the misses run one way or both, since a SKU that misses
+  in both directions calls for a different response than one that consistently forecasts low.
+  Below that: the inventory position, an Altair chart of actual demand against both the model
+  and spreadsheet forecasts with the forecast boundary marked, and the weekly figures collapsed.
+  Wired the Action List drill-down to open the screen with the chosen SKU. Verified all three
+  reliability states render, including the no-history case that covers 187 SKUs, and that the
+  order quantity shown matches the sum of its own breakdown.
+
+- 2026-07-27: Reworked the recommended order quantity after reviewing how it was calculated.
+  Three changes, each agreed before implementing. Safety stock is now sized by the SKU's own
+  measured forecast error rather than a flat fourteen days of trailing sales; the flat rule had
+  the buffer backwards, holding the most stock against the best-predicted SKUs and the least
+  against the worst. SKUs with no backtest history inherit their segment's median error rather
+  than being treated as error-free. Orders now cover the lead time plus the reorder cycle, since
+  covering only the lead time leaves a shortfall every cycle. Confirmed inbound is credited only
+  when its ETA falls inside that window, and the stockout projection now depletes on-hand stock
+  first and counts inbound only if it arrives before the shelf empties, which corrected the
+  at-risk count from 187 to 272 SKUs. Also made every component round to whole units before the
+  total is taken, so the line items shown to a user add up exactly to the quantity displayed;
+  previously they could disagree by a unit or two on 42 SKUs. Recorded all definitions, and the
+  superseded ones, in the plan document.
+
+- 2026-07-27: Changed the estimated stockout date to deplete stock against each SKU's own
+  forecast curve rather than a flat trailing average, removing the last place where a headline
+  number ignored the model. Stock is consumed week by week with interpolation inside the week
+  it runs out, and demand past the end of the horizon continues at the horizon's average rate.
+  The difference is largest exactly where it matters: on a SKU whose weekly demand ramps from 5
+  to 20 units, 60 units of stock lasts 52 days rather than the 32 a flat average of the same
+  curve would report. Checked the depletion function against hand-worked cases including zero
+  stock, exact-week boundaries, extrapolation beyond the horizon and zero-demand SKUs, and
+  confirmed the count of SKUs out of stock now still equals the count with zero days of cover.
+
+- 2026-07-27: Exposed the planning assumptions as sidebar controls, so lead time, reorder
+  cycle and service level can be adjusted rather than being fixed in code. The controls are
+  shared by both screens and persist across navigation, so the order quantities, stockout
+  dates and headline counts on the two pages always reflect the same assumptions. Service
+  level is offered as a percentage with its multiplier shown, since that is the meaningful
+  choice rather than the raw factor. Checked that each control moves the totals in the
+  expected direction and magnitude, that the SKU detail breakdown relabels its coverage line
+  to match, and that the line items still sum exactly to the order quantity at a non-default
+  lead time.
+
+- 2026-07-27: Stopped the sample inventory generator from inventing master data. It had been
+  drawing a product status at random from a weighted list and guessing a size by taking the
+  first all-digit token of the SKU string, which for CA-SC-10-F-10-BK-1TO returns the product
+  line number rather than the size. Those appeared on screen as ordinary badges, so a reader
+  had no way to tell a fabricated classification from a real one, and the size was not merely
+  invented but confidently wrong. This is the same fault as the locally-invented master SKU
+  field removed earlier. Product name, size and status are now left blank rather than
+  simulated, and their badges only render when the value is real. Quantities are still
+  simulated, because the screens cannot be exercised without them, but the priority badge now
+  carries a marker saying it derives from sample stock, so the caveat travels with the figure
+  instead of sitting only in the banner at the top of the page. The three data-quality checks
+  that read status or size now report as unavailable while the sample snapshot is in use,
+  rather than flagging all 447 SKUs and reporting a crisis that is really an absent export.
+
+- 2026-07-27: Removed the invented size and product-status fields from the dashboard
+  altogether, rather than only blanking them, and deleted the three data-quality checks that
+  existed solely to test them. Replaced them with product category, read from the first two
+  tokens of the SKU, which is real because the prefix is part of the identifier. Only the three
+  prefixes whose meaning was confirmed are named (CA-SC seat cover, CC-CC car cover, CA-FM
+  floor mat); the remaining ten display their raw prefix rather than being given an invented
+  label, so they still group and filter correctly without asserting anything unverified.
+  Category now appears on the SKU detail header, under each SKU in the action table, and as a
+  filter. Four data-quality checks remain, of which three run and one is honestly reported as
+  needing the order-line export.
+
+- 2026-07-27: Simplified product category to a family rule, since every CC-prefixed SKU is a
+  car cover regardless of its second token: 335 seat covers, 111 car covers, and one SKU whose
+  prefix has no confirmed meaning left showing its raw prefix rather than being guessed at.
+  Made the order-quantity table read as the arithmetic itself rather than as a list of figures,
+  by adding a leading operator column with running plus and minus signs and an equals sign on
+  the total, plus a one-line plain-language statement of the formula beneath it. The operator
+  is carried as an explicit field on each line rather than inferred from the number's sign,
+  because a subtracted line whose value happens to be zero would otherwise display as an
+  addition, which it did. Added horizontal padding throughout the tables, which had cells
+  butted against their borders, worst in the reliability window table.
+
+- 2026-07-27: Fixed the recommended order quantity showing as 1 on the SKU detail headline for
+  every SKU. The loop that renders the order breakdown assigned its per-row flag to a variable
+  named total, which is also the name of the function parameter holding the headline quantity,
+  so by the time the headline was formatted the number had been replaced by a boolean and
+  printed as 1. Renamed the loop variable and added a note against it. Worth recording because
+  the value was correct everywhere else on the page, including the total line of the very table
+  the loop was building, which made it look like a display truncation rather than a variable
+  being overwritten. Also centred the figures in the order breakdown and gave the reliability
+  table's window column left padding, both of which were flush against their borders.
+
+- 2026-07-27: Colour-coded the order breakdown so each line's operator and figure share a
+  colour, green for what adds to the quantity to buy and red for what subtracts from it, with
+  the total and the informational late-inbound line left in the default colour. Applied the
+  same two colours to the reliability miss column, replacing the blue and amber it used, and
+  reused the existing good and poor dot colours rather than introducing a second green and red.
+  Noted in the code that the miss colour encodes direction rather than quality, since a miss in
+  either direction is an error. Made the table header rows taller, keeping the second row's
+  sticky offset equal to the first row's height so the two stay flush while scrolling.
+
+- 2026-07-27: Replaced the two-colour forecast-miss indicator with a diverging scale by
+  direction and severity, on the reasoning that under-forecasting and over-forecasting are not
+  opposites of the same thing: missing low causes stockouts and lost sales, missing high only
+  ties up cash. Under-forecasts escalate through yellow, orange and red as they worsen;
+  over-forecasts run cool through teal and blue; anything within ten percent either way reads
+  as accurate. Band edges were set against the observed distribution of 572 SKU-window misses
+  so the central band holds about a third of cases and every outer band stays populated. Added
+  a legend, since seven colours are not decodable without one, and it doubles as the statement
+  that the two directions carry different costs. The order breakdown keeps its simpler green
+  for additions and red for subtractions.
+
+- 2026-07-27: Added a portfolio demand chart to the action list, showing actual sales for the
+  last 26 weeks against the model and spreadsheet forecasts for the next 13, summed across
+  whichever SKUs the current filters select rather than a fixed total that would disagree with
+  the list beneath it. The spreadsheet baseline covers all 447 forecast SKUs, so the two
+  forecast lines are directly comparable; where a filter leaves that untrue the caption says
+  so. The chart makes an existing result visible at a glance: the model projects roughly 4,200
+  to 4,900 units a week against the spreadsheet's 3,400 to 3,800.
+  Declined to add a reliability history chart to the SKU detail page. Only 66 of 447 SKUs have
+  three backtest windows and 180 have two, so a line chart would draw a trend through two
+  points and imply knowledge of a trajectory that does not exist. Added a magnitude bar beside
+  each miss percentage instead, which makes severity comparable at a glance without asserting
+  anything the data does not support. Also moved the chart construction into the shared
+  presentation module so the two screens cannot drift apart on colour, dash pattern or the
+  marking of where history ends.
+
+- 2026-07-27: Made the demand charts hoverable. A tooltip attached to the lines themselves only
+  fires within a couple of pixels of a two-pixel stroke, so in practice it never fired; replaced
+  it with a nearest-point selection that snaps to the hovered week, draws a crosshair, marks the
+  point on every series and reports all three values in one tooltip. Enlarged both charts, the
+  portfolio one to more than double its previous height, and softened the gridlines. Kept the
+  portfolio chart between the filters and the table after considering the alternatives: above
+  the summary counts would put a control below its own output, since the chart follows the
+  filters; below the table it would be scrolled past; and on its own screen it would lose the
+  connection to the filtered list. It stays collapsible so anyone working the list daily can
+  reclaim the height. Also renamed two locals in the chart block that shadowed the History
+  filter's variable and the forecast frame, which worked only because the filter signature was
+  computed earlier in the file and would have broken silently if the block ever moved.
+
+- 2026-07-27: Three additions to the two built screens. The SKU detail page now states the
+  plausible requirement alongside the recommended quantity, flexing only the demand term by the
+  SKU's measured error and deliberately excluding safety stock from the band, since safety stock
+  is the cushion chosen to cover that same uncertainty and including it would count it twice.
+  Checked that the recommendation falls inside the band for all 447 SKUs at the default service
+  level; at higher service levels it sits above the band by design, and the card says so rather
+  than leaving the discrepancy unexplained. The action list is now sortable by any column with a
+  reset, replacing the fixed priority-then-urgency order, which was the main thing the custom
+  table lacked against an ordinary data grid. Data-quality flags now appear where decisions are
+  made rather than only on a screen that does not exist yet: a summary line above the list, a
+  marker beside each flagged SKU carrying the wording in its title, and the full labels on the
+  SKU detail page. 192 of 447 SKUs currently carry one, almost all of them "nothing inbound".
+  The reset control had to be moved to a callback: Streamlit refuses writes to a widget's key
+  once that widget exists, and the button is created after the two sort controls.
+
+--- DAILY SUMMARY 2026-07-27 ---
+- Rebuilt the two main dashboard screens: a priority list of what needs ordering, and a per-product detail view.
+- Improved how the recommended order quantity is worked out, so it reflects how accurate each product's forecast has been.
+- Fixed a fault in the accuracy figures shown per product.
+- Removed placeholder product details that could have been mistaken for real information.
+- Added the practical touches: adjustable settings, sortable list, demand charts, and warnings where data is incomplete.
+
+--- SUMMARY PRODUCED 2026-07-27 (covering the 2026-07-27 entries above) ---
+
+- 2026-07-28: Traced where the Commerce Integration application gets inventory, preorder and
+  inbound figures, so the dashboard can read the same production sources instead of a sample
+  file. On hand and backorder come from `ecommerce_data.coverland_inventory_by_warehouse` in
+  the Supabase lookup database; confirmed inbound and its ETA come from `fc_containers` and
+  `fc_container_items` in the primary database, counted only for containers at status
+  `shipped` or `packing_received`. The dashboard will match that status filter rather than
+  choose its own.
+
+  The investigation turned up something about our own pipeline. Order lines are classified as
+  `sales`, `preorder`, `ttm` or `ttm_preorder` before they reach us, and `src/ingest.py`
+  selects from `fc_velocity_link_snapshot_forecast` without filtering on that column, so the
+  training target has always included preorder units, attributed to the order date. That
+  answers the open question recorded in Section 5.4 item 6, which had been waiting on
+  confirmation of whether preorders were flagged at all and whether the series keyed on order
+  date or ship date. Both are now settled, so excluding or down-weighting preorder rows is
+  testable without new source data; attributing them to the fulfilment week is still blocked,
+  since no available source records that date. Recorded in Section 2.1, with 5.3 and 5.4
+  updated to match. (Originally written into the Decision Log as 4.29 and moved: that section
+  takes design choices only, and this is a property of the data.)
+
+  It also settles a dashboard question. Because preorder demand is already inside the
+  forecast, the preorder term in the recommended order quantity has to be an open obligation
+  stock rather than a preorder sales rate, or the same units are counted twice. The velocity
+  snapshot cannot supply that, since it drops fulfilment status when aggregating, and the
+  preorder queries in the Commerce Integration repository measure preorders already shipped
+  over a trailing 91 days. The `backorder` column is the only stock-level source. One check
+  is outstanding before using it: whether `available` in that same table is already net of
+  `backorder`, which would make the recommendation run high.
+
+- 2026-07-28: Made each SKU in the action list a link straight to its detail page. A comment in
+  the code claimed a custom HTML table could not raise a click back to Streamlit, and that was
+  wrong: the table is rendered with `st.markdown(unsafe_allow_html=True)`, which writes into the
+  main document rather than an iframe, so an ordinary anchor in a cell behaves like an ordinary
+  link. The SKU travels in the query string and the detail page consumes it once, comparing
+  against the last value it took, so the URL cannot keep overriding the selectbox on later
+  reruns. Nothing is written back to the URL, which avoids rerun side effects. An unrecognised
+  SKU in the URL now warns and falls back rather than silently showing a different product.
+  The link is the whole first cell rather than the SKU text alone, so the click target is the
+  full row height, and the drill-down selectbox and button underneath the table were removed:
+  an anchor is natively tab-focusable, so that widget only duplicated a path already working by
+  both mouse and keyboard. Reaching a SKU that is not on the current page is now done by
+  searching or filtering to it. Corrected the stale comment in both files. Verified by
+  rendering the table outside Streamlit and checking that the anchor wraps the entire cell on
+  every row with the SKU surviving URL encoding and the data-quality flag still inside it, then
+  by four AppTest cases: arriving with no parameter, with a valid one, changing the selection
+  afterwards, and arriving with a SKU that does not exist. Both pages render with no
+  exceptions and the CSV export is unaffected.
+
+  One follow-up on the styling, recorded because the cause is not obvious and will recur with
+  any future anchor in this table. The SKUs first came out permanently coloured and underlined
+  rather than only on hover. The reset was written as a bare class, `.dfx-cell`, at specificity
+  0-1-0, while Streamlit styles anchors globally with selectors of the form `.stMarkdown a` at
+  0-1-1. The bare class therefore lost and the theme's own link styling applied throughout, so
+  what looked like a hover rule that fired constantly was a reset that never applied at all.
+  Fixed by qualifying the selector with the element and marking the two properties important,
+  which is the right use of important here since it overrides a third-party stylesheet rather
+  than our own, and by listing every link state, or the theme recolours the cell on hover and
+  drags the subtitle with it. Text decoration needed particular care because it propagates from
+  an anchor to its descendants and cannot be cancelled by a child. Added a specificity check to
+  the verification so the comparison against Streamlit's rule is asserted rather than assumed.
+
+- 2026-07-28: Chased why the dashboard's stock figures looked low once real inventory replaced
+  the sample. The join is sound: all 447 SKUs matched, and of the 118 showing zero, 110 have a
+  container inbound and 102 have backlog owed, which is the pattern of genuinely stocked-out
+  products rather than a broken lookup. The figure is narrow rather than wrong. The export pulls
+  `available`, which is physical stock less units already allocated to unshipped orders, so the
+  column labelled "On hand" was overstating what it contained by whatever is allocated. Renamed
+  it to "Available" on both screens and documented the definition in the schema. The export now
+  also reports physical on-hand and allocated alongside it, so the size of that difference is
+  visible rather than inferred, and lists available by warehouse to show whether any sits
+  outside the four the Commerce app pivots into west and east.
+  Separately, the Commerce planning grid adds a `transit_stock` field to its stock total that
+  this export did not carry, which is a second reason the two screens disagree. It is now
+  exported as its own column but deliberately not used in any calculation: nobody has been able
+  to say what it counts, it may be the same units as the container inbound already credited, and
+  folding it into available stock would feed it into the week-by-week depletion as though it
+  were on the shelf today, making every stockout date optimistic. The script reports how many
+  SKUs carry both it and container inbound, and how often the two are equal, which is the
+  evidence needed to decide whether they are the same units.
+
+- 2026-07-28: Added a per-SKU backtest chart to the detail page, so a bad reliability figure can
+  be investigated rather than only read. Each window the model was scored on is shaded from its
+  cutoff to ten weeks later, with a dashed rule at the cutoff marking the boundary between what
+  the model had seen and what it had not, and a label giving predicted against actual with the
+  signed error. Placing the training data immediately to the left of the result it produced is
+  the point: a large miss can be traced back to the shape that caused it. The section opens
+  automatically when the SKU sits in the poor tier and stays collapsed otherwise, and is not
+  rendered at all for SKUs with no backtest history.
+  One deliberate limitation. The accuracy export records a single predicted total per window,
+  not per-week predictions, so drawing a predicted curve through the window would mean inventing
+  a within-window shape that was never recorded. The prediction is shown as the total spread
+  evenly across the window, drawn faintly and labelled as an average per week, which is a
+  restatement of the recorded total rather than a claim about any individual week. The only
+  line on the chart is real demand. This is the same reasoning that led to declining a
+  reliability trend line earlier: with two windows for most SKUs there is no trend to draw, but
+  there is evidence to show, and the evidence is what was asked for.
+
+- 2026-07-28: Replaced the flat level in that chart with real per-week predictions, which
+  required generating data that did not previously exist. The stored accuracy report keeps one
+  predicted total per SKU per window, so `validate_version_weekly` was added to
+  `src/ml/serving/forecast.py`: the same fit and predict loop and the same eligibility filter as
+  the recorded totals, stopping short of the aggregation. A new script,
+  `scripts/ml_backtest_weekly.py`, runs it and reconciles the result against
+  `ml_accuracy_by_sku.csv` before writing anything, refusing to write if any window total
+  disagrees, on the grounds that a chart contradicting the accuracy figure printed beside it is
+  worse than no chart. It reconciled exactly across all 572 SKU-window pairs, so the chart now
+  shows what the model predicted in each week against what actually happened, with the lead
+  time available on hover. The dashboard treats the file as optional and falls back to the old
+  flat level with different wording when it is absent, so a model version without it degrades
+  rather than breaks.
+  Also moved the per-window results out of the plot. Coloured text drawn on the chart was
+  unreadable, competing with the demand line and colliding between adjacent windows. They are
+  now a row of chips above the chart, using the same miss scale as the action table, with the
+  colour on a filled chip rather than on thin glyphs.
+  Two follow-ups on the same chart, both of which the main demand chart had already solved and
+  this one had not. The hover reported only the actual figure, because the crosshair was built
+  from the history frame alone while the prediction carried its own tooltip on the point
+  markers, which in practice never fires: a tooltip on a mark only triggers within a couple of
+  pixels of it. The crosshair is now built from a tidy frame pivoted back into columns and
+  carries actual, predicted and lead together at the nearest week. Separately, each window's
+  prediction line began at its first forecast week, leaving it floating unattached to the
+  history it came from. It is now anchored to the actual value at its own cutoff, the last week
+  the model saw. The anchor is an observation rather than a prediction, so it is added to the
+  line only and not to the point markers, which keeps every dot on the chart a genuine forecast
+  and keeps the window totals reconciling. Both are asserted in the checks.
+  A third followed from the second. Carrying the prediction on the crosshair meant every week
+  showed a predicted value, including the weeks outside any backtest window where none exists,
+  and the pivot leaves those null so they rendered as NaN. Vega-Lite cannot vary a tooltip field
+  list per datum, so the weeks are now partitioned between two rules: one over the weeks inside
+  a window carrying four fields, one over the remainder carrying two. Exactly one holds any
+  given week, so exactly one tooltip can fire, and outside a window the prediction rows are
+  absent rather than empty. The selection needs to see every week or the crosshair would snap
+  only within whichever subset owned it, so it is attached to a third invisible rule spanning
+  the whole series, placed underneath so the two visible rules win the tooltip. The check
+  asserts the partition is disjoint, complete, and exactly equal to the predicted weeks.
+  That partition then broke the hovering it was built on top of, and was reverted. Attaching a
+  nearest selection to a mark is what builds the Voronoi region that lets a pointer anywhere
+  snap to the closest week, so the mark holding the selection has to be the mark holding the
+  tooltip. Splitting them across layers put the selection on the invisible capture rule and the
+  tooltips on the visible ones, which silently shrank the target back to the one-pixel rules and
+  the markers themselves. The lesson worth keeping is that in Vega-Lite the snap and the tooltip
+  are one mechanism, not two that can be composed separately.
+  Since Vega-Lite cannot vary a tooltip's rows by datum, the field list is now constant and the
+  weeks outside a window substitute an em dash through isValid rather than formatting a null
+  into NaN. The row still appears but reads as not applicable, which is the better trade against
+  losing the snap. The check asserts the selection and the tooltip share one mark, that the
+  nullable fields are never tooltipped raw, and that both guards are present. Prediction markers
+  were also enlarged from 22 to 45, since at the smaller size they read as noise on the line.
+
+- 2026-07-28: Investigated why one short SKU was over-forecast by 150% and ran the experiment
+  it suggested. The behaviour generalises: predictions are correctly ordered by the ramp
+  feature at a lead of one week and that ordering has disappeared by ten weeks, while actual
+  outcomes stay ordered throughout. The model reads a collapse and then discards it, settling
+  on the average short-SKU response, which is a ramp because the training population is 39%
+  rising against 1% collapsing. That behaviour is recorded in the v14 version-log entry, and
+  the three measurement cautions it exposed went to Section 2.4, which governs how accuracy
+  claims are produced: the ramp feature is computed on the deseasonalized series, the model's
+  output must be divided by both level and seasonal factor to recover the ratio it predicted,
+  and anchors with unusual feature values cluster in one window so pooling disguises a window
+  effect as a feature effect. Each had produced a wrong reading first. Also corrected a stale
+  row in the feature backlog that listed the ramp ratio as a candidate to try; it has been in
+  the model since v1. (Both were first written into the Decision Log, as 4.29a, and moved: the
+  section preamble restricts it to design choices, and these are a diagnosis and a set of
+  measurement rules.)
+  The experiment was v14, lowering min_child_samples on the short-serving model from 200, on
+  the hypothesis that a region holding 1.1% of training rows could not be resolved under a
+  five-leaf ceiling. Pass criteria were written into the version log before running, per the
+  working rules, including a tail criterion and a guard against buying a tail fix with damage
+  elsewhere. It was rejected at 100, 50 and 20: the decision windows tie with no consistent
+  sign, and the tail moved the wrong way at every value. The long segment was identical
+  throughout, which was the control, and v11 reproduces to four decimal places after the
+  plumbing change.
+  The negative result is the useful part. The tail is not capacity-constrained, so the cause
+  sits in the objective rather than the tree structure: under demand-weighted L1 a leaf of
+  low-volume collapsed SKUs contributes little to the loss however finely it is split. It also
+  confirms the earlier hyperparameter finding on a subpopulation that study could not have
+  seen. Recorded with it is a measurement point that outlives the experiment: tail error is
+  above 100% while short pooled WAPE is 0.196, both correct, because the metric weights by
+  units and these SKUs carry almost none. Pooled WAPE cannot be the instrument for this
+  problem, so any future attempt needs a per-segment criterion agreed in advance.
+
+- 2026-07-28: Settled what to do about SKUs the forecast handles badly, and the answer was to
+  say so rather than to change the forecast. Two measurements decided it. Routing on measured
+  accuracy does not work, because per-SKU error barely persists between windows (Spearman 0.13;
+  knowing a SKU was poor last window raises the odds of it being poor next window from 27% to
+  44%), so a rule built on past accuracy would misroute most of what it touched. Routing on the
+  SKU's observed state does work where it matters: for SKUs whose last 4 weeks are well below
+  their last 12, a plain 4-week average scored 0.28 against the model's 1.49 on the worst
+  group, and lost badly everywhere else. But blended across the decision windows it improved
+  one and slightly worsened the other, failing the sign-consistency requirement of the adoption
+  rule, so under that rule the simpler design stands.
+  The dashboard now carries the finding instead. A SKU whose demand is falling gets a callout
+  above the order card giving its recent weekly rate, the ratio against its longer average, the
+  same figure carried flat across the forecast horizon, and the model's number beside it, so
+  the size of the disagreement is visible rather than merely asserted. The flat line is drawn
+  on the demand chart for those SKUs only, and the condition appears as a flag on both screens
+  through the existing channel. 58 of 447 SKUs qualify, carrying 5% of forecast units; across
+  them the model forecasts 1.88 times the flat carry.
+  The recommended order quantity is deliberately unchanged and asserted unchanged in the
+  checks. Substituting a different number silently would claim more than the evidence
+  supports, since that substitution was tested and did not meet the bar. The ramp is computed
+  by importing the seasonal factors from `src.ml.seasonal` rather than reimplementing them, so
+  the dashboard's notion of falling demand cannot drift from the model's own feature.
+
+- 2026-07-28: Replaced the detector behind that warning after checking it against the SKU that
+  prompted the whole investigation. It was not flagged, correctly: its collapse was in
+  February, and by July its recent rate and its forecast agree to within 4%, so the model had
+  re-based and there was nothing left to warn about. But testing that exposed the flag as a
+  proxy for the wrong thing. It fired on the shape of past demand, whereas the condition worth
+  warning about is the forecast standing above the rate the SKU sells at now. Measured against
+  the direct comparison, the proxy missed seven SKUs and invented thirteen; the clearest miss
+  sold a quarter of a unit a week against a forecast of 2.7, eleven times over, while its ramp
+  read as rising because the twelve-week average behind it was lower still.
+  The flag is now the direct comparison, with two conditions: the forecast is at least 1.5
+  times the recent four-week rate, and the excess is at least twenty units across the horizon.
+  The second exists because a ratio alone is meaningless at low volume, where a tenfold
+  over-forecast can still amount to nothing anyone should act on. That selects 22 of 447 SKUs
+  carrying 766 units of excess, against 58 under the proxy. SKUs with no recent sales at all
+  have no ratio and qualify on the excess alone, which is the same warning worded differently.
+  The callout now leads with the arithmetic for that SKU, which can be checked against the
+  chart below it, and appeals to the backtest result only when the SKU is also in a falling
+  state, since that is the pattern the result was measured on. Quoting it otherwise would
+  borrow authority the measurement does not give. The ramp is retained as a descriptive column
+  that words the callout but no longer triggers it. The recommended quantity is unchanged and
+  asserted unchanged, as before.
+
+- 2026-07-28: Stopped the dashboard serving forecasts for SKUs the segmentation no longer
+  considers forecastable. Fifteen of the 447 were in that position, with a median of 68% zero
+  weeks against an intermittent threshold of 30%, one of them selling in a single week out of
+  twenty. The cause was that the dashboard read its bucket from the forecast file, where
+  `forward_forecast` writes the literal "smooth" on every row because only smooth SKUs are
+  modelled at all. That column can never disagree with itself, so a SKU demoted since the run
+  was undetectable, and the data-quality check testing for a missing bucket could never fire
+  either. The bucket now comes from the current profile snapshot, demoted SKUs are dropped
+  from the planning table, and the count is kept on the frame rather than printed, because
+  silently shrinking a table is how totals stop reconciling for reasons nobody can find. The
+  gap reopens weekly as SKUs flip, so this is a standing reconciliation rather than a cleanup.
+  The list now covers 432 SKUs and 2,382 recommended units.
+  Recorded as backlog item 2 that the list should eventually cover every SKU, including the
+  roughly 2,900 the model does not forecast. That is not a filter change: coverage demand,
+  safety stock, order quantity, stockout date and reliability are all derived from a forecast
+  those SKUs do not have, so it needs a stated basis of its own, and one that is honest about
+  its accuracy in the way the forecast path is. Otherwise the screen mixes measured numbers
+  with unmeasured ones under the same headings.
+
+- 2026-07-28: Asking why 174 served SKUs had no backtest history turned up a correctness
+  problem in the evaluation harness. Only 21 of them were simply too young at the last cutoff,
+  which was the expected answer. The other 153 had well over a year of calendar history but an
+  active-weeks count of exactly 13, the value the promotion path assigns. When `profile.py`
+  promotes an intermittent SKU to smooth, it rewrites `train_start` to the first of the
+  trailing 13 weeks, which is correct for training, since the earlier intermittent period
+  should not be learned from. But `train_start` is also what `eligible_skus` uses to decide
+  whether a SKU had enough history at a backtest cutoff, and for a promoted SKU that value is
+  not a launch date: it advances with every profiling run while the evaluation windows stay
+  pinned in the past. Measured against the three windows those SKUs show negative history at
+  every one, so they are never scored and never will be. That is 187 of 447 served SKUs, 42%,
+  carrying 14.8% of forecast units and 20% of recommended units.
+  Excluding them is defensible in itself, since grading a promoted SKU on an older window would
+  score a period when it behaved differently. The consequences are what had gone unnoticed: a
+  large minority of what the dashboard serves has never been measured and cannot be, their
+  safety stock falls back to a segment median rather than anything observed about them, and
+  their reliability tier reads as not-yet-measured when it should read as not-measurable. The
+  docstring on `eligible_skus` asserted that `train_start` is a stable per-SKU property, which
+  is how this stayed invisible; the claim is corrected in place. Recorded as backlog item 2,
+  with the fix being to split the field into a stable launch week for eligibility and a
+  separate training start. It is blocked on the same consideration as advancing the snapshot:
+  changing eligibility changes the scored population and re-baselines every recorded number, so
+  it should be paired with another change that forces a re-baseline rather than spending one
+  alone. Also cleared the now-stale first blocker on backlog item 1, since real inventory
+  exists. Separately confirmed the 351 zero-order SKUs are all genuinely covered: supply meets
+  need for every one, 269 mainly through inbound and 82 through stock on hand.
+
+- 2026-07-28: Answered whether promoted SKUs are worth forecasting, and fixed what the answer
+  exposed. Promoted SKUs cannot be scored while they are in that state, but ones promoted
+  earlier were, so re-running the profiler against sales truncated to each backtest cutoff
+  recovers who was promoted at the time and joins them to scores already recorded. No model is
+  refitted. They come in at 0.2397 pooled against 0.1912 for the rest of the short segment,
+  worse in all three windows, distinguishable from sampling noise in one of them. That is a
+  usable forecast, better than the legacy spreadsheet manages on the whole segment, so they
+  are worth forecasting and dropping them would leave a fifth of recommended units with
+  nothing at all. Their median per-SKU error is close to everyone else's, so the pooled gap
+  sits in a few larger promoted SKUs rather than across the cohort.
+  The fix that follows: safety stock for an unmeasured SKU fell back to the segment median of
+  0.199, but the unmeasured population is overwhelmingly promoted SKUs whose measured error is
+  0.24 whenever it can be measured. They were being given a cushion sized by a number now known
+  to be too low for them. The fallback now splits by cohort, identified through the
+  `active_weeks` value the promotion path assigns. Safety stock on those 158 SKUs rises from
+  900 to 1,086 units and 34 recommended quantities move, all upward and by one or two units.
+  The number lives in a named constant with its provenance, and `scripts/promoted_sku_accuracy.py`
+  reproduces it, redirecting the profiler's output directory to a temporary path so that
+  running the analysis cannot overwrite the pinned snapshot the project is measured against.
+  A row now records whether a SKU's error is measured, from the promoted cohort, or from a
+  segment median, so the UI can show provenance rather than a number that looks measured.
+  Worth recording a testing trap: the first before-and-after comparison showed no change at
+  all, because `build_planning_table` is cached and the second call returned the first result.
+  Changing a module constant between calls does not invalidate that cache. The comparison only
+  became truthful after clearing it, and the same mistake would silently pass any future A/B
+  done this way.
+
+- 2026-07-28: Two fixes on the SKU detail page. A clicked SKU sometimes appeared for an instant
+  and then snapped back to the previously viewed one. The cause was that the selectbox had no
+  key and the incoming SKU was applied through `index=`, which supplies a default only while
+  the widget holds no stored state. Streamlit keeps widget state across page navigation, so
+  once the selectbox had been used at all its stored value won and the argument was ignored,
+  which is why the fault appeared intermittently rather than always: it depended on whether
+  that widget had been touched earlier in the session. The incoming SKU is now written to the
+  widget's own key before the widget is built, which is the supported way to move a control
+  that already exists. The stored value is also repaired when it falls outside the served list,
+  which happens when a SKU is demoted between forecast runs while a session is open. Six cases
+  are asserted, including that a manual choice is not re-overridden by a stale URL parameter
+  and that a later link click still works after one.
+  Separately, the plausible-requirement figure was hard to see. It was the middle of three
+  consecutive lines at the same size and opacity, sitting below a caption rather than below the
+  number it qualifies, so it read as more caption. It is now a tinted chip carrying the range at
+  13px in the accent colour of the headline figure, placed directly beneath that figure and
+  before the caption. The note explaining a recommendation above the band, which applies to six
+  SKUs, is kept underneath as its own line.
+
+--- DAILY SUMMARY 2026-07-28 ---
+- Hooked up the real inventory data, replacing the placeholders. Cross-checked it against the
+  system the rest of the business uses and fixed a mislabelled stock column.
+- UI fixes. Product names are clickable, the order figures are readable, and clicking one
+  product no longer shows a different one.
+- Added forecast diagnostics. A view showing how each product's forecast did when it was
+  tested, so a bad score can be investigated instead of just noted.
+- Looked into products the forecast handles badly. Tried a model change, it did not work, so
+  the dashboard warns about them and shows a simple alternative figure instead.
+- Stopped forecasting products that should not be forecast at all, and raised the safety margin
+  on the products we have least data about.
+
+--- SUMMARY PRODUCED 2026-07-28 (covering the 2026-07-28 entries above) ---
+
+- 2026-07-29: Started moving the dashboard into the Commerce Integration application as a Next.js
+  page. Nothing of Streamlit ports: it is a Python UI framework where the interface is the Python,
+  so every widget and layout call has to be rewritten in React. Of the 2,835 lines, the 1,681 that
+  render are discarded and the roughly 740 that compute are not, and those are the expensive part.
+  Rather than porting the order formula to TypeScript, where two implementations would drift with
+  nothing to say which screen was right, the planning logic moved out of `dashboard/lib` into a new
+  `src/planning` package that both hosts import. `dashboard/lib/__init__` re-exports it, so the page
+  scripts read unchanged and `lib.calc is src.planning.calc` holds: one module object, no way to
+  diverge. The three private copies of the Streamlit caching fallback collapsed into one shared
+  `_cache`, which resolves to `st.cache_data` where available and a no-op otherwise, so the package
+  imports with Streamlit absent entirely. One path bug was caught in the move: the inventory
+  snapshot directory was written relative to the module rather than the repo root, and would have
+  silently resolved to `src/data` in the new location.
+  Two FastAPI endpoints follow, `/planning/action-list` and `/planning/sku/{id}`, computing nothing
+  of their own. Verified against the Streamlit screens row for row: 432 rows, 2,426 recommended
+  units, nine numeric columns identical to within 1e-9, five categorical columns identical, flags
+  identical on every row, and the order breakdown and plausible band matching per SKU. The payload
+  is strict JSON with no NaN literals, since pandas nulls would otherwise reach the browser as
+  strings. A demoted SKU returns 404 explaining that segmentation now classes it intermittent
+  rather than the bare "unknown" an unrecognised SKU gets, because the first is a normal outcome
+  the page should explain. Planning parameters are query arguments and demonstrably move the
+  numbers: 2,426 units at an eight-week lead time, 20,344 at sixteen.
+  Recorded prerequisite for deploying this away from the forecasting repo: these endpoints read
+  files, not Postgres. The v11 forward forecast is written only to
+  `data/processed/ml_forward_forecasts.parquet`, while `shipcore.fc_forward_forecasts` still holds
+  the legacy statsforecast output, and inventory arrives as an exported CSV. That is fine while
+  FastAPI runs inside this repo and is the blocker if it ever does not.
+  Decided: Streamlit is retired once the Next.js page reaches parity, so the duplication is
+  temporary by design rather than a permanent second surface.

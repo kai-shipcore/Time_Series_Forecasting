@@ -1962,3 +1962,157 @@ async def chat(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Planning: the action list and the per-SKU detail view.
+#
+# These serve the Next.js planning page. They deliberately compute nothing of
+# their own: every figure comes from src.planning, which the Streamlit dashboard
+# also renders directly. One implementation of the recommended order quantity
+# exists, so the two surfaces cannot disagree, and retiring Streamlit later
+# removes a renderer rather than a calculation.
+#
+# Unlike the endpoints above, these read files rather than Postgres. The v11
+# forward forecast is written to data/processed/ml_forward_forecasts.parquet and
+# never to shipcore.fc_forward_forecasts, which still holds the legacy
+# statsforecast output, and inventory arrives as an exported CSV. That works
+# because this service runs inside the forecasting repo. Moving either of those
+# into the database is the prerequisite for deploying the API away from it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+from src.planning import calc as _plan_calc  # noqa: E402
+from src.planning import data as _plan_data  # noqa: E402
+from src.planning import quality as _plan_quality  # noqa: E402
+
+
+def _planning_params(
+    lead_time_weeks: int,
+    review_period_weeks: int,
+    service_z: float,
+    stockout_horizon_days: int,
+) -> dict:
+    """Merge request overrides onto the defaults, exactly as the sidebar does."""
+    return {
+        **_plan_calc.DEFAULT_PARAMS,
+        "lead_time_weeks": int(lead_time_weeks),
+        "review_period_weeks": int(review_period_weeks),
+        "service_z": float(service_z),
+        "stockout_horizon_days": int(stockout_horizon_days),
+    }
+
+
+def _jsonable(df: pd.DataFrame) -> list[dict]:
+    """Rows as plain JSON. NaN and NaT become null rather than the literals
+    "NaN"/"NaT", which are not valid JSON and which the browser would otherwise
+    receive as strings and render as text."""
+    out = df.copy()
+    for col in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[col]):
+            out[col] = out[col].dt.strftime("%Y-%m-%d")
+    return out.replace({np.nan: None, pd.NaT: None}).to_dict(orient="records")
+
+
+@app.get("/planning/action-list")
+def planning_action_list(
+    lead_time_weeks: int = Query(default=8, ge=1, le=52),
+    review_period_weeks: int = Query(default=1, ge=1, le=13),
+    service_z: float = Query(default=1.0, ge=0.0, le=4.0),
+    stockout_horizon_days: int = Query(default=30, ge=1, le=365),
+):
+    """The action list: one row per forecastable SKU, with the recommended order
+    quantity, its inputs, the priority, the stockout projection and the flags.
+
+    The planning parameters are query arguments because they are the user's to
+    choose: the same table at a 12-week lead time is a different worklist, and
+    the recommendation has to move with them.
+    """
+    params = _planning_params(lead_time_weeks, review_period_weeks, service_z,
+                              stockout_horizon_days)
+    plan = _plan_calc.build_planning_table(params)
+    flags = _plan_quality.flags_by_sku(plan)
+    metrics = _plan_calc.overview_metrics(plan, params)
+
+    rows = _jsonable(plan)
+    for row in rows:
+        row["flags"] = flags.get(str(row["unique_id"]), [])
+
+    snapshot = _plan_data.forecast_snapshot_date()
+    return JSONResponse({
+        "params": params,
+        "metrics": metrics,
+        "rows": rows,
+        "meta": {
+            "sku_count": len(plan),
+            # SKUs the forecast covered that the current profile has since
+            # demoted to intermittent, and which are therefore not in `rows`.
+            # Surfaced so a caller can reconcile against the forecast file
+            # rather than finding the totals quietly short.
+            "demoted_since_forecast": int(plan.attrs.get("demoted_since_forecast", 0)),
+            "trained_through": snapshot.date().isoformat() if snapshot is not None else None,
+            "inventory_is_sample": bool(_plan_data.inventory_is_sample()),
+        },
+    })
+
+
+@app.get("/planning/sku/{sku_id}")
+def planning_sku_detail(
+    sku_id: str,
+    lead_time_weeks: int = Query(default=8, ge=1, le=52),
+    review_period_weeks: int = Query(default=1, ge=1, le=13),
+    service_z: float = Query(default=1.0, ge=0.0, le=4.0),
+    stockout_horizon_days: int = Query(default=30, ge=1, le=365),
+    history_weeks: int = Query(default=26, ge=4, le=260),
+):
+    """Everything the SKU detail view needs in one response: the planning row,
+    the order-quantity breakdown as arithmetic, the plausible band, weekly
+    history and forecast, and the backtest windows with their per-week
+    predictions.
+
+    One endpoint rather than several because the page shows them together and a
+    partial render is worse than a slower one; the client should not have to
+    orchestrate four calls to draw a single screen.
+    """
+    params = _planning_params(lead_time_weeks, review_period_weeks, service_z,
+                              stockout_horizon_days)
+    plan = _plan_calc.build_planning_table(params)
+    match = plan[plan["unique_id"] == sku_id]
+    if match.empty:
+        # Distinguish "not forecastable" from "unknown", because the first is a
+        # normal outcome the page should explain rather than an error.
+        known = sku_id in set(_plan_data.load_forecasts()["unique_id"])
+        raise HTTPException(
+            status_code=404,
+            detail=("SKU is in the forecast run but the current segmentation classes it "
+                    "intermittent, so it has no planning row"
+                    if known else "Unknown SKU"),
+        )
+
+    row = match.iloc[0]
+    breakdown = _plan_calc.order_quantity_breakdown(row, params)
+    low, high = _plan_calc.order_quantity_range(row)
+
+    hist = _plan_data.sku_sales_history(sku_id).tail(history_weeks)[["ds", "y"]]
+    fc = _plan_data.sku_forecast(sku_id)
+    windows = _plan_data.load_ml_accuracy_by_sku()
+    version = _plan_data.load_forecasts()["model_version"].iloc[0] if not fc.empty else None
+    windows = windows[windows["unique_id"] == sku_id]
+    if version is not None and "model_version" in windows.columns:
+        windows = windows[windows["model_version"] == version]
+
+    return JSONResponse({
+        "params": params,
+        "row": _jsonable(match)[0],
+        "flags": _plan_quality.flags_by_sku(plan).get(sku_id, []),
+        "order": {
+            "total": int(row["recommended_order_qty"]),
+            "band": {"low": int(low), "high": int(high)},
+            "breakdown": _jsonable(breakdown),
+        },
+        "history": _jsonable(hist),
+        "forecast": _jsonable(fc),
+        "backtest": {
+            "windows": _jsonable(windows.sort_values("cutoff")),
+            "weekly": _jsonable(_plan_data.sku_backtest_weekly(sku_id, version)),
+        },
+    })

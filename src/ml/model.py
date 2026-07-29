@@ -253,6 +253,7 @@ class RatioLGBM:
         balance: float = 0.0,
         uids: set | None = None,
         patience: int = 100,
+        params: dict | None = None,
     ):
         # `features` is deliberately required, with no default. It used to
         # default to the current version's feature list, which meant an older
@@ -272,6 +273,13 @@ class RatioLGBM:
         # binding constraint in the first tuning attempt: every configuration
         # halted at 30-46 trees regardless of num_leaves or min_child_samples.
         self.patience = patience
+        # Per-instance LightGBM overrides, merged over the class defaults. The
+        # class attribute is left untouched so an override cannot leak into
+        # another version through shared mutable state: PARAMS is a dict, and
+        # mutating it in place would silently re-baseline every earlier result.
+        # Default None reproduces PARAMS exactly, so existing versions are
+        # unaffected.
+        self.params = {**self.PARAMS, **(params or {})}
         self.model = None
         self.clip_hi = None
 
@@ -324,7 +332,7 @@ class RatioLGBM:
         is_val = mat["unique_id"].isin(val_uids)
         tr, va = mat[~is_val], mat[is_val]
 
-        self.model = lgb.LGBMRegressor(**self.PARAMS)
+        self.model = lgb.LGBMRegressor(**self.params)
         self.model.fit(
             tr[self.features], tr["ratio"],
             sample_weight=tr["weight"],

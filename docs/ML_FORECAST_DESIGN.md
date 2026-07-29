@@ -99,10 +99,10 @@ how demand ramps up after launch) transfer to others. This is the main structura
 a machine-learning model has over the current per-SKU approach, given that no individual
 SKU has much history.
 
-The longer-term motivation is extensibility. A feature-based model can absorb external
-signals such as Google Analytics (GA4) site traffic, stockout records, and marketplace
-analytics, which per-SKU statistical models structurally cannot use. The near-term
-deliverable is a baseline model built from sales history alone; external data is added
+The longer-term motivation is extensibility. A feature-based model can absorb a corrected
+demand signal that per-SKU statistical models cannot easily use, in particular a sales
+record cleaned for stockouts and preorders (Section 5.3). The near-term deliverable is a
+baseline model built from the sales history as recorded; the correction work is layered on
 only after this baseline has demonstrated measurable value.
 
 **Architecture stance.** A central design decision is how much of the forecasting problem
@@ -124,8 +124,8 @@ network learned only the residual dynamics, from data that had first been normal
 deseasonalized. Notably, entries that attempted to learn all structure directly from the
 raw series performed poorly.
 
-Our dataset resembles M5 in problem type (retail unit demand for related SKUs, with
-external covariates planned) but resembles M4 in history depth, since two years of data
+Our dataset resembles M5 in problem type (retail unit demand for related SKUs) but
+resembles M4 in history depth, since two years of data
 contain only two observations of each seasonal event. We therefore follow the M4
 architecture: per-SKU scale and seasonality are imposed structurally, the latter using the
 existing hand-set monthly multipliers, and LightGBM is limited to learning the residual
@@ -135,10 +135,11 @@ given calendar-derived features and allowed to learn seasonality itself, it repr
 behavior of the specific months it had seen rather than a general seasonal pattern, and
 overforecast the post-holiday trough by +123% (see the Decision Log, Section 4.9).
 
-LightGBM is retained as the machine-learning component for two reasons. First, the planned
-external data sources (GA4 traffic, stockout records, marketplace analytics) enter the
-model as tabular features, and gradient-boosted trees are the strongest established method
-for learning from tabular features. Second, the cost of failure is low: the statistical
+LightGBM is retained as the machine-learning component for two reasons. First, additional
+inputs such as a stockout- and preorder-corrected demand target, together with further
+sales-derived features, enter the model as tabular inputs, and gradient-boosted trees are
+the strongest established method for learning from tabular features. Second, the cost of
+failure is low: the statistical
 prototype remains the proposed replacement for V1 unless the machine-learning model
 demonstrably outperforms it.
 
@@ -239,6 +240,18 @@ the existing ingestion pipeline:
   convention: each week is labeled by the Monday on which it ends, so a label of
   2026-07-13 refers to the week ending Monday, July 13. The data forms a complete grid:
   every SKU has a row for every week, with zero filled in for weeks without sales.
+
+  **What the target contains.** The source table classifies each order line by `order_type`,
+  with four values (`sales`, `preorder`, `ttm`, `ttm_preorder`), derived upstream from
+  boolean `is_preorder` and `is_ttm` columns rather than from parsing tags. `src/ingest.py`
+  selects `order_date`, `link_master_sku` and `link_qty` with no restriction on that column,
+  so `y` is the sum of all four types, attributed to the week the order was placed rather
+  than the week it shipped. `src/v1.py` treats preorder the same way by construction, its
+  final window being 30 days of `order_type = 'preorder'` at weight 0.10 added to the sales
+  windows. This is stated here because it is a property of the training target that is easy
+  to assume otherwise; it also answers the prerequisite recorded against the preorder
+  correction in Section 5.3 and Section 5.4 item 6, both of which were waiting on whether
+  preorders were flagged at all and whether the series keyed on order or ship date.
 - **`data/processed/sku_profiles.csv`**: each SKU's segment classification (bucket,
   history length, training start date), produced by the profiling stage.
 
@@ -366,6 +379,20 @@ Rules of practice:
 - Backlog: run the statistical prototype's models through this same harness so the
   smooth/long comparison in Section 1.6 uses the same evaluation code as every other
   result in this project.
+
+Three cautions apply to any analysis that inspects the model's features or its predicted
+ratios directly, rather than going through the scorer. Each produced a wrong reading before
+being caught, during the v14 diagnosis:
+
+1. The trajectory features are computed on the deseasonalized series (`y_feat`), so an
+   analysis of `ramp_4_12` or the recent-level ratios must deseasonalize too. Bucketing on
+   raw sales gives a different and misleading picture.
+2. The model's output is `ratio x level x factor`, so recovering the ratio it actually
+   predicted means dividing by both the level and the target week's seasonal factor, not by
+   a raw trailing mean.
+3. Anchors with unusual feature values are often concentrated in one window, so pooling
+   windows can make a window effect look like a feature effect. Read such comparisons within
+   a window, or state the confound.
 
 ## 3. Current Model Specification
 
@@ -956,7 +983,7 @@ structural baseline are invariant to hyperparameters: 81 configurations move the
 0.001. That relocates the problem definitively. It is not capacity, regularisation, or
 early stopping; it is the growth drift of Section 4.18, and it lives in the features or the
 target, not the fit. The next candidates are therefore a turning-point feature and the
-external signals of Section 5.3, not further tuning.
+corrected demand target of Section 5.3, not further tuning.
 
 ### 4.27 Adopted: hybrid model and the elevation feature (v11)
 
@@ -1025,23 +1052,28 @@ model changes around them.
 
 | Candidate | Hypothesis |
 |---|---|
-| Ramp ratio (4-week average ÷ 12-week average) | Recent acceleration persists into the near future; directly targets WA12's inability to see growth. |
+| ~~Ramp ratio (4-week average ÷ 12-week average)~~ | **Not a candidate: already in the model.** `ramp_4_12` has been in `FEATURES_V1` since v1, which is the feature set the shared model serves short SKUs with. This row was stale and is retained struck through so the error is not repeated. Its behaviour is analysed in the v14 version-log entry: the feature works at short lead and its influence decays with the horizon. |
 | Recent-level ratios (last week ÷ 12-week average, and similar lags) | The most recent weeks carry the most information about next week, especially at short leads. |
 | SKU age (weeks since first sale) | Young SKUs are systematically in ramp-up; their dynamics differ from mature SKUs. Raw age rejected (Section 4.28): a monotonic feature extrapolates badly at the prediction boundary. Retest only with a bounded encoding. |
 | Demand level (log of 12-week average) | Larger SKUs have steadier demand; corrections should shrink for small, noisy SKUs. |
 | Volatility (rolling standard deviation ÷ mean) | For erratic SKUs the model should stay close to the baseline; for steady SKUs it can act on smaller signals. |
 | Zero-recency (weeks since last zero week, recent zero count) | Recent zeros signal dormancy or supply gaps; expected demand should discount accordingly. |
 | Product-type attributes (parsed from SKU codes) | Different product families (seat covers versus car covers) have different demand dynamics; lets patterns transfer within families. |
-| Channel mix (share of FBA versus web sales per SKU) | Channel composition affects volatility and growth behavior; also preparation for channel-specific external data. |
+| Channel mix (share of FBA versus web sales per SKU) | Channel composition affects volatility and growth behavior. |
 | Empirically re-estimated seasonal multipliers, shrunk toward the hand-set values | The hand-set multipliers are priors, not measurements; pooling all SKUs may support better estimates for well-observed months. Applies inside the structural mechanism (Section 4.10), not as model features. |
 
-### 5.3 Feature candidates pending external data
+### 5.3 Data-quality corrections pending source data
 
-| Candidate | Hypothesis | Prerequisite |
+These are corrections to the recorded demand series itself, not new model features. Both fix
+weeks where the recorded units do not reflect true demand, so both improve the training
+target for every method, the statistical prototype included, and together they are the
+primary planned extension to the model. The scope of this project is the sales record and
+these corrections to it; no third-party feeds are in scope.
+
+| Correction | Rationale | Prerequisite |
 |---|---|---|
-| GA4 traffic signals (lagged product views, sessions, add-to-carts) | Site traffic leads sales by days to weeks, providing a leading indicator the sales history cannot contain. Only lagged values are usable, because future traffic is unknown at forecast time. | GA4-to-BigQuery export being set up; a SKU-to-GA4-item mapping must be built. |
-| Stockout correction (per-week in-stock fraction) | Recorded sales understate true demand during stockouts. The first use is cleaning the training target, not adding a feature. Likely improves the statistical prototype too. | Stockout dates per SKU (promised, not yet available). |
-| Marketplace analytics (Amazon, eBay, Walmart) | Equivalent leading indicators for the roughly 27% of demand GA4 cannot see, FBA especially. | Data access being investigated. |
+| Stockout correction (per-week in-stock fraction) | Recorded sales understate true demand during stockouts, so any week with a stockout trains the model on an artificially low number. The first use is cleaning the training target, not adding a feature. | Stockout dates per SKU (promised, not yet available). |
+| Preorder correction (attribute demand to the fulfilment week) | A preorder books demand when the order is placed but ships weeks or months later. If the weekly series is keyed on order date, the demand lands in the wrong week: an artificial spike at order time and a gap at fulfilment. This is most damaging for newly launched SKUs, whose launch preorders can dominate their short history. | Partly resolved (Section 2.1). Preorders are flagged as `order_type` in the source table and the series is keyed on order date, so excluding or down-weighting preorder rows can be tested now. Attributing demand to the fulfilment week still needs a source recording the intended fulfilment date. |
 
 ### 5.4 Process backlog
 
@@ -1056,18 +1088,18 @@ model changes around them.
    `compare_v1.load_raw`; export scripts exist for the forecast tables).
 5. Correct the internal project documentation where it describes `fc_forecast_history`
    with a schema the real table does not have.
-6. Check how preorders are recorded and correct for them. A preorder books demand when the
-   order is placed but ships weeks or months later, so if the weekly series is built on
-   order date the demand lands in the wrong weeks: an artificial spike at order time and a
-   gap at fulfilment. This corrupts every derived quantity at once, since levels, ramp,
-   elevation, and the seasonal round-trip are all built from the weekly series, and it
-   would be most damaging for newly launched SKUs, whose launch preorders can dominate
-   their short history. First establish whether the ingest keys demand off order date or
-   ship date (inspect `orders_raw` and the velocity snapshot), and whether preorders are
-   flagged at all. If they land on order date, the fix is to attribute preorder demand to
-   the intended fulfilment week, or to exclude the preorder window from training, in the
-   same spirit as the stockout target-cleaning in Section 5.3. This is a data-integrity
-   correction, not a model feature.
+6. Correct for preorders in the weekly series. The recording question is now answered
+   (Section 2.1): preorders are flagged as `order_type` in
+   `fc_velocity_link_snapshot_forecast`, `src/ingest.py` does not filter on it, and demand
+   is keyed on order date. Preorder demand therefore does land in the week the order was
+   placed, giving an artificial spike at order time and a gap at fulfilment. This corrupts
+   every derived quantity at once, since levels, ramp, elevation, and the seasonal
+   round-trip are all built from the weekly series, and it is most damaging for newly
+   launched SKUs, whose launch preorders can dominate their short history. Because the flag
+   is available per row, two treatments are testable immediately: exclude preorder rows from
+   training, or down-weight them. Attributing them to the intended fulfilment week remains
+   blocked on a source that records that date. This is a data-integrity correction, not a
+   model feature.
 
 Completed items are recorded in the Decision Log: stratified internal validation
 (Section 4.13) and pinned evaluation windows (Section 4.14).
@@ -1091,8 +1123,8 @@ Completed items are recorded in the Decision Log: stratified internal validation
 6. Short-SKU seasonality in Q4: the adopted design applies no seasonal adjustment to
    short SKUs (Section 4.17), which means no holiday uplift for them. The Q4 reference
    window weakly suggested an uplift would help, but it could not be measured reliably on
-   14 SKUs. Revisit before Q4 2026, ideally once GA4 traffic signals are available as a
-   leading indicator of the holiday ramp. The production system faces the same question.
+   14 SKUs. Revisit before Q4 2026, once a third holiday season and the corrected demand
+   target are available. The production system faces the same question.
 7. Regime change in the holiday period. The company began running late-November to
    mid-December promotions after December 2024, so the training data spans two different
    seasonal regimes and the older one is not representative of the future. This affects
@@ -1613,7 +1645,8 @@ problem. Experiment: `scripts/ml_15_lgbm_v8.py`.
 
 **Recorded in advance:** if this fails the same way every segment-differentiated attempt
 has failed, the Dec-Feb long cell should be accepted as a limitation of two years of data
-rather than pursued further, and effort moved to hyperparameters and external signals.
+rather than pursued further, and effort moved to hyperparameters and the corrected demand
+target (stockouts and preorders).
 
 **Status: all three criteria met. First version to do so. Final test not yet run.**
 
@@ -1722,7 +1755,7 @@ hyperparameters found across 81 configurations move them by under 0.001. The Dec
 is therefore not a regularisation problem. It is the growth-drift mechanism of Section 4.18,
 the model learning ratios that rise with lead, which is correct on average and wrong
 exactly when demand contracts after the holidays. Closing it needs a feature that
-anticipates the turn or the external signals of Section 5.3, not tuning. The current
+anticipates the turn or the corrected demand target of Section 5.3, not tuning. The current
 hyperparameters, `min_child_samples=200` included, are retained. Experiment:
 `scripts/ml_18_tune_wide.py`, verified by `scripts/ml_19_tune_verify.py`.
 
@@ -1894,3 +1927,111 @@ the long model) improved on v9, and only for the decline it targets. Age, accele
 per-segment weighting all failed; the model is at or near the information ceiling of the
 sales series, and further error reduction needs the external leading indicators of Section
 5.3 or the target-cleaning of preorders and stockouts.
+
+### v14 (July 2026) — min_child_samples for the collapsing tail
+
+`min_child_samples` lowered from 200 in the shared model, which serves short SKUs. Values
+tested: 100, 50, 20, against the v11 baseline of 200. No feature changes and no change to
+the dedicated long model, so only short predictions can move.
+
+**The observation this comes from.** Short SKUs whose demand has already collapsed before
+the cutoff are forecast to recover. Grouping short SKU-anchors by deseasonalized
+`ramp_4_12` (4-week over 12-week mean) and comparing the model's predicted ratio with the
+realised ratio, on the pinned snapshot:
+
+| ramp at cutoff | n | lead 1 | lead 4 | lead 7 | lead 10 |
+|---|---|---|---|---|---|
+| collapsed < 0.4 | 12 | 0.88 / 0.49 | 1.02 / 0.52 | 1.30 / 0.36 | 1.36 / 0.52 |
+| falling 0.4-0.7 | 12 | 0.90 / 0.93 | 1.03 / 0.69 | 1.31 / 0.62 | 1.33 / 0.73 |
+| flat 0.7-1.1 | 125 | 1.04 / 1.17 | 1.06 / 1.14 | 1.10 / 0.95 | 1.11 / 0.88 |
+| rising > 1.1 | 194 | 1.31 / 1.54 | 1.31 / 1.25 | 1.31 / 1.10 | 1.36 / 1.49 |
+
+(predicted ratio / actual ratio.) At lead 1 the predictions are ordered correctly by ramp.
+By lead 10 that ordering is gone, all four buckets sit between 1.11 and 1.36, while the
+realised ratios remain ordered. The model reads a collapse at short lead and then discards
+it, reverting to the average short-SKU response, which is a ramp because the population is
+39% rising against 1% collapsing.
+
+**The hypothesis.** This is a resolution limit, not a missing signal. At the Mar-May cutoff
+the collapsed region holds 1,060 of 94,540 training rows, 1.1%. With
+`min_child_samples=200` at most five leaves can describe it, against `num_leaves=31`
+competing across the whole feature space. Lowering the minimum lets the trees carve out the
+region; at 50 it would support about 21 leaves.
+
+**Why Section 4.26 does not already settle this.** That search scored aggregate validation
+loss, which a 1.1% subpopulation cannot move: even a complete fix there would be invisible
+against a 1.24% end-to-end spread. It also recorded that values from 5 to 100 tie globally
+with 200 marginally worse, so lowering the setting is not expected to cost anything in the
+bulk. 4.26's conclusion stands for the aggregate and is silent on the tail.
+
+**Pass criteria, stated before running:**
+1. **Primary, Section 1.5 as usual.** Adoption requires improvement in short pooled WAPE
+   with a consistent sign across the decision windows (Mar-May and Dec-Feb; Oct-Dec is
+   excluded for short per Section 4.16) and a mean improvement of at least 0.01. Long must
+   be identical, which is verified rather than assumed.
+2. **Tail criterion, secondary and not sufficient alone.** Pooled WAPE over the collapsed
+   and falling anchors (deseasonalized ramp < 0.7) must improve by at least 0.05, and the
+   predicted-ratio ordering by ramp bucket must survive to lead 10 rather than collapsing
+   into a single band.
+3. **Guard.** Any significant regression in short on either decision window rejects the
+   value outright, whatever the tail does. A tail fix bought by damaging the other 93% is
+   not an improvement.
+4. If several values pass, the mildest change from 200 wins, since 4.26 found 5 to 100
+   indistinguishable in the bulk and there is no reason to move further than the evidence
+   requires.
+
+**Recorded expectation.** A null result on the primary criterion is likely: the tail is 1.1%
+of rows, so even a large tail improvement may move short pooled WAPE by less than the 0.01
+adoption threshold, and the metric weights by demand, which these low-volume collapsed SKUs
+lack. The honest hope is criterion 2 passing while criterion 1 ties, which under Section 1.5
+is a rejection for adoption. That outcome would still be worth recording, because it would
+locate the problem as a metric-visibility issue rather than a model-capacity one, and
+because the dashboard's per-SKU reliability tiers surface exactly the SKUs that pooled WAPE
+is insensitive to.
+
+**Status: rejected, at every value tested.**
+
+| Pooled WAPE | v11 (200) | mcs=100 | mcs=50 | mcs=20 |
+|---|---|---|---|---|
+| short, Mar-May | 0.1961 | 0.2007 (+0.0046) | 0.1981 (+0.0020) | 0.1967 (+0.0006) |
+| short, Dec-Feb | 0.2000 | 0.1979 (−0.0021) | 0.2009 (+0.0009) | 0.1992 (−0.0008) |
+| short, Oct-Dec (ref) | 0.1783 | 0.1857 (+0.0074) | 0.1900 (+0.0117) | 0.1828 (+0.0045) |
+| long, all three windows | unchanged | identical | identical | identical |
+| tail, short ramp < 0.7 | 1.0854 | 1.1153 (+0.0299) | 1.1085 (+0.0231) | 1.0874 (+0.0020) |
+
+Criterion 1 fails: no consistent sign across the decision windows, with 100 improving
+Dec-Feb while regressing Mar-May and 50 doing the reverse, and every difference an order of
+magnitude below the 0.01 adoption threshold. These are ties. Criterion 2 fails in the
+opposite direction to the hypothesis: the tail was required to improve by 0.05 and instead
+degraded at all three values. Long is identical everywhere, so the control holds and the
+movement is genuinely confined to short. Experiment: `scripts/ml_25_v14_min_child.py`.
+
+**What this settles.** The collapsing tail is not capacity-constrained. The pre-registered
+reasoning was that 1.1% of training rows and a five-leaf ceiling prevented the trees from
+resolving the region; quadrupling that headroom did not help and mildly hurt, so the ceiling
+was never the binding constraint. The model has the ramp feature, has room to split on it,
+and reverts anyway. That relocates the cause to the objective rather than the tree
+structure: under `regression_l1` with `sample_weight = level` (Section 4.6), a leaf covering
+collapsed SKUs holds mostly low-volume anchors whose contribution to the loss is small
+however finely the region is partitioned. Finer partitioning of a lightly weighted region
+changes little, and costs some variance, which is what the small consistent regressions look
+like.
+
+This is an independent confirmation of Section 4.26 on a subpopulation that section's
+aggregate scoring could not have detected, so it strengthens that conclusion rather than
+qualifying it. Hyperparameters are now settled for both the bulk and the tail.
+
+**The measurement point, which outlives the experiment.** Tail pooled WAPE is 1.0854, above
+100% error, while short pooled WAPE is 0.196. Both are correct: the metric weights by units
+and these SKUs carry almost none. Pooled WAPE is the right metric for the inventory decision
+it serves and cannot be the instrument for this problem, because a subpopulation that is
+1.1% of rows and a smaller share of units cannot move it by the 0.01 the adoption rule
+requires. Any future attempt at the collapsing tail needs a stated per-segment or per-SKU
+criterion agreed in advance, as criterion 2 was here. The dashboard's per-SKU reliability
+tiers already surface these SKUs, which is the appropriate place for them to be visible.
+
+**Remaining candidates, none tested.** Down-weighting or excluding preorder rows from
+training (Section 2.1, now unblocked); the stockout correction of Section 5.3, since a
+collapse that is really a stockout is a censored observation rather than a demand signal;
+and a demand-weighting change, which is the mechanism this experiment implicates but is a
+change to the metric's own definition of importance and should not be made casually.
