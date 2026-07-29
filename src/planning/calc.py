@@ -373,6 +373,36 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     df["stockout_soon"] = df["days_to_stockout"] <= horizon
     df["best_seller_at_risk"] = df["best_seller"] & df["stockout_soon"]
 
+    # ----- Stock running out before the replacement lands ---------------------
+    # Two columns on this table are computed on assumptions that contradict each
+    # other. days_to_stockout ignores inbound entirely; the recommended quantity
+    # credits it as though it were already on the shelf. So a SKU can show
+    # "out in 12 days" beside "order 0" while a container is 40 days away, and
+    # nothing on the row explains the 28 days in between.
+    #
+    # The order quantity is not wrong. With an 8-week lead time a purchase order
+    # placed today lands later than a container already booked, so ordering more
+    # cannot close the gap. What is wrong is saying nothing: this is a service
+    # failure the data can already see, and the action it calls for is expediting
+    # or reallocating, not buying.
+    eta = pd.to_datetime(df.get("inbound_eta"), errors="coerce")
+    df["days_to_inbound"] = (eta - today).dt.days.astype("float64")
+    finite_stockout = np.isfinite(df["days_to_stockout"])
+    df["supply_gap_days"] = np.where(
+        finite_stockout & df["days_to_inbound"].notna()
+        & (df["days_to_inbound"] > df["days_to_stockout"]),
+        df["days_to_inbound"] - df["days_to_stockout"],
+        np.nan,
+    )
+    df["has_supply_gap"] = df["supply_gap_days"].notna()
+    # Whether ordering could actually help. A gap shorter than the lead time
+    # cannot be closed by a new order, which is the difference between "buy
+    # more" and "expedite what is already coming".
+    lead_days = lead_weeks * 7
+    df["gap_closable_by_order"] = (
+        df["has_supply_gap"] & (df["days_to_inbound"] > lead_days)
+    )
+
     # kind="mergesort": stable, so SKUs tied on both keys (common -- most
     # Routine/Preorder SKUs currently share recommended_order_qty=0) keep a
     # fixed relative order instead of shuffling under quicksort's tie-breaking.
@@ -396,6 +426,15 @@ def overview_metrics(plan: pd.DataFrame, params: dict | None = None) -> dict:
         "best_sellers_at_risk": int(plan["best_seller_at_risk"].sum()),
         "total_recommended_order_qty": int(plan["recommended_order_qty"].sum()),
         "stockout_within_horizon": int((plan["days_to_stockout"] <= horizon).sum()),
+        # SKUs that run dry before their booked container lands, and the demand
+        # that falls into those windows. Reported separately from the stockout
+        # count because the action differs: these already have stock coming and
+        # cannot be helped by ordering more.
+        "supply_gap": int(plan.get("has_supply_gap", pd.Series(dtype=bool)).sum()),
+        "supply_gap_backlog": int(
+            plan.loc[plan.get("has_supply_gap", pd.Series(dtype=bool)).fillna(False),
+                     "preorder_backlog"].sum()
+        ) if "has_supply_gap" in plan.columns else 0,
         "horizon_days": int(horizon),
     }
 

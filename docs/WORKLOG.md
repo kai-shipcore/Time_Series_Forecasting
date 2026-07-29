@@ -1155,3 +1155,81 @@ detail lives in the design document and codebase guide, not here.
   forecast-derived column reaches the non-forecast payload, that cover is null rather than
   infinite wherever nothing has sold, and that a missing inventory record stays null rather than
   becoming a zero.
+
+- 2026-07-29: Closed the remaining gaps against the Streamlit screens, and finally built the
+  supply-gap warning that had been outstanding since it was measured.
+  The planning table now computes days until inbound against days to stockout and flags the SKUs
+  that run dry in between: 185 of them, carrying 3,099 units of backlog already owed. Two columns
+  on that table were computed on assumptions that contradict each other, and nothing said so.
+  The stockout date ignores inbound entirely while the order quantity credits it as though it
+  were already on the shelf, so a row could read "out in 12 days" beside "order 0" with a
+  container 40 days away and no account of the days in between. The order quantity is not wrong:
+  with an eight-week lead time a purchase order placed today lands after a container already
+  booked, and only 1 of the 185 gaps could be beaten by ordering. What was wrong was the silence.
+  The stockout cell now shows both dates, there is a chip and filter for the population, and the
+  SKU detail view explains that the action is to expedite or reallocate rather than to buy.
+  Also added the portfolio demand chart, the reliability legend, the data-quality summary line
+  and the weekly figures table. The chart needed an endpoint of its own, taking the SKU list by
+  POST rather than in a query string, because it follows the filters and that list runs to
+  hundreds of identifiers. Aggregating server-side is not a convenience either: the client holds
+  one row per SKU with no weekly series in it, and shipping four hundred SKUs of history to the
+  browser to sum it there would be far more data than the answer. The summary line and the legend
+  count what is on screen rather than the whole list, since a count that ignores the filters
+  describes a different population from the rows beneath it.
+  One bug found in the checks, the same shape as the partition failure earlier in the day: with
+  no SKU list the trend endpoint defaulted to the forecast file rather than the planning table,
+  which would have drawn a chart over 447 SKUs above a table showing 432. The client always sends
+  its filtered list, so it would only have bitten a direct call, which is exactly when nobody is
+  watching for the discrepancy. Defaulting to what the other surface actually shows fixes it, and
+  the check now asserts the two agree.
+
+- 2026-07-29: Started storing what the model predicts, because until now every weekly run threw
+  the evidence away. `ml_forward_forecasts.parquet` holds one run and is overwritten, which
+  answers "what is the forecast" and cannot answer "is the model getting better". A new
+  `src/ml/serving/history.py` appends each run instead, keyed by model version, forecast date,
+  SKU and target week, with a re-run in the same week replacing its own rows rather than
+  duplicating them. Deliberately not named after a version: the version is a column, so a new
+  one coexists with its predecessors and comparing them is a query rather than an excavation.
+  Alongside it, functions that join stored predictions to actuals as the weeks close, and pooled
+  WAPE per run per segment, which is what a performance-over-time view will read. Neither knows
+  which version is current, so a new model is scored the moment its first run lands.
+  One judgement worth recording. Scoring excludes the most recent settled week as well as weeks
+  still in progress. The design doc notes late-registering orders make the tail unreliable for
+  training; here it matters more, because scoring a week whose sales are still arriving reads as
+  over-forecasting, and the newest run is always the one most affected. A performance chart would
+  have shown a downward slope that was an artefact of settlement rather than a change in the
+  model. Training can afford the last week since one noisy anchor among thousands changes little;
+  a run scored on one unsettled week is scored on nothing else.
+  Verified against real data: appending twice replaces rather than duplicates, a second model
+  version coexists rather than overwriting, a run whose horizon has settled scores across leads 1
+  to 13, and the current run correctly scores nothing because its horizon has not started. Also
+  pointed the one remaining hardcoded version default at CURRENT_BEST, so nothing outside the
+  version's own class definition names v11.
+  Recorded prerequisite, now with a deadline attached: the final test window is already evaluable,
+  its cutoff being 2026-05-04 with actuals complete to 2026-07-27. But 163 of the 447 served SKUs
+  are ineligible at that cutoff and 160 of those are the promoted ones, so the final test would
+  report on 284 SKUs rather than all of them. Backlog item 2, the train_start split, gates the
+  coverage of the very test it was meant to inform.
+
+2026-07-29  Built the Forecast Validation page in Commerce_Integration.
+  Two new FastAPI endpoints. /planning/validation returns the model against the V1 spreadsheet
+  baseline as a segment by window grid with per-cell winners and a demand-weighted headline, the
+  coverage the comparison rests on, per-SKU best and worst cases, the performance of stored runs
+  as their weeks close, and the state of the final test window. /planning/demand-patterns returns
+  weekly demand, concentration at the top 5, 10, 20 and 50 percent of SKUs, and the segment mix.
+  Neither endpoint names a model version; both read whatever versions are present.
+  The page reports the current position plainly: 0.1596 against 0.2591 pooled WAPE, a 38 percent
+  reduction, ahead in 7 of 9 cells. It also states the two cells the spreadsheet still wins, both
+  Oct-Dec, and says on the page that only 258 of the 447 served SKUs are in those figures, with
+  the reason, so the headline cannot be read as covering the whole catalogue.
+  Weekly demand is split into the SKUs the model forecasts and the intermittent tail it does not.
+  That split surfaced something not previously looked at: the tail was 6 percent of weekly volume
+  a year ago and is 23 percent now. It is 2,962 SKUs and 48,519 units over the last 52 weeks,
+  carrying no forecast at all.
+  Two sections are empty by design and say so in place rather than being hidden: performance over
+  time, which fills as runs accumulate and weeks settle, and the final test window, which stays
+  quarantined until model development finishes.
+  Fixed a naming collision found during verification. evaluate.py reports bias_pct in percentage
+  points; the new history module reported the same field as a fraction. Both feed one API payload,
+  so the same name meant two things a hundredfold apart. History now matches evaluate.py, verified
+  by scoring a synthetic run built to be exactly 10 percent over.

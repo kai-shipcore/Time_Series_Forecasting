@@ -9,7 +9,8 @@ Examples:
   .venv/bin/python scripts/ml_forward_forecast.py --snapshot live   # data/processed
 
 Outputs:
-  data/processed/ml_forward_forecasts.parquet   the forecast table
+  data/processed/ml_forward_forecasts.parquet   the forecast table (overwritten)
+  data/processed/ml_forecast_history.parquet    every run, appended
   outputs/models/<version>_<cutoff>.joblib       the fitted model (+ .json meta)
   data/processed/v1_forward_forecasts.parquet    V1, same grid, separate artifact
 """
@@ -22,6 +23,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.ml.serving.forecast import forward_forecast  # noqa: E402
+from src.ml.serving.history import append as append_history  # noqa: E402
 from src.ml.serving.models import CURRENT_BEST  # noqa: E402
 from src.ml.serving.persist import save_model  # noqa: E402
 from src.ml.serving.v1 import v1_forward  # noqa: E402
@@ -38,6 +40,8 @@ def main() -> None:
     ap.add_argument("--out", default="data/processed/ml_forward_forecasts.parquet")
     ap.add_argument("--models-dir", default="outputs/models")
     ap.add_argument("--no-v1", action="store_true", help="skip the V1 comparison forecast")
+    ap.add_argument("--no-history", action="store_true",
+                    help="skip appending this run to the accumulating forecast history")
     ap.add_argument("--v1-out", default="data/processed/v1_forward_forecasts.parquet")
     ap.add_argument(
         "--v1-refresh", action=argparse.BooleanOptionalAction, default=True,
@@ -72,6 +76,21 @@ def main() -> None:
     print(f"rows            {len(fc):,}")
     print(f"wrote           {out.relative_to(ROOT)}")
     print(f"saved model     {model_path.relative_to(ROOT)}")
+
+    # Append to the accumulating record as well as overwriting the current-run
+    # file. The current file answers "what is the forecast"; the history answers
+    # "is the model getting better", and until now every weekly run destroyed
+    # the evidence needed for the second question. Re-running in the same week
+    # replaces its own rows rather than duplicating them.
+    if not args.no_history:
+        try:
+            summary = append_history(fc)
+            print(f"history         +{summary['added']:,} rows "
+                  f"({summary['replaced']:,} replaced), {summary['total']:,} total "
+                  f"across {summary['runs']} run(s)")
+        except Exception as e:  # noqa: BLE001 — history must not fail a good forecast
+            print(f"history FAILED  {type(e).__name__}: {e}")
+            print("                (the forecast above is written and unaffected)")
 
     # V1 is a separate concern from the model forecast above, which has already
     # been trained and written: a V1 failure (e.g. DB unreachable with no cache)
