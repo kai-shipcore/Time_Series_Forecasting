@@ -20,7 +20,15 @@ from openai import OpenAI
 MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 MAX_TOOL_ITERATIONS = 8
 MAX_TOOL_RESULT_CHARS = 20_000
-API_BASE = "http://127.0.0.1:8001"
+# Where the chat's tool loop calls back into this same service. It has to be an
+# address this process can reach, and it has to be the port this process is
+# actually serving, which is not knowable from inside the module: uvicorn's port
+# is chosen on the command line. Hardcoded it was correct only where the service
+# happened to run on 8001, and silently wrong everywhere else, because a failed
+# tool call surfaces as the assistant answering without data rather than as an
+# error. Configurable, with the historical value as the default so nothing
+# changes where 8001 is still right.
+API_BASE = os.getenv("FORECAST_SELF_URL", "http://127.0.0.1:8001").rstrip("/")
 
 _client: OpenAI | None = None
 

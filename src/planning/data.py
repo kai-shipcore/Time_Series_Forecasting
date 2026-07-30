@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.planning import inventory
 from src.planning._cache import cache as _cache
 
 # ---------------------------------------------------------------------------
@@ -169,6 +170,71 @@ def load_backtest_weekly() -> pd.DataFrame:
     df = pd.read_csv(BACKTEST_WEEKLY)
     df["ds"] = pd.to_datetime(df["ds"])
     return df
+
+
+# ---------------------------------------------------------------------------
+# Readiness.
+# ---------------------------------------------------------------------------
+#: Files the planning endpoints read, and whether their absence is fatal.
+#:
+#: ``data/processed`` and ``outputs/reports`` are both gitignored, so a fresh
+#: clone has the code and none of the data. The server then starts, answers
+#: /health, and raises on every real endpoint, which reaches the browser as a
+#: bare "Internal Server Error" and sends the reader looking for a bug in the
+#: application. Naming the missing file is the difference between a five minute
+#: fix and an afternoon.
+_DATA_FILES: list[tuple[str, Path, bool, str]] = [
+    ("forecast", FORWARD_FORECAST, True,
+     "scripts/ml_forward_forecast.py"),
+    ("sales", SALES_CLEAN_PARQUET, True,
+     "the weekly ingest, or scripts/export_forecast_history.py"),
+    ("profiles", SKU_PROFILES, True,
+     "scripts/ml_forward_forecast.py"),
+    ("accuracy", ML_ACCURACY, False,
+     "scripts/ml_evaluate.py"),
+    ("accuracy_by_sku", ML_ACCURACY_BY_SKU, False,
+     "scripts/ml_evaluate.py"),
+    ("backtest_weekly", BACKTEST_WEEKLY, False,
+     "scripts/ml_backtest_weekly.py"),
+    ("v1_forward", V1_FORWARD, False,
+     "scripts/v1_forward.py"),
+    ("inventory", INVENTORY_SNAPSHOT, False,
+     "scripts/export_inventory_snapshot.py"),
+]
+
+
+def readiness() -> dict:
+    """Which data files are present, and whether the service can actually serve.
+
+    Cheap enough to call on every health check: it stats a handful of paths and
+    reads nothing. Sales is satisfied by either the parquet or the CSV, matching
+    what ``_read_sales`` will accept.
+    """
+    files = []
+    missing_required = []
+    for name, path, required, produced_by in _DATA_FILES:
+        exists = path.exists()
+        if name == "sales" and not exists:
+            exists = SALES_CLEAN_CSV.exists()
+        files.append({
+            "name": name,
+            "path": str(path.relative_to(REPO_ROOT)),
+            "exists": exists,
+            "required": required,
+            "produced_by": produced_by,
+        })
+        if required and not exists:
+            missing_required.append(name)
+
+    return {
+        "ready": not missing_required,
+        "missing_required": missing_required,
+        "missing_optional": [
+            f["name"] for f in files if not f["exists"] and not f["required"]
+        ],
+        "files": files,
+        "repo_root": str(REPO_ROOT),
+    }
 
 
 def sku_backtest_weekly(unique_id: str, version: str | None = None) -> pd.DataFrame:
@@ -383,22 +449,66 @@ def _build_sample_inventory() -> pd.DataFrame:
     return df
 
 
-@_cache(show_spinner=False)
+@_cache(show_spinner=False, ttl=300)
 def load_inventory() -> pd.DataFrame:
-    """Return the inventory snapshot.
+    """Return the inventory position, preferring the live database tables.
 
-    Reads dashboard/data/inventory_snapshot.csv if present (real export), otherwise
-    returns a deterministic sample. The ``is_sample`` column marks which case
-    applies so the UI can warn the user.
+    Three sources, tried in order, each a degradation of the one before:
+
+    1. **The databases.** The inventory tables belong to the Commerce
+       Integration application and are refreshed on its schedule, so reading
+       them directly is both fresher than a copy and one fewer thing to
+       remember to run. This is the normal path.
+    2. **The exported CSV**, if the databases are unreachable. Real figures,
+       but as old as the last time someone ran the export script.
+    3. **Generated sample data**, if there is no export either. Coherent enough
+       to develop against and labelled everywhere it is shown.
+
+    The ``source`` column records which applied, and ``is_sample`` is kept as
+    the boolean the UI already warns on. Falling back rather than raising is
+    deliberate: a working copy without credentials should still start.
     """
+    # Scoped to every profiled SKU, not only the forecastable ones. The
+    # non-forecast section of the action list needs stock, backlog and inbound
+    # for the intermittent tail, which is 87% of the SKU count and a fifth of
+    # recent unit volume. Falls back to the forecast SKUs when no profile
+    # snapshot is present, which is the only case where that list is all that
+    # can be known.
+    prof = load_profiles()
+    fc = load_forecasts()
+    if not prof.empty and "unique_id" in prof.columns:
+        skus = sorted(prof["unique_id"].dropna().unique())
+    else:
+        skus = sorted(fc["unique_id"].unique()) if not fc.empty else []
+
+    live = inventory.fetch_cached(skus) if skus else None
+    if live is not None and not live.empty:
+        for col in inventory_columns():
+            if col not in live.columns:
+                live[col] = np.nan
+        live["is_sample"] = False
+        live["source"] = "database"
+        live.attrs.setdefault("snapshot_at", None)
+        return live
+
     if INVENTORY_SNAPSHOT.exists():
         df = pd.read_csv(INVENTORY_SNAPSHOT)
         for col in inventory_columns():
             if col not in df.columns:
                 df[col] = np.nan
         df["is_sample"] = False
+        df["source"] = "export"
         return df
-    return _build_sample_inventory()
+
+    sample = _build_sample_inventory()
+    sample["source"] = "sample"
+    return sample
+
+
+def inventory_source() -> str:
+    """Where the current inventory figures came from: database, export, sample."""
+    inv = load_inventory()
+    return str(inv["source"].iloc[0]) if len(inv) and "source" in inv.columns else "sample"
 
 
 def inventory_is_sample() -> bool:

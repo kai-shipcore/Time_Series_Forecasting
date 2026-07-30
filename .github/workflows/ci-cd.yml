@@ -69,6 +69,13 @@ jobs:
           printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
+      # The deploy owns code. The weekly cron owns data. Nothing owns both.
+      #
+      # data/ and outputs/ are gitignored, so this checkout contains none of
+      # them. Without these excludes, --delete would remove the server's copies
+      # on every deploy and leave the API serving 500s until the next Monday.
+      # rsync protects excluded paths from --delete, so naming them here is both
+      # "do not upload" and "do not destroy".
       - name: Upload release files
         run: |
           rsync -az --delete \
@@ -79,6 +86,9 @@ jobs:
             --exclude ".env" \
             --exclude "__pycache__/" \
             --exclude ".pytest_cache/" \
+            --exclude "data/" \
+            --exclude "outputs/" \
+            --exclude "logs/" \
             ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
       - name: Install dependencies and restart service
@@ -100,7 +110,52 @@ jobs:
           elif command -v systemctl >/dev/null 2>&1 && systemctl --user list-unit-files | grep -q '^coverland-forecast-api\.service'; then
             systemctl --user restart coverland-forecast-api
           else
+            # Loopback, matching the systemd unit in docs/DEPLOYMENT.md. On a
+            # shared box the only client is the Next.js process beside it, and
+            # binding 0.0.0.0 would expose the API to the network for no gain.
             pkill -f 'uvicorn api.main:app' || true
-            nohup .venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
+            nohup .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 > api.log 2>&1 &
+          fi
+          EOF
+
+      # Reports rather than fails. A deploy that lands on a server whose data
+      # has not been pushed yet is expected on the first run, and the fix is a
+      # cron push, not a rollback. But it must be visible here: the failure it
+      # produces otherwise is a 500 on every planning page, which is a long way
+      # from this log.
+      - name: Report data readiness
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          set -uo pipefail
+          for i in $(seq 1 20); do
+            body=$(curl --fail --silent --max-time 5 http://127.0.0.1:8000/health) && break
+            sleep 1
+          done
+
+          if [ -z "${body:-}" ]; then
+            echo "::warning::The API did not answer /health after the restart."
+            exit 0
+          fi
+
+          # Whose answer is this? If another service already holds port 8000,
+          # this unit fails to bind and crash-loops under Restart=always, while
+          # `systemctl restart` still exits 0 and the port still answers. The
+          # deploy would read as green while the code it just shipped is not
+          # running. repo_root settles it: only the service started from this
+          # directory reports this directory.
+          root=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("repo_root") or "")')
+          if [ -n "$root" ] && [ "$root" != "${{ secrets.DEPLOY_PATH }}" ]; then
+            echo "::error::Port 8000 is answered by a service running from ${root}, not ${{ secrets.DEPLOY_PATH }}. The unit deployed here is probably failing to bind. Check: systemctl status coverland-forecast-api"
+            exit 1
+          fi
+
+          ready=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ready"))')
+          if [ "$ready" = "True" ]; then
+            echo "Data readiness: ready."
+          elif [ "$ready" = "None" ]; then
+            echo "::warning::The service answering /health does not report readiness, so it predates this revision. If a restart was expected, it did not take effect."
+          else
+            missing=$(printf '%s' "$body" | python3 -c 'import json,sys; print(", ".join(json.load(sys.stdin).get("missing_required") or []))')
+            echo "::warning::The API is up but has no data to serve. Missing: ${missing:-unknown}. Run scripts/push_data_to_server.sh, or wait for the Monday cron."
           fi
           EOF

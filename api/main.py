@@ -1824,7 +1824,31 @@ def sku_search(q: str = Query(default="", min_length=1)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Liveness, plus whether the data this service reads is actually present.
+
+    Still returns 200 when data is missing. The process is alive and the caller
+    asked whether it is, so answering 503 would conflate "no server" with
+    "server with no data", which are different problems with different fixes.
+    The distinction is in the body, and it is the whole point of the endpoint:
+    data/processed and outputs/reports are gitignored, so a fresh clone raises
+    on every endpoint while looking perfectly healthy here.
+
+    Left outside the token check with the rest of /health, so a client that has
+    the token wrong can still find out the server is up.
+    """
+    try:
+        status = _plan_data.readiness()
+    except Exception as exc:  # pragma: no cover - readiness must never 500
+        return {"status": "ok", "ready": None, "readiness_error": str(exc)}
+
+    return {
+        "status": "ok",
+        "ready": status["ready"],
+        "missing_required": status["missing_required"],
+        "missing_optional": status["missing_optional"],
+        "files": status["files"],
+        "repo_root": status["repo_root"],
+    }
 
 
 @app.post("/run-forecast")
@@ -2044,6 +2068,12 @@ def planning_action_list(
         "rows": rows,
         "meta": {
             "sku_count": len(plan),
+            # How many SKUs the other section holds. Returned here so the page
+            # can label both halves of its toggle without fetching the
+            # non-forecast payload, which is seven times the size and mostly
+            # goes unread. It is the complement of this section by construction,
+            # so the two always sum to the profiled universe.
+            "not_forecast_count": max(int(len(_plan_data.load_profiles())) - len(plan), 0),
             # SKUs the forecast covered that the current profile has since
             # demoted to intermittent, and which are therefore not in `rows`.
             # Surfaced so a caller can reconcile against the forecast file
@@ -2100,10 +2130,28 @@ def planning_sku_detail(
     if version is not None and "model_version" in windows.columns:
         windows = windows[windows["model_version"] == version]
 
+    # The ordered SKU list, so the page can offer a selector and move between
+    # SKUs without a round trip through the list. It is the planning table's own
+    # order, which is the worklist order, so stepping through the selector walks
+    # the same sequence the list shows. Roughly 10KB against a payload that
+    # already carries weekly history, a forecast and every backtest week, so the
+    # alternative of a second request costs more than the bytes.
+    idx = plan.index[plan["unique_id"] == sku_id]
+    position = int(plan.index.get_loc(idx[0])) if len(idx) else -1
+
     return JSONResponse({
         "params": params,
         "row": _jsonable(match)[0],
         "flags": _plan_quality.flags_by_sku(plan).get(sku_id, []),
+        "skus": plan["unique_id"].tolist(),
+        "position": position,
+        "meta": {
+            # Repeated from the action list rather than assumed: a user can land
+            # here from a link without ever seeing that page, and a figure drawn
+            # from sample inventory should say so wherever it appears.
+            "inventory_is_sample": bool(_plan_data.inventory_is_sample()),
+            "inventory_source": _plan_data.inventory_source(),
+        },
         "order": {
             "total": int(row["recommended_order_qty"]),
             "band": {"low": int(low), "high": int(high)},
@@ -2115,4 +2163,315 @@ def planning_sku_detail(
             "windows": _jsonable(windows.sort_values("cutoff")),
             "weekly": _jsonable(_plan_data.sku_backtest_weekly(sku_id, version)),
         },
+    })
+
+
+@app.get("/planning/not-forecast")
+def planning_not_forecast(
+    lead_time_weeks: int = Query(default=8, ge=1, le=52),
+    review_period_weeks: int = Query(default=1, ge=1, le=13),
+    service_z: float = Query(default=1.0, ge=0.0, le=4.0),
+    stockout_horizon_days: int = Query(default=30, ge=1, le=365),
+):
+    """SKUs the model does not forecast: the intermittent tail.
+
+    Roughly 87% of the SKU count and a fifth of recent unit volume. Nothing here
+    is forecast-derived, and the payload deliberately carries no recommended
+    order quantity: what can be stated without a forecast is recent demand, the
+    rate it implies, the stock position, and how long that stock lasts at that
+    rate. The reorder signal is a statement about timing, not a quantity.
+
+    Only `lead_time_weeks` affects the result, through the reorder signal. The
+    other parameters are accepted so a caller can forward the same query string
+    it sends to the action list, rather than having to know which subset applies.
+    """
+    params = _planning_params(lead_time_weeks, review_period_weeks, service_z,
+                              stockout_horizon_days)
+    table = _plan_calc.build_not_forecast_table(params)
+    return JSONResponse({
+        "params": params,
+        "metrics": _plan_calc.not_forecast_metrics(table, params),
+        "rows": _jsonable(table),
+        "meta": {
+            "sku_count": int(len(table)),
+            "window_weeks": _plan_calc.NOT_FORECAST_WEEKS,
+            "inventory_is_sample": bool(_plan_data.inventory_is_sample()),
+        },
+    })
+
+
+class DemandTrendRequest(BaseModel):
+    """SKUs to aggregate over. Omitted or empty means every forecastable SKU."""
+    skus: list[str] | None = None
+    history_weeks: int = 26
+
+
+@app.post("/planning/demand-trend")
+def planning_demand_trend(req: DemandTrendRequest):
+    """Weekly actuals and forward forecast, summed across a set of SKUs.
+
+    POST rather than GET because the caller sends the SKU list its filters
+    produced, which runs to hundreds of identifiers and past what a query string
+    can carry reliably. The alternative, re-implementing the filters server-side,
+    would put the same predicate in two places and let them drift.
+
+    Aggregating server-side is not a convenience: the client holds one row per
+    SKU with no weekly series in it, and shipping 400 SKUs of weekly history to
+    the browser to sum it there would be far more data than the answer.
+    """
+    weeks = max(4, min(int(req.history_weeks), 260))
+    fc = _plan_data.load_forecasts()
+    sales = _plan_data.load_sales()
+    if fc.empty:
+        return JSONResponse({"actual": [], "forecast": [], "v1": [], "sku_count": 0})
+
+    # Default population is the PLANNING TABLE, not the forecast file. Those
+    # differ by the SKUs demoted to intermittent since the run, so defaulting to
+    # the forecast would draw a chart over 447 SKUs above a table showing 432,
+    # and the two would disagree for a reason nothing on screen explains. The
+    # client always sends its filtered list, so this only governs a direct call,
+    # which is exactly when nobody is watching for the discrepancy.
+    ids = (
+        set(req.skus) if req.skus
+        else set(_plan_calc.build_planning_table(_plan_calc.DEFAULT_PARAMS)["unique_id"])
+    )
+    fc = fc[fc["unique_id"].isin(ids)]
+    sales = sales[sales["unique_id"].isin(ids)]
+
+    cutoff = sales["ds"].max() - pd.Timedelta(weeks=weeks) if not sales.empty else None
+    hist = sales[sales["ds"] > cutoff] if cutoff is not None else sales
+    actual = (hist.groupby("ds", as_index=False)["y"].sum()
+              .rename(columns={"y": "value"})) if not hist.empty else pd.DataFrame(columns=["ds", "value"])
+    model = (fc.groupby("ds", as_index=False)["yhat"].sum()
+             .rename(columns={"yhat": "value"})) if not fc.empty else pd.DataFrame(columns=["ds", "value"])
+
+    v1 = _plan_data.load_v1_forward()
+    if not v1.empty:
+        v1 = v1[v1["unique_id"].isin(ids)]
+        v1_series = (v1.groupby("ds", as_index=False)["v1_yhat"].sum()
+                     .rename(columns={"v1_yhat": "value"}))
+        # V1 can cover fewer SKUs than the model. Where it does, the two lines
+        # sum over different populations and are not directly comparable, so the
+        # coverage is returned rather than left for the reader to assume.
+        v1_coverage = float(len(ids & set(v1["unique_id"])) / max(len(ids), 1))
+    else:
+        v1_series, v1_coverage = pd.DataFrame(columns=["ds", "value"]), 0.0
+
+    return JSONResponse({
+        "actual": _jsonable(actual),
+        "forecast": _jsonable(model),
+        "v1": _jsonable(v1_series),
+        "v1_coverage": v1_coverage,
+        "sku_count": len(ids),
+        "history_weeks": weeks,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Forecast validation: is the model better than the spreadsheet it replaces?
+#
+# Distinct from the demand-forecast page, which reports how the current model is
+# doing, and from the action list, which is per-SKU and operational. This answers
+# one question with a decision behind it, and it has to answer it honestly:
+# where the spreadsheet still wins, and what the comparison cannot cover.
+#
+# Built to grow. Nothing here hardcodes a model version or a window count, so the
+# final test window and every future run appear as they arrive.
+# ─────────────────────────────────────────────────────────────────────────────
+
+from config import ML_FINAL_TEST_CUTOFF as _ML_FINAL_TEST_CUTOFF  # noqa: E402
+from src.ml.serving import history as _hist  # noqa: E402
+
+
+def _pooled(g: pd.DataFrame, err="ae", act="y_total") -> float:
+    total = g[act].sum()
+    return float(g[err].sum() / total) if total else float("nan")
+
+
+@app.get("/planning/validation")
+def planning_validation(
+    baseline: str = Query(default="v1", description="version to compare against"),
+    top_n: int = Query(default=15, ge=1, le=100),
+):
+    """Everything the validation page needs, in one response.
+
+    Sections with no evidence yet return empty lists rather than erroring, so the
+    page can show what is coming without pretending it has arrived.
+    """
+    acc_path = ROOT / "outputs/reports/ml_accuracy.csv"
+    sku_path = ROOT / "outputs/reports/ml_accuracy_by_sku.csv"
+    served = _plan_calc  # noqa: F841 — kept for symmetry with the planning endpoints
+
+    from src.ml.serving.models import CURRENT_BEST
+
+    empty = {"grid": [], "headline": None, "versions": [], "windows": []}
+    if not acc_path.exists():
+        comparison = empty
+    else:
+        acc = pd.read_csv(acc_path)
+        versions = sorted(acc["model_version"].unique().tolist())
+        current = CURRENT_BEST if CURRENT_BEST in versions else (versions[-1] if versions else None)
+        rows = []
+        for (segment, window), g in acc.groupby(["segment", "window"]):
+            cell = {"segment": segment, "window": window}
+            for v in versions:
+                sub = g[g["model_version"] == v]
+                cell[v] = float(sub["pooled_wape"].iloc[0]) if len(sub) else None
+                if v == current and len(sub):
+                    cell["n_skus"] = int(sub["n_skus"].iloc[0])
+                    cell["actual_units"] = float(sub["actual_units"].iloc[0])
+                    cell["bias_pct"] = float(sub["bias_pct"].iloc[0])
+            if cell.get(current) is not None and cell.get(baseline) is not None:
+                cell["delta"] = cell[current] - cell[baseline]
+                cell["winner"] = current if cell["delta"] < 0 else baseline
+            rows.append(cell)
+
+        # Unit-weighted, because pooled WAPE is unit-weighted within a cell and
+        # averaging cells would let a small segment count as much as a large one.
+        def weighted(v: str) -> float | None:
+            s = acc[acc["model_version"] == v]
+            s = s[s["segment"] != "TOTAL"]
+            u = s["actual_units"].sum()
+            return float((s["pooled_wape"] * s["actual_units"]).sum() / u) if u else None
+
+        cur_w, base_w = weighted(current), weighted(baseline)
+        comparison = {
+            "grid": rows,
+            "versions": versions,
+            "current": current,
+            "baseline": baseline,
+            "windows": sorted(acc["window"].unique().tolist()),
+            "headline": {
+                "current": cur_w,
+                "baseline": base_w,
+                "improvement": (base_w - cur_w) / base_w if cur_w and base_w else None,
+                "cells_won": sum(1 for r in rows if r.get("winner") == current),
+                "cells_total": sum(1 for r in rows if "winner" in r),
+            } if cur_w and base_w else None,
+        }
+
+    # Coverage: what the comparison can and cannot speak for. The gap is the
+    # promoted SKUs whose training start moves with every profiling run, so they
+    # are ineligible at any fixed cutoff (docs/BACKLOG.md item 2).
+    plan = _plan_calc.build_planning_table(_plan_calc.DEFAULT_PARAMS)
+    scored_ids = set()
+    if sku_path.exists():
+        sku_acc = pd.read_csv(sku_path)
+        scored_ids = set(sku_acc.loc[sku_acc["model_version"] == comparison.get("current"),
+                                     "unique_id"])
+    served_ids = set(plan["unique_id"])
+    coverage = {
+        "served": len(served_ids),
+        "scored": len(served_ids & scored_ids),
+        "unscored": len(served_ids - scored_ids),
+        "share": (len(served_ids & scored_ids) / len(served_ids)) if served_ids else 0.0,
+    }
+
+    # Largest individual wins and losses, so the aggregate can be checked against
+    # real products rather than taken on faith.
+    outliers = {"best": [], "worst": []}
+    if sku_path.exists() and comparison.get("current"):
+        s = pd.read_csv(sku_path)
+        cur = s[s["model_version"] == comparison["current"]]
+        base = s[s["model_version"] == baseline]
+        j = cur.merge(base, on=["unique_id", "window"], suffixes=("_cur", "_base"))
+        j = j[j["y_total_cur"] > 0]
+        if len(j):
+            j["wape_cur"] = j["ae_cur"] / j["y_total_cur"]
+            j["wape_base"] = j["ae_base"] / j["y_total_cur"]
+            j["delta"] = j["wape_cur"] - j["wape_base"]
+            cols = ["unique_id", "window", "y_total_cur", "wape_cur", "wape_base", "delta"]
+            outliers = {
+                "best": _jsonable(j.nsmallest(top_n, "delta")[cols]),
+                "worst": _jsonable(j.nlargest(top_n, "delta")[cols]),
+            }
+
+    # Performance over time, from the accumulating history. Empty until enough
+    # runs have been stored and their weeks have closed.
+    try:
+        perf = _hist.performance_by_run()
+        run_index = _hist.runs()
+    except Exception:
+        perf, run_index = pd.DataFrame(), pd.DataFrame()
+
+    return JSONResponse({
+        "comparison": comparison,
+        "coverage": coverage,
+        "outliers": outliers,
+        "over_time": {
+            "runs": _jsonable(run_index) if len(run_index) else [],
+            "performance": _jsonable(perf) if len(perf) else [],
+            "last_complete_week": str(_hist.last_complete_week().date()),
+        },
+        "final_test": {
+            # Pinned, quarantined, and not yet run. Reported so the page can say
+            # what is coming rather than leaving a blank panel unexplained.
+            "cutoff": _ML_FINAL_TEST_CUTOFF,
+            "evaluated": False,
+        },
+    })
+
+
+@app.get("/planning/demand-patterns")
+def planning_demand_patterns(weeks: int = Query(default=52, ge=13, le=260)):
+    """Descriptive shape of demand, independent of any model.
+
+    Weekly totals, concentration, and the segment mix. Nothing here is a
+    forecast or an evaluation of one; it is the backdrop the rest is read
+    against, and it is the one section that needs no model at all.
+    """
+    sales = _plan_data.load_sales()
+    if sales.empty:
+        return JSONResponse({"weekly": [], "concentration": [], "segments": [], "weeks": weeks})
+
+    cutoff = sales["ds"].max() - pd.Timedelta(weeks=weeks)
+    recent = sales[sales["ds"] > cutoff]
+
+    # Split by whether the model forecasts the SKU at all. The intermittent tail
+    # is 87% of the catalogue and about a fifth of volume, and its shape is a
+    # fact about the business rather than about any model, so it belongs here
+    # rather than in a section evaluating forecasts. Seeing the two side by side
+    # is also the clearest statement of what the forecast does and does not
+    # cover.
+    served = set(_plan_data.load_forecasts()["unique_id"])
+    recent = recent.assign(
+        group=np.where(recent["unique_id"].isin(served), "forecast", "not_forecast")
+    )
+    wide = (recent.pivot_table(index="ds", columns="group", values="y",
+                               aggfunc="sum", fill_value=0.0)
+            .reset_index())
+    for col in ("forecast", "not_forecast"):
+        if col not in wide.columns:
+            wide[col] = 0.0
+    wide["units"] = wide["forecast"] + wide["not_forecast"]
+    weekly = wide[["ds", "forecast", "not_forecast", "units"]]
+
+    # Concentration: the share of demand carried by the top N% of SKUs. Answers
+    # how much of the business a forecast has to get right to matter.
+    per_sku = recent.groupby("unique_id")["y"].sum().sort_values(ascending=False)
+    total = per_sku.sum()
+    conc = []
+    if total > 0:
+        cum = per_sku.cumsum() / total
+        for pct in (0.05, 0.10, 0.20, 0.50):
+            n = max(1, int(len(per_sku) * pct))
+            conc.append({"sku_share": pct, "n_skus": n,
+                         "demand_share": float(cum.iloc[n - 1])})
+
+    prof = _plan_data.load_profiles()
+    seg = []
+    if not prof.empty:
+        p = prof.copy()
+        p["group"] = np.where(p["unique_id"].isin(served), "forecast", "not forecast")
+        units = recent.groupby("unique_id")["y"].sum()
+        p["units"] = p["unique_id"].map(units).fillna(0.0)
+        for group, g in p.groupby("group"):
+            seg.append({"group": group, "n_skus": int(len(g)),
+                        "units": float(g["units"].sum())})
+
+    return JSONResponse({
+        "weekly": _jsonable(weekly),
+        "concentration": conc,
+        "segments": seg,
+        "weeks": weeks,
     })

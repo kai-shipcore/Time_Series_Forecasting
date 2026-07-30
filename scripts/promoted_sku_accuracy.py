@@ -31,6 +31,7 @@ ROOT = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 import src.profile as P  # noqa: E402
+from src.ml.serving.models import CURRENT_BEST  # noqa: E402
 
 # profile() writes sku_profiles.csv into its PROCESSED_DIR as a side effect.
 # Redirected to a temporary directory so that running this analysis can never
@@ -46,7 +47,9 @@ def pooled(x: pd.DataFrame) -> float:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--version", default="v11")
+    # Defaults to whatever is currently served rather than a pinned string, so
+    # this keeps measuring the right model after the next version lands.
+    ap.add_argument("--version", default=CURRENT_BEST)
     ap.add_argument("--boot", type=int, default=2000)
     args = ap.parse_args()
 

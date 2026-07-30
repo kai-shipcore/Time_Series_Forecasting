@@ -1027,3 +1027,300 @@ detail lives in the design document and codebase guide, not here.
   FastAPI runs inside this repo and is the blocker if it ever does not.
   Decided: Streamlit is retired once the Next.js page reaches parity, so the duplication is
   temporary by design rather than a permanent second surface.
+
+- 2026-07-29: Inventory now reads the databases directly instead of an exported CSV. Those tables
+  belong to the Commerce Integration application and refresh on its schedule, so holding a copy
+  only created a way to be confidently wrong when nobody re-ran the export. The SQL moved into
+  `src/planning/inventory.py` and the export script imports it, so the live path and the export
+  cannot produce different figures. Three sources are tried in order, each a degradation of the
+  one before: the databases, then the exported CSV, then generated sample data, with a `source`
+  column recording which applied. Falling back rather than raising is deliberate, so a working
+  copy without credentials still starts. Results are memoised for five minutes, in the module
+  rather than through Streamlit, because FastAPI shares this code and has no caching of its own.
+  Two things the move nearly lost. The engine builder promised to return None when unusable but
+  only checked for missing variables; `create_engine` resolves the driver eagerly and raises when
+  psycopg2 is absent, which is a real environment here, so the whole body is now guarded and the
+  fallback actually works. And the export script had an explicit numeric coercion guarding the
+  case where a query matches nothing and pandas infers an object dtype, which is live today
+  because transit stock is zero for every SKU; that guard is carried into the shared path and
+  widened to every numeric column, since the same holds for any of them the moment a query
+  returns nothing. Verified against mocked database responses that a SKU with no stock record
+  stays null while a recorded zero stays zero, which is the distinction the whole thing rests on.
+  The v11 forecast stays on parquet by choice: the model is still moving, and putting it in
+  Postgres now would mean re-uploading on every iteration. That remains the one prerequisite for
+  running the API away from this repo.
+
+- 2026-07-29: The action list now exists as a page in the Commerce Integration application, at
+  /planning/action-list, registered in the navigation with Korean and English labels and visible
+  by default for the roles that already see the other planning pages. Two proxy routes forward to
+  the FastAPI planning endpoints through one shared helper rather than repeating the base URL,
+  token header, timeout and error envelope the way the fifteen forecast routes each do. Status
+  codes pass through untouched, because a 404 there carries meaning: it distinguishes a SKU that
+  is no longer forecastable from one that does not exist, and the page words those differently.
+  Settled first what to reuse from the existing demand-forecast page. Its screen-level components
+  turn out not to be reusable: all-skus-table hardcodes its row type and sort keys to forecast
+  fields and fetches its own endpoint, and demand-trend is shaped for portfolio accuracy with
+  lead selection and prediction bands. Two smaller ones looked like wholesale candidates and were
+  not, on inspection: page-headers has no generic header component, only one specific header per
+  page, and sku-global-search is bound to the forecast segment taxonomy and routes into the
+  forecast page. What is genuinely shared is the substrate, and it is most of the value: the ui
+  primitives, the internationalisation provider, the API path helper, the proxy pattern, the
+  SSR-safe Plotly import and the styling conventions. The line drawn is to reuse the substrate
+  and not the screens, on the grounds that the demand forecast page answers how the model is
+  doing and this one answers what to order today, and forcing one to serve the other would
+  recreate the problem the dashboard was built to escape.
+  Verified end to end against a running server on the port AI_SERVICE_URL points at: all six
+  summary figures identical to the Streamlit screen, 432 rows either way, every field the table
+  renders present in the payload, no TypeScript errors from the new files and lint clean.
+  Two faults the checks caught rather than review. The lint rule on synchronous setState inside
+  an effect was correct: loading is now derived from whether the loaded parameters match the
+  requested ones, which removes the cascading render and incidentally keeps the previous table on
+  screen while a new lead time is in flight instead of blanking to a spinner. And the priority
+  badges keyed on "Best seller" and "No stock" while the API emits "Best Seller" and "No Stock",
+  which does not fail: the lookup falls through to the Routine style and the badge looks
+  deliberate, while the best-seller chip filter matches nothing. The labels now live in one
+  exported constant that both the table and the filter use, with a check asserting the set
+  matches what the API emits.
+
+- 2026-07-29: SKU detail built at /planning/action-list/[sku], so the rows on the list now lead
+  somewhere. The SKU sits in the path rather than a query string, which makes each row a real
+  URL: shareable, bookmarkable, and openable in a new tab. One request serves the whole screen,
+  since a partial render is worse than a marginally slower one.
+  The screen carries what the Streamlit version did: quality flags, the falling-demand callout
+  above the order card because it is a caveat about the number in it, the order quantity as
+  checkable arithmetic with its plausible band, the reliability card with its per-window
+  evidence, the inventory position, and both charts. Where a SKU has no measured error the
+  reliability card names the basis being used instead of presenting an inherited figure as
+  though it belonged to that SKU. The 404 for a demoted SKU is worded as a normal outcome and
+  explains itself, rather than reading as a failure.
+  Types were written from the live payload rather than from memory, which was worth doing: the
+  order breakdown carries a Sign column of +1, -1, 0 and null, where null marks an aside shown
+  for context and outside the sum, and 0 marks the total line. Inferring direction from the
+  value instead would render a component of zero as an addition when it is a subtraction.
+  Two lint rules caught real hazards again. Deriving the operator column mutated a flag inside
+  the render map, which React may re-enter, carrying the previous value in; the operators are
+  now resolved in a memo so the render is a pure function of that array. And the loading state
+  is derived from whether the loaded SKU matches the requested one rather than set inside an
+  effect, the same fix the action list needed.
+  Verified against the live endpoint across five archetypes: poor tier with an order, no
+  backtest history, falling demand, zero order, and an unmeasured promoted SKU. Order totals and
+  bands match the Streamlit figures in every case, every field the page reads is present in the
+  payload, and both 404 shapes are distinguished. TypeScript and lint clean, with the repository
+  baseline of 57 pre-existing Prisma errors unchanged.
+
+- 2026-07-29: A parity check against the Streamlit screens found the two Next.js pages
+  disagreeing with each other. Streamlit keeps the planning parameters in a sidebar that
+  persists across pages, so changing the lead time on the list changed it on the detail view
+  too. In Next.js each page mounts independently, and the detail view was requesting with no
+  parameters at all, so it answered at the default eight-week lead while the row the user had
+  clicked answered at theirs. On one SKU at a sixteen-week lead the list said 620 units and the
+  detail said 326, with nothing on screen to explain the difference. That is precisely the
+  failure this migration was structured to prevent, arriving through the interface rather than
+  through a second implementation of the arithmetic.
+  The parameters now travel in the URL across all four hops: the list builds them into each row
+  link, the detail view forwards them to the API and carries them back on its return link, and
+  both pages seed from the query string. They are clamped on read to the same bounds FastAPI
+  enforces, so a hand-edited URL cannot produce a rejected request. A side benefit over the
+  sidebar it replaces: a shared link now reproduces the assumptions the figures were computed
+  under, which sidebar state never could.
+  The same audit lists what the Next.js pages still lack against Streamlit, none of it wrong,
+  all of it absent: sorting and pagination on the list, the history filter, the portfolio demand
+  chart, the reliability legend and the quality summary line; and on the detail view the SKU
+  selector for moving between SKUs without going back, and the weekly figures table.
+
+- 2026-07-29: Sorting added to the action list, following the convention the existing all-SKUs
+  table set: clickable headers, shift-click to add a criterion, position markers when more than
+  one is active. Two departures. A third click clears back to the server's worklist order, which
+  is priority then quantity and is not reproducible from any single column, so it is represented
+  as the absence of a sort rather than an entry in the list. And nulls sort last in both
+  directions, because a SKU with no stockout date is not the most urgent one and would otherwise
+  lead every ascending sort. The missing history filter went in alongside.
+  Then the intermittent tail, which turned out larger than assumed: 2,977 SKUs, 87% of the
+  catalogue by count and about a fifth of recent unit volume. Leaving it off the page would have
+  meant retiring the demand forecast page while losing the only place those SKUs were visible.
+  They now have their own section behind a toggle, fetched only when opened, with columns that
+  are honest without a forecast: 13-week demand, the weekly rate it implies, stock position,
+  days of cover at that rate, and a flag where stock runs out inside the lead time. There is
+  deliberately no recommended order quantity, and the section says so in as many words, because
+  it cannot be derived without a demand model these SKUs do not have. Column names differ from
+  the forecast table throughout, so a rate computed from a 13-week average is never sitting
+  under the same heading as one from a scored model.
+  The inventory read was widened from the 447 forecastable SKUs to all 3,409 profiled ones,
+  which is a one-line change now that it queries the database rather than reading an export.
+  A partition check caught the design failing its own claim. The non-forecast set was defined as
+  absence from the forecast file, while the forecast section is built from the planning table,
+  and those differ by the fifteen SKUs demoted since the run: they sat in neither section.
+  Keying on what the other section actually shows makes the two a partition by construction,
+  and the check now asserts no overlap and no SKU unaccounted for. Also asserted that no
+  forecast-derived column reaches the non-forecast payload, that cover is null rather than
+  infinite wherever nothing has sold, and that a missing inventory record stays null rather than
+  becoming a zero.
+
+- 2026-07-29: Closed the remaining gaps against the Streamlit screens, and finally built the
+  supply-gap warning that had been outstanding since it was measured.
+  The planning table now computes days until inbound against days to stockout and flags the SKUs
+  that run dry in between: 185 of them, carrying 3,099 units of backlog already owed. Two columns
+  on that table were computed on assumptions that contradict each other, and nothing said so.
+  The stockout date ignores inbound entirely while the order quantity credits it as though it
+  were already on the shelf, so a row could read "out in 12 days" beside "order 0" with a
+  container 40 days away and no account of the days in between. The order quantity is not wrong:
+  with an eight-week lead time a purchase order placed today lands after a container already
+  booked, and only 1 of the 185 gaps could be beaten by ordering. What was wrong was the silence.
+  The stockout cell now shows both dates, there is a chip and filter for the population, and the
+  SKU detail view explains that the action is to expedite or reallocate rather than to buy.
+  Also added the portfolio demand chart, the reliability legend, the data-quality summary line
+  and the weekly figures table. The chart needed an endpoint of its own, taking the SKU list by
+  POST rather than in a query string, because it follows the filters and that list runs to
+  hundreds of identifiers. Aggregating server-side is not a convenience either: the client holds
+  one row per SKU with no weekly series in it, and shipping four hundred SKUs of history to the
+  browser to sum it there would be far more data than the answer. The summary line and the legend
+  count what is on screen rather than the whole list, since a count that ignores the filters
+  describes a different population from the rows beneath it.
+  One bug found in the checks, the same shape as the partition failure earlier in the day: with
+  no SKU list the trend endpoint defaulted to the forecast file rather than the planning table,
+  which would have drawn a chart over 447 SKUs above a table showing 432. The client always sends
+  its filtered list, so it would only have bitten a direct call, which is exactly when nobody is
+  watching for the discrepancy. Defaulting to what the other surface actually shows fixes it, and
+  the check now asserts the two agree.
+
+- 2026-07-29: Started storing what the model predicts, because until now every weekly run threw
+  the evidence away. `ml_forward_forecasts.parquet` holds one run and is overwritten, which
+  answers "what is the forecast" and cannot answer "is the model getting better". A new
+  `src/ml/serving/history.py` appends each run instead, keyed by model version, forecast date,
+  SKU and target week, with a re-run in the same week replacing its own rows rather than
+  duplicating them. Deliberately not named after a version: the version is a column, so a new
+  one coexists with its predecessors and comparing them is a query rather than an excavation.
+  Alongside it, functions that join stored predictions to actuals as the weeks close, and pooled
+  WAPE per run per segment, which is what a performance-over-time view will read. Neither knows
+  which version is current, so a new model is scored the moment its first run lands.
+  One judgement worth recording. Scoring excludes the most recent settled week as well as weeks
+  still in progress. The design doc notes late-registering orders make the tail unreliable for
+  training; here it matters more, because scoring a week whose sales are still arriving reads as
+  over-forecasting, and the newest run is always the one most affected. A performance chart would
+  have shown a downward slope that was an artefact of settlement rather than a change in the
+  model. Training can afford the last week since one noisy anchor among thousands changes little;
+  a run scored on one unsettled week is scored on nothing else.
+  Verified against real data: appending twice replaces rather than duplicates, a second model
+  version coexists rather than overwriting, a run whose horizon has settled scores across leads 1
+  to 13, and the current run correctly scores nothing because its horizon has not started. Also
+  pointed the one remaining hardcoded version default at CURRENT_BEST, so nothing outside the
+  version's own class definition names v11.
+  Recorded prerequisite, now with a deadline attached: the final test window is already evaluable,
+  its cutoff being 2026-05-04 with actuals complete to 2026-07-27. But 163 of the 447 served SKUs
+  are ineligible at that cutoff and 160 of those are the promoted ones, so the final test would
+  report on 284 SKUs rather than all of them. Backlog item 2, the train_start split, gates the
+  coverage of the very test it was meant to inform.
+
+2026-07-29  Built the Forecast Validation page in Commerce_Integration.
+  Two new FastAPI endpoints. /planning/validation returns the model against the V1 spreadsheet
+  baseline as a segment by window grid with per-cell winners and a demand-weighted headline, the
+  coverage the comparison rests on, per-SKU best and worst cases, the performance of stored runs
+  as their weeks close, and the state of the final test window. /planning/demand-patterns returns
+  weekly demand, concentration at the top 5, 10, 20 and 50 percent of SKUs, and the segment mix.
+  Neither endpoint names a model version; both read whatever versions are present.
+  The page reports the current position plainly: 0.1596 against 0.2591 pooled WAPE, a 38 percent
+  reduction, ahead in 7 of 9 cells. It also states the two cells the spreadsheet still wins, both
+  Oct-Dec, and says on the page that only 258 of the 447 served SKUs are in those figures, with
+  the reason, so the headline cannot be read as covering the whole catalogue.
+  Weekly demand is split into the SKUs the model forecasts and the intermittent tail it does not.
+  That split surfaced something not previously looked at: the tail was 6 percent of weekly volume
+  a year ago and is 23 percent now. It is 2,962 SKUs and 48,519 units over the last 52 weeks,
+  carrying no forecast at all.
+  Two sections are empty by design and say so in place rather than being hidden: performance over
+  time, which fills as runs accumulate and weeks settle, and the final test window, which stays
+  quarantined until model development finishes.
+  Fixed a naming collision found during verification. evaluate.py reports bias_pct in percentage
+  points; the new history module reported the same field as a fraction. Both feed one API payload,
+  so the same name meant two things a hundredfold apart. History now matches evaluate.py, verified
+  by scoring a synthetic run built to be exactly 10 percent over.
+
+2026-07-29  Made the forecast service explain itself when it cannot serve.
+  A coworker opening the Action List saw "Could not reach the forecast server / Internal Server
+  Error". The heading was wrong: their server was running and reachable. The cause is that
+  data/processed and outputs/reports are gitignored, so their fresh clone had the code and none of
+  the parquet and CSV files the API reads. The service then starts, passes a liveness check, and
+  raises on every real request.
+  /health now also reports readiness: which of the eight data files exist, which required ones are
+  missing, what produces each, and which checkout the server is reading from. It still returns 200
+  when data is missing, because the process is alive and conflating that with an outage would hide
+  the distinction the endpoint exists to make.
+  The planning proxy now classifies four failures instead of reporting them all as one: nothing
+  listening, a server predating these endpoints, a server with no data, and a genuine error shown
+  verbatim. A 500 triggers a readiness check before reporting, since that is almost always missing
+  data rather than a bug. Verified against four stand-in servers, one per failure.
+  Planning pages carry a status indicator that polls every 60 seconds and rechecks on tab focus and
+  wake, with three states rather than two: up, up but no data, and down. It reloads the page's data
+  when the service comes back, so nobody has to know to refresh.
+  Opening a planning page also starts the service if it is down, deduplicated so the several
+  requests a page issues share one attempt rather than racing to spawn a server each.
+
+2026-07-29  Tracked the accuracy reports, and made the deployment able to hold data.
+  outputs/reports/ml_accuracy.csv and ml_accuracy_by_sku.csv are now in git. They are 136 KB
+  together and they are the recorded score of every model version, the numbers the version log
+  cites and the validation page reads. Untracked, that evidence existed in one working directory
+  and nowhere else. The rest of outputs/, 19 MB of experiment plots and CV dumps, stays ignored;
+  verified that exactly two files become tracked and none of the other 51 leak in.
+  Found a fault in the existing deploy workflow: rsync ran with --delete and no exclude for data/
+  or outputs/. Those are gitignored, so the checkout has none of them, and every deploy would have
+  deleted the server's copies and left the API answering 500 on every planning request until the
+  next Monday. Both paths are now excluded, which under --delete means do not upload and equally
+  do not destroy.
+  Settled the arrangement: the forecast API runs on the same server as Demand Pilot, bound to
+  loopback. Next.js proxies server-side, so the service needs no public port, no firewall rule and
+  no CORS, and a colleague needs nothing installed. Code arrives from GitHub Actions, data arrives
+  from the weekly cron, and neither owns the other's files.
+  scripts/push_data_to_server.sh pushes the nine files the service reads, about 1.5 MB rather than
+  the 19 MB in outputs/, then asks the server whether it can serve and exits non-zero if not, so a
+  failure reaches cron mail on the Monday it happens. Tested against stand-in ssh and rsync for
+  three cases: ready, pushed but still unable to serve, and no answer at all.
+  DEPLOYMENT.md rewritten for this arrangement, including why FORECAST_SERVER_DIR stays unset in
+  production: systemd supervises the service, and letting the app start it too would put two
+  supervisors on one port.
+
+--- DAILY SUMMARY 2026-07-29 ---
+- Moved the forecasting dashboard into the main company app, so there is one system instead of two.
+- Connected it to live inventory instead of a file someone had to remember to export.
+- Covered the products that sell too irregularly to forecast, and flagged the ones running out
+  before their next shipment lands.
+- Built a page showing the new forecasting method beats the old spreadsheet, and started keeping a
+  permanent record of how accurate it is.
+- Fixed why a colleague could not open the page, and arranged things so nobody has to install
+  anything to use it.
+
+--- SUMMARY PRODUCED 2026-07-29 (covering the 2026-07-29 entries above) ---
+
+2026-07-30  Added scripts/verify_deployment.sh, and confirmed both branches are merge-ready.
+  The acceptance checks in the deployment brief were prose, which meant running them by hand and
+  interpreting the output. They are now a script that runs over SSH against 127.0.0.1:8000, the
+  address the Next.js process itself uses, so a pass means the app's own requests will succeed. It
+  exits non-zero and prints the fix under each failure rather than only the symptom.
+  It catches the three failures that are otherwise hard to read. A token mismatch, where /health is
+  exempt from the check so the status indicator shows the service up while every page fails. A
+  service running from a different checkout than the one being pushed to, where pushing data
+  appears to succeed and changes nothing. And incomplete database credentials, which surface as
+  sample inventory rather than as an error. Tested against stand-in responses for all three plus
+  the healthy case.
+  Also verified the work is ready to merge: every Python module compiles, the Next.js production
+  build succeeds with all seven new routes present, and both branches fast-forward onto main with
+  nothing to reconcile. The server setup itself remains outstanding and needs credentials.
+
+2026-07-30  Probed the deployment server and wrote the cutover plan.
+  The picture turned out to be two units running the same codebase from two checkouts, both
+  wanting port 8000: the live coverland-forecast.service from /home/coverland/Time_Series_Forecasting
+  and the new coverland-forecast-api.service from /opt, currently disabled. That makes this a
+  retirement rather than a coexistence, which changes the order of the remaining work.
+  Three findings. The deployed .env has eleven of the fifteen variables the service reads, and the
+  four missing ones cost the Demand Forecast assistant without any visible error. src/chat.py has
+  pointed its own tool calls at port 8001 since the commit that introduced it and nothing has ever
+  listened there, so the assistant has been answering from the model rather than from the data for
+  the whole life of this deployment; that is now configurable and the cutover sets it to 8000. And
+  the live unit binds 0.0.0.0 on a public host, so the API may have been internet-facing including
+  POST /run-forecast, which spawns a pipeline run. Whether it was actually reachable depends on the
+  cloud security list and is checked first in the cutover; the new unit binds loopback either way.
+  Also recorded a conflict to settle after, not during: with data pushed from the Mac and the Run
+  Forecast button writing on the server, two machines own the same files, and a run triggered from
+  the UI is silently replaced by the next weekly push.
+  Earlier, an ssh usage message turned out to be an empty deploy user and host producing a bare "@"
+  destination, after two wrong guesses at the cause. The three deploy scripts now share
+  _deploy_env.sh, which validates and prints what it resolved, and scripts/server_topology.sh
+  reports which process holds which port and from which directory.
