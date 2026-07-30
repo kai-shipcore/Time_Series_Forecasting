@@ -24,16 +24,9 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# shellcheck disable=SC1091
-[ -f .env ] && set -a && . ./.env && set +a
-
-: "${FORECAST_DEPLOY_HOST:?set FORECAST_DEPLOY_HOST in .env or the environment}"
-: "${FORECAST_DEPLOY_USER:?set FORECAST_DEPLOY_USER in .env or the environment}"
-: "${FORECAST_DEPLOY_PATH:?set FORECAST_DEPLOY_PATH in .env or the environment}"
-
-SSH_OPTS=(-p "${FORECAST_DEPLOY_PORT:-22}" -o StrictHostKeyChecking=accept-new)
-[ -n "${FORECAST_DEPLOY_KEY:-}" ] && SSH_OPTS+=(-i "$FORECAST_DEPLOY_KEY")
-SSH=(ssh "${SSH_OPTS[@]}" "${FORECAST_DEPLOY_USER}@${FORECAST_DEPLOY_HOST}")
+# Sets TARGET, SSH_OPTS and SSH.
+# shellcheck source=scripts/_deploy_env.sh
+. "${REPO_ROOT}/scripts/_deploy_env.sh" || exit 1
 
 FAILED=0
 pass() { printf '  PASS  %s\n' "$1"; }

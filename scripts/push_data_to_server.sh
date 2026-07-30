@@ -29,19 +29,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# shellcheck disable=SC1091
-[ -f .env ] && set -a && . ./.env && set +a
-
-: "${FORECAST_DEPLOY_HOST:?set FORECAST_DEPLOY_HOST in .env or the environment}"
-: "${FORECAST_DEPLOY_USER:?set FORECAST_DEPLOY_USER in .env or the environment}"
-: "${FORECAST_DEPLOY_PATH:?set FORECAST_DEPLOY_PATH in .env or the environment}"
-PORT="${FORECAST_DEPLOY_PORT:-22}"
-
-SSH_OPTS=(-p "$PORT" -o StrictHostKeyChecking=accept-new)
-[ -n "${FORECAST_DEPLOY_KEY:-}" ] && SSH_OPTS+=(-i "$FORECAST_DEPLOY_KEY")
-
-TARGET="${FORECAST_DEPLOY_USER}@${FORECAST_DEPLOY_HOST}"
-SSH=(ssh "${SSH_OPTS[@]}" "$TARGET")
+# Sets TARGET, SSH_OPTS and SSH. Handles a tilde in the key path and the
+# argument-splitting difference between bash and zsh, both of which produced
+# an ssh usage message rather than anything diagnosable.
+# shellcheck source=scripts/_deploy_env.sh
+. "${REPO_ROOT}/scripts/_deploy_env.sh" || exit 1
 
 # Exactly the files src/planning/data.py reads. Listed explicitly rather than
 # syncing whole directories, because outputs/ is 19 MB of experiment plots and
