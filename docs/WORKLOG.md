@@ -1276,3 +1276,5 @@ detail lives in the design document and codebase guide, not here.
   DEPLOYMENT.md rewritten for this arrangement, including why FORECAST_SERVER_DIR stays unset in
   production: systemd supervises the service, and letting the app start it too would put two
   supervisors on one port.
+
+--- SUMMARY PRODUCED 2026-07-29 (covering the 2026-07-29 entries above) ---
