@@ -1824,7 +1824,31 @@ def sku_search(q: str = Query(default="", min_length=1)):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Liveness, plus whether the data this service reads is actually present.
+
+    Still returns 200 when data is missing. The process is alive and the caller
+    asked whether it is, so answering 503 would conflate "no server" with
+    "server with no data", which are different problems with different fixes.
+    The distinction is in the body, and it is the whole point of the endpoint:
+    data/processed and outputs/reports are gitignored, so a fresh clone raises
+    on every endpoint while looking perfectly healthy here.
+
+    Left outside the token check with the rest of /health, so a client that has
+    the token wrong can still find out the server is up.
+    """
+    try:
+        status = _plan_data.readiness()
+    except Exception as exc:  # pragma: no cover - readiness must never 500
+        return {"status": "ok", "ready": None, "readiness_error": str(exc)}
+
+    return {
+        "status": "ok",
+        "ready": status["ready"],
+        "missing_required": status["missing_required"],
+        "missing_optional": status["missing_optional"],
+        "files": status["files"],
+        "repo_root": status["repo_root"],
+    }
 
 
 @app.post("/run-forecast")

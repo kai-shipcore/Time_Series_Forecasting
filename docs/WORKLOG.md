@@ -1233,3 +1233,23 @@ detail lives in the design document and codebase guide, not here.
   points; the new history module reported the same field as a fraction. Both feed one API payload,
   so the same name meant two things a hundredfold apart. History now matches evaluate.py, verified
   by scoring a synthetic run built to be exactly 10 percent over.
+
+2026-07-29  Made the forecast service explain itself when it cannot serve.
+  A coworker opening the Action List saw "Could not reach the forecast server / Internal Server
+  Error". The heading was wrong: their server was running and reachable. The cause is that
+  data/processed and outputs/reports are gitignored, so their fresh clone had the code and none of
+  the parquet and CSV files the API reads. The service then starts, passes a liveness check, and
+  raises on every real request.
+  /health now also reports readiness: which of the eight data files exist, which required ones are
+  missing, what produces each, and which checkout the server is reading from. It still returns 200
+  when data is missing, because the process is alive and conflating that with an outage would hide
+  the distinction the endpoint exists to make.
+  The planning proxy now classifies four failures instead of reporting them all as one: nothing
+  listening, a server predating these endpoints, a server with no data, and a genuine error shown
+  verbatim. A 500 triggers a readiness check before reporting, since that is almost always missing
+  data rather than a bug. Verified against four stand-in servers, one per failure.
+  Planning pages carry a status indicator that polls every 60 seconds and rechecks on tab focus and
+  wake, with three states rather than two: up, up but no data, and down. It reloads the page's data
+  when the service comes back, so nobody has to know to refresh.
+  Opening a planning page also starts the service if it is down, deduplicated so the several
+  requests a page issues share one attempt rather than racing to spawn a server each.

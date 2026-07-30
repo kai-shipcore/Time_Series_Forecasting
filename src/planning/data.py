@@ -172,6 +172,71 @@ def load_backtest_weekly() -> pd.DataFrame:
     return df
 
 
+# ---------------------------------------------------------------------------
+# Readiness.
+# ---------------------------------------------------------------------------
+#: Files the planning endpoints read, and whether their absence is fatal.
+#:
+#: ``data/processed`` and ``outputs/reports`` are both gitignored, so a fresh
+#: clone has the code and none of the data. The server then starts, answers
+#: /health, and raises on every real endpoint, which reaches the browser as a
+#: bare "Internal Server Error" and sends the reader looking for a bug in the
+#: application. Naming the missing file is the difference between a five minute
+#: fix and an afternoon.
+_DATA_FILES: list[tuple[str, Path, bool, str]] = [
+    ("forecast", FORWARD_FORECAST, True,
+     "scripts/ml_forward_forecast.py"),
+    ("sales", SALES_CLEAN_PARQUET, True,
+     "the weekly ingest, or scripts/export_forecast_history.py"),
+    ("profiles", SKU_PROFILES, True,
+     "scripts/ml_forward_forecast.py"),
+    ("accuracy", ML_ACCURACY, False,
+     "scripts/ml_evaluate.py"),
+    ("accuracy_by_sku", ML_ACCURACY_BY_SKU, False,
+     "scripts/ml_evaluate.py"),
+    ("backtest_weekly", BACKTEST_WEEKLY, False,
+     "scripts/ml_backtest_weekly.py"),
+    ("v1_forward", V1_FORWARD, False,
+     "scripts/v1_forward.py"),
+    ("inventory", INVENTORY_SNAPSHOT, False,
+     "scripts/export_inventory_snapshot.py"),
+]
+
+
+def readiness() -> dict:
+    """Which data files are present, and whether the service can actually serve.
+
+    Cheap enough to call on every health check: it stats a handful of paths and
+    reads nothing. Sales is satisfied by either the parquet or the CSV, matching
+    what ``_read_sales`` will accept.
+    """
+    files = []
+    missing_required = []
+    for name, path, required, produced_by in _DATA_FILES:
+        exists = path.exists()
+        if name == "sales" and not exists:
+            exists = SALES_CLEAN_CSV.exists()
+        files.append({
+            "name": name,
+            "path": str(path.relative_to(REPO_ROOT)),
+            "exists": exists,
+            "required": required,
+            "produced_by": produced_by,
+        })
+        if required and not exists:
+            missing_required.append(name)
+
+    return {
+        "ready": not missing_required,
+        "missing_required": missing_required,
+        "missing_optional": [
+            f["name"] for f in files if not f["exists"] and not f["required"]
+        ],
+        "files": files,
+        "repo_root": str(REPO_ROOT),
+    }
+
+
 def sku_backtest_weekly(unique_id: str, version: str | None = None) -> pd.DataFrame:
     """Per-week backtest rows for one SKU, for the served model version."""
     df = load_backtest_weekly()
