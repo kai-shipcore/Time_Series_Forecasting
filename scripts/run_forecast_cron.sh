@@ -8,9 +8,9 @@
 # scripts/push_data_to_server.sh is needed when the Mac produces the data.
 #
 # Cron (coverland user, on the server):
-#   0 16 * * 1 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
+#   0 10 * * 1 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
 #
-# 16:00 UTC = 9am Pacific at the time this was set up. The server stays fixed
+# 10:00 UTC = 3am Pacific at the time this was set up. The server stays fixed
 # UTC, so the Pacific wall-clock time drifts by an hour across the two DST
 # transitions each year; re-adjust the cron line then if that matters.
 
