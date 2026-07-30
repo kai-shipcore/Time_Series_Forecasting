@@ -124,7 +124,15 @@ Then merge `feat/action-list-page` to `main` in `Commerce_Integration`.
 
 ## How to know it worked
 
-Not "the deploy was green". Check these:
+Not "the deploy was green". Run:
+
+```bash
+scripts/verify_deployment.sh
+```
+
+It checks all of the below except the last, over SSH against `127.0.0.1:8000`,
+which is the address the Next.js process actually uses. Exits non-zero and
+prints the fix under each failure. The checks it runs:
 
 1. `curl -s localhost:8000/health | python3 -m json.tool` on the server shows
    `"ready": true` and a `repo_root` of `/opt/coverland-forecast-api`.

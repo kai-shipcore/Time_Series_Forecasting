@@ -1288,3 +1288,18 @@ detail lives in the design document and codebase guide, not here.
   anything to use it.
 
 --- SUMMARY PRODUCED 2026-07-29 (covering the 2026-07-29 entries above) ---
+
+2026-07-30  Added scripts/verify_deployment.sh, and confirmed both branches are merge-ready.
+  The acceptance checks in the deployment brief were prose, which meant running them by hand and
+  interpreting the output. They are now a script that runs over SSH against 127.0.0.1:8000, the
+  address the Next.js process itself uses, so a pass means the app's own requests will succeed. It
+  exits non-zero and prints the fix under each failure rather than only the symptom.
+  It catches the three failures that are otherwise hard to read. A token mismatch, where /health is
+  exempt from the check so the status indicator shows the service up while every page fails. A
+  service running from a different checkout than the one being pushed to, where pushing data
+  appears to succeed and changes nothing. And incomplete database credentials, which surface as
+  sample inventory rather than as an error. Tested against stand-in responses for all three plus
+  the healthy case.
+  Also verified the work is ready to merge: every Python module compiles, the Next.js production
+  build succeeds with all seven new routes present, and both branches fast-forward onto main with
+  nothing to reconcile. The server setup itself remains outstanding and needs credentials.
