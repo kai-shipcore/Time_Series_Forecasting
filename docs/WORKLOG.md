@@ -1324,3 +1324,23 @@ detail lives in the design document and codebase guide, not here.
   destination, after two wrong guesses at the cause. The three deploy scripts now share
   _deploy_env.sh, which validates and prints what it resolved, and scripts/server_topology.sh
   reports which process holds which port and from which directory.
+
+2026-07-30  Correction to the 2026-07-29 entry, and a clearer demand section.
+  That entry says the un-forecast share of weekly volume went from 6 percent a year ago to 23
+  percent now. Those were the first and last single weeks of the series, which is the same
+  mistake as ranking SKUs by an unweighted error on ten units. Averaged over quarters of the
+  window the figures are 17 to 21 percent across a year and 7 to 21 percent across two. The
+  direction holds; the size was overstated.
+  The demand section had four summary cards, two of which were complements of each other, one of
+  them titled "tail share of demand" in a vocabulary only someone who built the segmentation would
+  recognise. Now three cards that each say what they are a share of and in what units, with the
+  un-forecast one stating plainly that those SKUs sell too irregularly to forecast.
+  The trend moved out of a card and into a sentence under the chart, shown only at a year or more
+  and only when the change exceeds two points. Over 26 weeks it was comparing two six-week periods,
+  where 21 to 20 percent is noise presented with the confidence of a finding.
+  The comparison table became a matrix, segments against windows, after nine results were taking
+  nine rows and four columns of repeated labels. Bias is now rendered, having been computed and
+  discarded until now; it shows smooth/short over-forecasting by 9.4 percent in Mar-May while
+  smooth/long under-forecasts by 7.2 percent in the same window, which pooled error cannot express.
+  Windows were being ordered alphabetically, so the table read Dec-Feb, Mar-May, Oct-Dec: sorted by
+  name and presented as though it were time. Ordered by cutoff now.
