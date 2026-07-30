@@ -1253,3 +1253,26 @@ detail lives in the design document and codebase guide, not here.
   when the service comes back, so nobody has to know to refresh.
   Opening a planning page also starts the service if it is down, deduplicated so the several
   requests a page issues share one attempt rather than racing to spawn a server each.
+
+2026-07-29  Tracked the accuracy reports, and made the deployment able to hold data.
+  outputs/reports/ml_accuracy.csv and ml_accuracy_by_sku.csv are now in git. They are 136 KB
+  together and they are the recorded score of every model version, the numbers the version log
+  cites and the validation page reads. Untracked, that evidence existed in one working directory
+  and nowhere else. The rest of outputs/, 19 MB of experiment plots and CV dumps, stays ignored;
+  verified that exactly two files become tracked and none of the other 51 leak in.
+  Found a fault in the existing deploy workflow: rsync ran with --delete and no exclude for data/
+  or outputs/. Those are gitignored, so the checkout has none of them, and every deploy would have
+  deleted the server's copies and left the API answering 500 on every planning request until the
+  next Monday. Both paths are now excluded, which under --delete means do not upload and equally
+  do not destroy.
+  Settled the arrangement: the forecast API runs on the same server as Demand Pilot, bound to
+  loopback. Next.js proxies server-side, so the service needs no public port, no firewall rule and
+  no CORS, and a colleague needs nothing installed. Code arrives from GitHub Actions, data arrives
+  from the weekly cron, and neither owns the other's files.
+  scripts/push_data_to_server.sh pushes the nine files the service reads, about 1.5 MB rather than
+  the 19 MB in outputs/, then asks the server whether it can serve and exits non-zero if not, so a
+  failure reaches cron mail on the Monday it happens. Tested against stand-in ssh and rsync for
+  three cases: ready, pushed but still unable to serve, and no answer at all.
+  DEPLOYMENT.md rewritten for this arrangement, including why FORECAST_SERVER_DIR stays unset in
+  production: systemd supervises the service, and letting the app start it too would put two
+  supervisors on one port.

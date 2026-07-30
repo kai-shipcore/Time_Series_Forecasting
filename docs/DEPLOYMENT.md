@@ -1,42 +1,67 @@
-# GitHub Actions CI/CD
+# Deployment
 
-This project deploys from GitHub Actions when code is pushed to `main`.
+The forecast API runs on the same server as Demand Pilot, the Next.js app in
+`Commerce_Integration`. Both are managed there: Next.js by pm2, this service by
+systemd.
 
-## What Runs
+## Why the same box
 
-- Pull requests to `main`: install dependencies, compile Python modules, start the FastAPI app, and call `/health`.
-- Pushes to `main`: run the same CI checks, then deploy by SSH when deployment is enabled.
-- Manual runs: available from the GitHub Actions tab through `workflow_dispatch`.
+Next.js proxies every forecast request from its own server process, never from
+the browser, so a service on `127.0.0.1:8000` is reachable to it and to nothing
+else. That gives three things for free. No public port and no firewall rule. No
+CORS. And no colleague needing Python, a virtualenv, or a copy of the data,
+because they open the deployed app and the forecast is already behind it.
 
-## Required GitHub Settings
+The alternative, everyone running the service locally, is what produced the
+original problem: a fresh clone has the code and none of the data, so the
+service starts, answers a liveness check, and raises on every real request.
+
+## Two owners, no overlap
+
+| What | Owner | Arrives by |
+| --- | --- | --- |
+| Code | GitHub Actions, on push to `main` | `rsync` from the checkout |
+| Data | The weekly cron on the machine that runs the forecast | `scripts/push_data_to_server.sh` |
+
+Nothing owns both, deliberately. `data/` and `outputs/` are gitignored, so the
+deploy's checkout does not contain them; the deploy therefore excludes both
+paths, which under `rsync --delete` means "do not upload" and equally "do not
+destroy". Without those excludes every deploy would wipe the server's data and
+leave the API serving 500s until the next Monday.
+
+## Required GitHub secrets
 
 In the repository, open **Settings > Secrets and variables > Actions**.
 
-Add these repository secrets:
-
-| Type | Name | Example |
+| Name | Example | Notes |
 | --- | --- | --- |
-| Secret | `DEPLOY_HOST` | `203.0.113.10` |
-| Secret | `DEPLOY_USER` | `ubuntu` |
-| Secret | `DEPLOY_SSH_KEY` | Private SSH key with access to the server |
-| Secret | `DEPLOY_PATH` | `/opt/coverland-forecast-api` |
-| Secret | `DEPLOY_PORT` | `22` |
+| `DEPLOY_HOST` | the Demand Pilot server | Same host the Next.js app deploys to |
+| `DEPLOY_USER` | `coverland` | Needs write access to `DEPLOY_PATH` |
+| `DEPLOY_SSH_KEY` | private key | |
+| `DEPLOY_PATH` | `/opt/coverland-forecast-api` | Kept separate from the Next.js checkout |
+| `DEPLOY_PORT` | `22` | Omit when the server uses 22 |
 
-`DEPLOY_PORT` can be omitted when the server uses port `22`.
-
-## Server Setup
-
-Create the deployment directory on the server and make sure the deploy user owns it:
+## Server setup, once
 
 ```bash
 sudo mkdir -p /opt/coverland-forecast-api
-sudo chown -R ubuntu:ubuntu /opt/coverland-forecast-api
+sudo chown -R coverland:coverland /opt/coverland-forecast-api
 ```
 
-The workflow can restart either a system service named `coverland-forecast-api` or, if no service exists, run uvicorn in the background.
-If you use the system service option, allow the deploy user to restart this one service with passwordless sudo.
+Create `/opt/coverland-forecast-api/.env`. The deploy never overwrites it.
 
-Recommended systemd service:
+```
+FORECAST_API_TOKEN=<same value as the Next.js app's FORECAST_API_TOKEN>
+DB_HOST=...
+DB_NAME=...
+DB_USER=...
+DB_PASSWORD=...
+```
+
+The database credentials are needed even though forecasts come from files:
+`src/planning/inventory.py` reads live stock, preorder backlog and inbound.
+
+Install the service:
 
 ```ini
 [Unit]
@@ -44,10 +69,10 @@ Description=Coverland Forecast API
 After=network.target
 
 [Service]
-User=ubuntu
+User=coverland
 WorkingDirectory=/opt/coverland-forecast-api
 EnvironmentFile=/opt/coverland-forecast-api/.env
-ExecStart=/opt/coverland-forecast-api/.venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 1
+ExecStart=/opt/coverland-forecast-api/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 
@@ -55,12 +80,80 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Install and start it:
-
 ```bash
 sudo tee /etc/systemd/system/coverland-forecast-api.service < coverland-forecast-api.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now coverland-forecast-api
 ```
 
-Keep production environment variables, database credentials, and other secrets in the server-side `.env` file. The workflow does not overwrite `.env`.
+Bound to `127.0.0.1`, not `0.0.0.0`. On a shared box the service has no reason
+to accept connections from anywhere but the Next.js process beside it, and
+binding to the loopback enforces that whatever the firewall says.
+
+Allow the deploy user to restart this one unit with passwordless sudo.
+
+## Next.js side
+
+On the server's `Commerce_Integration/.env`:
+
+```
+AI_SERVICE_URL="http://localhost:8000"
+FORECAST_API_TOKEN=<same value as above>
+```
+
+Leave `FORECAST_SERVER_DIR` **unset in production.** It enables the app to start
+the service itself when it is down, which is right on a laptop and wrong here:
+systemd already supervises the process with `Restart=always`, and a second
+supervisor racing it to bind port 8000 turns a clean restart into two half-alive
+servers. Unset, the app reports the outage and points at `systemctl` instead.
+
+## The weekly data push
+
+After the Monday forecast, on the machine that produced the files:
+
+```bash
+scripts/push_data_to_server.sh
+```
+
+Configure it in this repo's `.env`:
+
+```
+FORECAST_DEPLOY_HOST=...
+FORECAST_DEPLOY_USER=coverland
+FORECAST_DEPLOY_PATH=/opt/coverland-forecast-api
+FORECAST_DEPLOY_KEY=~/.ssh/id_ed25519     # optional
+```
+
+It pushes only the nine files `src/planning/data.py` reads, about 1.5 MB, rather
+than the 19 MB of experiment plots and CV dumps in `outputs/` that the server has
+no use for. Then it asks the server whether it can actually serve, and exits
+non-zero if not. That exit code is the point: cron mails a failure on the Monday
+it breaks, instead of a colleague finding a broken page on Thursday.
+
+A crontab line, after the forecast run:
+
+```
+0 10 * * 1 cd /path/to/Time_Series_Forecasting && scripts/push_data_to_server.sh >> logs/push.log 2>&1
+```
+
+## Checking it
+
+`GET /health` reports both liveness and data readiness:
+
+```json
+{
+  "status": "ok",
+  "ready": true,
+  "missing_required": [],
+  "repo_root": "/opt/coverland-forecast-api"
+}
+```
+
+It returns 200 even when data is missing, because the process is alive and
+answering that is what a health check is for. `ready` is the separate question.
+`repo_root` is worth reading when something looks wrong: if it is not
+`DEPLOY_PATH`, the running service is serving a different checkout.
+
+The same information appears in the app, in the status indicator on the planning
+pages, so a reader who is not on the server can still tell an outage from a data
+problem.

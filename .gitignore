@@ -1,7 +1,26 @@
 data/raw/
 data/processed/
-outputs/
 logs/
+
+# Generated artifacts, with two exceptions below.
+#
+# Most of outputs/ is experiment scratch: plots from hypotheses already settled
+# and multi-megabyte CV dumps. Git keeps every version forever, so committing
+# those grows the repo permanently for files nobody reads twice.
+#
+# The accuracy reports are a different thing wearing the same coat. They are the
+# recorded score of each model version, the numbers the design doc's version log
+# cites and the Forecast Validation page reads. Untracked, the evidence for
+# "this model beats the spreadsheet" lived in one working directory and was one
+# `rm -rf outputs/` from gone. Together they are 130 KB.
+#
+# Written as outputs/* rather than outputs/, because git cannot re-include a
+# file whose parent directory is excluded.
+outputs/*
+!outputs/reports/
+outputs/reports/*
+!outputs/reports/ml_accuracy.csv
+!outputs/reports/ml_accuracy_by_sku.csv
 
 __pycache__/
 *.py[cod]
