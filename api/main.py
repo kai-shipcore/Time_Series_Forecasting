@@ -2334,13 +2334,21 @@ def planning_validation(
             u = s["actual_units"].sum()
             return float((s["pooled_wape"] * s["actual_units"]).sum() / u) if u else None
 
+        # Chronological, by the cutoff each window was scored at. Sorted by name
+        # they read Dec-Feb, Mar-May, Oct-Dec, which is alphabetical order
+        # presented as though it were time, and invites reading a trend across
+        # columns that runs backwards.
+        window_order = (
+            acc[["window", "cutoff"]].drop_duplicates().sort_values("cutoff")["window"].tolist()
+        )
+
         cur_w, base_w = weighted(current), weighted(baseline)
         comparison = {
             "grid": rows,
             "versions": versions,
             "current": current,
             "baseline": baseline,
-            "windows": sorted(acc["window"].unique().tolist()),
+            "windows": window_order,
             "headline": {
                 "current": cur_w,
                 "baseline": base_w,
