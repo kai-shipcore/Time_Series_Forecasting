@@ -137,9 +137,23 @@ jobs:
             exit 0
           fi
 
+          # Whose answer is this? If another service already holds port 8000,
+          # this unit fails to bind and crash-loops under Restart=always, while
+          # `systemctl restart` still exits 0 and the port still answers. The
+          # deploy would read as green while the code it just shipped is not
+          # running. repo_root settles it: only the service started from this
+          # directory reports this directory.
+          root=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("repo_root") or "")')
+          if [ -n "$root" ] && [ "$root" != "${{ secrets.DEPLOY_PATH }}" ]; then
+            echo "::error::Port 8000 is answered by a service running from ${root}, not ${{ secrets.DEPLOY_PATH }}. The unit deployed here is probably failing to bind. Check: systemctl status coverland-forecast-api"
+            exit 1
+          fi
+
           ready=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ready"))')
           if [ "$ready" = "True" ]; then
             echo "Data readiness: ready."
+          elif [ "$ready" = "None" ]; then
+            echo "::warning::The service answering /health does not report readiness, so it predates this revision. If a restart was expected, it did not take effect."
           else
             missing=$(printf '%s' "$body" | python3 -c 'import json,sys; print(", ".join(json.load(sys.stdin).get("missing_required") or []))')
             echo "::warning::The API is up but has no data to serve. Missing: ${missing:-unknown}. Run scripts/push_data_to_server.sh, or wait for the Monday cron."
