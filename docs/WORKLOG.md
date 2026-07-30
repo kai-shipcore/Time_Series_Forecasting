@@ -1303,3 +1303,24 @@ detail lives in the design document and codebase guide, not here.
   Also verified the work is ready to merge: every Python module compiles, the Next.js production
   build succeeds with all seven new routes present, and both branches fast-forward onto main with
   nothing to reconcile. The server setup itself remains outstanding and needs credentials.
+
+2026-07-30  Probed the deployment server and wrote the cutover plan.
+  The picture turned out to be two units running the same codebase from two checkouts, both
+  wanting port 8000: the live coverland-forecast.service from /home/coverland/Time_Series_Forecasting
+  and the new coverland-forecast-api.service from /opt, currently disabled. That makes this a
+  retirement rather than a coexistence, which changes the order of the remaining work.
+  Three findings. The deployed .env has eleven of the fifteen variables the service reads, and the
+  four missing ones cost the Demand Forecast assistant without any visible error. src/chat.py has
+  pointed its own tool calls at port 8001 since the commit that introduced it and nothing has ever
+  listened there, so the assistant has been answering from the model rather than from the data for
+  the whole life of this deployment; that is now configurable and the cutover sets it to 8000. And
+  the live unit binds 0.0.0.0 on a public host, so the API may have been internet-facing including
+  POST /run-forecast, which spawns a pipeline run. Whether it was actually reachable depends on the
+  cloud security list and is checked first in the cutover; the new unit binds loopback either way.
+  Also recorded a conflict to settle after, not during: with data pushed from the Mac and the Run
+  Forecast button writing on the server, two machines own the same files, and a run triggered from
+  the UI is silently replaced by the next weekly push.
+  Earlier, an ssh usage message turned out to be an empty deploy user and host producing a bare "@"
+  destination, after two wrong guesses at the cause. The three deploy scripts now share
+  _deploy_env.sh, which validates and prints what it resolved, and scripts/server_topology.sh
+  reports which process holds which port and from which directory.
