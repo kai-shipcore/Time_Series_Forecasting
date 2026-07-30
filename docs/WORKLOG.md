@@ -1277,4 +1277,14 @@ detail lives in the design document and codebase guide, not here.
   production: systemd supervises the service, and letting the app start it too would put two
   supervisors on one port.
 
+--- DAILY SUMMARY 2026-07-29 ---
+- Moved the forecasting dashboard into the main company app, so there is one system instead of two.
+- Connected it to live inventory instead of a file someone had to remember to export.
+- Covered the products that sell too irregularly to forecast, and flagged the ones running out
+  before their next shipment lands.
+- Built a page showing the new forecasting method beats the old spreadsheet, and started keeping a
+  permanent record of how accurate it is.
+- Fixed why a colleague could not open the page, and arranged things so nobody has to install
+  anything to use it.
+
 --- SUMMARY PRODUCED 2026-07-29 (covering the 2026-07-29 entries above) ---
