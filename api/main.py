@@ -2483,3 +2483,110 @@ def planning_demand_patterns(weeks: int = Query(default=52, ge=13, le=260)):
         "segments": seg,
         "weeks": weeks,
     })
+
+
+@app.get("/planning/demand-vs-forecast")
+def planning_demand_vs_forecast(
+    window: str = Query(default="all"),
+):
+    """Weekly actual demand against what the model predicted for those weeks.
+
+    The visual form of the comparison grid: the grid gives one error figure per
+    segment and window, this shows the weeks those figures are made of.
+
+    Two constraints shape it.
+
+    Both series cover exactly the SKUs that have predictions, not every served
+    SKU. Predictions exist for the 260 backtestable SKUs while actuals exist for
+    all 447, and summing the wider population against the narrower one would
+    draw an actual line far above the forecast and read as heavy
+    under-forecasting when nothing is wrong.
+
+    Nothing is predicted after the final test cutoff. That window is quarantined
+    (design doc Section 2.2), so the gap between the last backtest week and the
+    first forward week is left empty and labelled rather than filled in. Showing
+    a prediction there would spend the test.
+
+    There is no lead-in of earlier demand. Context weeks would have to be summed
+    over some chosen population, and any choice differs from the population of
+    the weeks beside them, putting a step in the line that means nothing.
+    """
+    bt = _plan_data.load_backtest_weekly()
+    if bt.empty:
+        return JSONResponse({
+            "actual": [], "predicted": [], "forward": [],
+            "windows": [], "quarantine": None, "sku_count": 0, "version": None,
+        })
+
+    from src.ml.serving.models import CURRENT_BEST
+
+    versions = bt["model_version"].unique().tolist()
+    version = CURRENT_BEST if CURRENT_BEST in versions else versions[0]
+    bt = bt[bt["model_version"] == version]
+
+    window_order = (
+        bt[["window", "cutoff"]].drop_duplicates().sort_values("cutoff")["window"].tolist()
+    )
+    if window != "all":
+        bt = bt[bt["window"] == window]
+    if bt.empty:
+        raise HTTPException(status_code=404, detail=f"No backtest weeks for window {window!r}")
+
+    # Both series come from the same rows, so they cover the same SKUs by
+    # construction rather than by a join that has to be kept honest. This file
+    # carries the actual alongside the prediction for exactly this reason.
+    #
+    # The population is not constant across the span: 66 SKUs are backtestable
+    # in Oct-Dec against 260 in Mar-May, because a SKU needs history reaching
+    # back before the window's cutoff. Summing actuals over the union instead
+    # put the demand line 24% above the forecast and read as heavy
+    # under-forecasting when nothing was wrong. Both lines step together at the
+    # window boundaries now, and `n_skus` is reported per week so the step is
+    # legible rather than mysterious.
+    per_week = (
+        bt.groupby("ds", as_index=False)
+        .agg(
+            predicted=("yhat", "sum"),
+            actual=("y", "sum"),
+            n_skus=("unique_id", "nunique"),
+            lead=("lead", "max"),
+        )
+        .sort_values("ds")
+    )
+
+    # Window boundaries, so the chart can mark where the population changes.
+    boundaries = (
+        bt.groupby("window", as_index=False)
+        .agg(start=("ds", "min"), end=("ds", "max"), n_skus=("unique_id", "nunique"),
+             cutoff=("cutoff", "first"))
+        .sort_values("cutoff")
+    )
+
+    skus = set(bt["unique_id"])
+
+    # The forward curve, restricted to the same SKUs so it continues the same
+    # quantity rather than stepping up to a wider population.
+    fc = _plan_data.load_forecasts()
+    fc = fc[fc["unique_id"].isin(skus)]
+    forward = (
+        fc.groupby("ds", as_index=False)["yhat"].sum()
+        .rename(columns={"yhat": "value"})
+        .sort_values("ds")
+    )
+
+    cutoff = pd.Timestamp(_ML_FINAL_TEST_CUTOFF)
+    quarantine = {
+        "start": cutoff.date().isoformat(),
+        "end": forward["ds"].min().date().isoformat() if len(forward) else None,
+    }
+
+    return JSONResponse({
+        "weekly": _jsonable(per_week),
+        "forward": _jsonable(forward[["ds", "value"]]),
+        "boundaries": _jsonable(boundaries),
+        "windows": window_order,
+        "window": window,
+        "quarantine": quarantine,
+        "sku_count": len(skus),
+        "version": version,
+    })

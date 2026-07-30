@@ -1344,3 +1344,25 @@ detail lives in the design document and codebase guide, not here.
   smooth/long under-forecasts by 7.2 percent in the same window, which pooled error cannot express.
   Windows were being ordered alphabetically, so the table read Dec-Feb, Mar-May, Oct-Dec: sorted by
   name and presented as though it were time. Ordered by cutoff now.
+
+2026-07-30  Brought the demand-versus-forecast chart onto the validation page.
+  Ported in spirit from the old Demand Forecast page rather than copied, because the data beneath
+  it is a different shape. That page's chart reads stored predictions from repeated runs, so many
+  runs cover the same week at different leads and "adaptive" means taking the freshest. The ML
+  backtest gives each week exactly once, at the lead its position in its window implies, so there
+  is no adaptive choice and the control was not carried over.
+  Two population traps, one of which I walked into. Predictions exist for 260 SKUs and actuals for
+  all 447, so the actual line must not be summed over the wider set. Having fixed that, the first
+  version was still 24 percent high, because the backtestable population is not constant either:
+  66 SKUs in Oct-Dec against 260 in Mar-May, since a SKU needs history reaching past a window's
+  cutoff. Both series now come from the same backtest rows, which carry the actual alongside the
+  prediction, so they cover the same SKUs by construction rather than by a join. The chart total
+  reconciles with the comparison grid exactly at 86,093 units.
+  Nothing is drawn between the last scored week and the first forward week. That span is the
+  quarantined final test window; it is shaded and labelled rather than left blank or bridged.
+  The chart states its own aggregate error, 13.0 percent, and says why it is lower than the 16.0
+  percent pooled figure above: summing SKUs before differencing lets one SKU's over-forecast cancel
+  another's under. Without that line the chart quietly contradicts the headline it sits beneath.
+  Also recorded, from the same session: the AI assistant is retired rather than ported, the old
+  page's other gap. SKU Planning stays on the legacy statsforecast path for now, pending a wider
+  refactor, so run_forward_forecast.py and the fc_ tables remain in service.
