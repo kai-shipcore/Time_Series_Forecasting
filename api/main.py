@@ -2486,107 +2486,132 @@ def planning_demand_patterns(weeks: int = Query(default=52, ge=13, le=260)):
 
 
 @app.get("/planning/demand-vs-forecast")
-def planning_demand_vs_forecast(
-    window: str = Query(default="all"),
-):
-    """Weekly actual demand against what the model predicted for those weeks.
+def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=104)):
+    """Weekly demand against what the stored runs predicted for those weeks.
 
-    The visual form of the comparison grid: the grid gives one error figure per
-    segment and window, this shows the weeks those figures are made of.
+    The ML counterpart of the old Demand Forecast page's trajectory chart, and
+    read from the same kind of source: forecasts that were served before the
+    outcome was known, scored as their weeks complete. That page reads
+    `shipcore.fc_forward_forecasts` across many `forecast_date`s; this reads
+    `ml_forecast_history.parquet`, which accumulates one entry per run.
 
-    Two constraints shape it.
+    Not the backtest windows. Those are a different claim, already answered by
+    the comparison grid: the model refit at a cutoff and predicted forward
+    knowing the modelling choices had been made across the whole period. This
+    chart is about what the model actually said in advance, week by week.
 
-    Both series cover exactly the SKUs that have predictions, not every served
-    SKU. Predictions exist for the 260 backtestable SKUs while actuals exist for
-    all 447, and summing the wider population against the narrower one would
-    draw an actual line far above the forecast and read as heavy
-    under-forecasting when nothing is wrong.
+    Consequence while the store is young: `predicted` is empty until runs
+    accumulate, and the chart shows demand and the current forward horizon only.
+    That is the honest state rather than a defect, and it fills itself.
 
-    Nothing is predicted after the final test cutoff. That window is quarantined
-    (design doc Section 2.2), so the gap between the last backtest week and the
-    first forward week is left empty and labelled rather than filled in. Showing
-    a prediction there would spend the test.
-
-    There is no lead-in of earlier demand. Context weeks would have to be summed
-    over some chosen population, and any choice differs from the population of
-    the weeks beside them, putting a step in the line that means nothing.
+    No prediction band. The legacy statsforecast model emits conformal
+    intervals, which that chart drew around both the past predictions and the
+    forward horizon and used as a calibration check. The LightGBM track emits a
+    point forecast and nothing else.
     """
-    bt = _plan_data.load_backtest_weekly()
-    if bt.empty:
-        return JSONResponse({
-            "actual": [], "predicted": [], "forward": [],
-            "windows": [], "quarantine": None, "sku_count": 0, "version": None,
-        })
-
     from src.ml.serving.models import CURRENT_BEST
 
-    versions = bt["model_version"].unique().tolist()
-    version = CURRENT_BEST if CURRENT_BEST in versions else versions[0]
-    bt = bt[bt["model_version"] == version]
+    sales = _plan_data.load_sales()
+    scored = _hist.score_against_actuals(sales)
 
-    window_order = (
-        bt[["window", "cutoff"]].drop_duplicates().sort_values("cutoff")["window"].tolist()
-    )
-    if window != "all":
-        bt = bt[bt["window"] == window]
-    if bt.empty:
-        raise HTTPException(status_code=404, detail=f"No backtest weeks for window {window!r}")
-
-    # Both series come from the same rows, so they cover the same SKUs by
-    # construction rather than by a join that has to be kept honest. This file
-    # carries the actual alongside the prediction for exactly this reason.
-    #
-    # The population is not constant across the span: 66 SKUs are backtestable
-    # in Oct-Dec against 260 in Mar-May, because a SKU needs history reaching
-    # back before the window's cutoff. Summing actuals over the union instead
-    # put the demand line 24% above the forecast and read as heavy
-    # under-forecasting when nothing was wrong. Both lines step together at the
-    # window boundaries now, and `n_skus` is reported per week so the step is
-    # legible rather than mysterious.
-    per_week = (
-        bt.groupby("ds", as_index=False)
-        .agg(
-            predicted=("yhat", "sum"),
-            actual=("y", "sum"),
-            n_skus=("unique_id", "nunique"),
-            lead=("lead", "max"),
-        )
-        .sort_values("ds")
-    )
-
-    # Window boundaries, so the chart can mark where the population changes.
-    boundaries = (
-        bt.groupby("window", as_index=False)
-        .agg(start=("ds", "min"), end=("ds", "max"), n_skus=("unique_id", "nunique"),
-             cutoff=("cutoff", "first"))
-        .sort_values("cutoff")
-    )
-
-    skus = set(bt["unique_id"])
-
-    # The forward curve, restricted to the same SKUs so it continues the same
-    # quantity rather than stepping up to a wider population.
     fc = _plan_data.load_forecasts()
-    fc = fc[fc["unique_id"].isin(skus)]
-    forward = (
-        fc.groupby("ds", as_index=False)["yhat"].sum()
-        .rename(columns={"yhat": "value"})
-        .sort_values("ds")
-    )
+    version = None
+    if not fc.empty and "model_version" in fc.columns:
+        version = str(fc["model_version"].iloc[0])
+    version = version or CURRENT_BEST
 
-    cutoff = pd.Timestamp(_ML_FINAL_TEST_CUTOFF)
-    quarantine = {
-        "start": cutoff.date().isoformat(),
-        "end": forward["ds"].min().date().isoformat() if len(forward) else None,
-    }
+    def seg_of(df: pd.DataFrame) -> pd.Series:
+        """The grid's vocabulary: medium and full report together as long,
+        matching src/ml/evaluate.py and design Section 4.4."""
+        bucket = df.get("bucket", pd.Series("?", index=df.index)).fillna("?")
+        hist = df.get("history_length", pd.Series("?", index=df.index)).fillna("?")
+        return bucket + "/" + hist.replace({"medium": "long", "full": "long"})
+
+    def by_segment(df: pd.DataFrame, aggs: dict, extra_keys: list | None = None) -> pd.DataFrame:
+        keys = ["ds"] + (extra_keys or [])
+        frames = []
+        for seg, g in df.groupby("segment"):
+            a = g.groupby(keys, as_index=False).agg(**aggs)
+            a["segment"] = seg
+            frames.append(a)
+        a = df.groupby(keys, as_index=False).agg(**aggs)
+        a["segment"] = "all"
+        frames.append(a)
+        return pd.concat(frames, ignore_index=True).sort_values(["segment"] + keys)
+
+    # Forward horizon: the latest run only, which is what "the current forecast"
+    # means and what the old chart drew beyond the marker.
+    forward = pd.DataFrame(columns=["ds", "yhat", "v1", "n_skus", "segment"])
+    forward_run_date = None
+    fwd_skus: set = set()
+    if not fc.empty:
+        latest = fc["forecast_date"].max()
+        fc = fc[fc["forecast_date"] == latest].copy()
+        forward_run_date = latest.date().isoformat()
+        fwd_skus = set(fc["unique_id"])
+        fc["segment"] = seg_of(fc)
+        v1 = _plan_data.load_v1_forward()
+        if not v1.empty:
+            fc = fc.merge(v1[["unique_id", "ds", "v1_yhat"]], on=["unique_id", "ds"], how="left")
+        else:
+            fc["v1_yhat"] = float("nan")
+        forward = by_segment(fc, {
+            "yhat": ("yhat", "sum"),
+            "v1": ("v1_yhat", "sum"),
+            "n_skus": ("unique_id", "nunique"),
+        })
+
+    last_complete = _hist.last_complete_week()
+
+    # Past predictions, per (week, lead), exactly as the old endpoint reports
+    # them. Empty until the history store has runs whose weeks have closed.
+    predicted = pd.DataFrame(columns=["ds", "lead", "yhat", "n_skus", "forecast_date", "segment"])
+    leads: list = []
+    if not scored.empty:
+        scored = scored.copy()
+        scored["segment"] = seg_of(scored)
+        predicted = by_segment(
+            scored,
+            {
+                "yhat": ("yhat", "sum"),
+                "n_skus": ("unique_id", "nunique"),
+                "forecast_date": ("forecast_date", "max"),
+            },
+            extra_keys=["lead"],
+        )
+        leads = sorted(int(x) for x in scored["lead"].unique())
+
+    # Actuals over the same SKUs the forward horizon covers, so the demand line
+    # and the forecast line describe one population rather than two.
+    actual_skus = fwd_skus or (set(scored["unique_id"]) if not scored.empty else set())
+    hist_sales = sales[sales["unique_id"].isin(actual_skus)].copy()
+    start = last_complete - pd.Timedelta(weeks=history_weeks)
+    hist_sales = hist_sales[(hist_sales["ds"] >= start) & (hist_sales["ds"] <= last_complete)]
+    actuals = pd.DataFrame(columns=["ds", "y", "n_skus", "segment"])
+    if not hist_sales.empty:
+        prof = _plan_data.load_profiles()[["unique_id", "bucket", "history_length"]]
+        hist_sales = hist_sales.merge(prof, on="unique_id", how="left")
+        hist_sales["segment"] = seg_of(hist_sales)
+        actuals = by_segment(hist_sales, {
+            "y": ("y", "sum"),
+            "n_skus": ("unique_id", "nunique"),
+        })
+
+    segments = sorted(
+        set(actuals["segment"].unique() if not actuals.empty else [])
+        | set(forward["segment"].unique() if not forward.empty else [])
+    ) if True else []
+    segments = [s for s in segments if s != "all"]
 
     return JSONResponse({
-        "weekly": _jsonable(per_week),
-        "forward": _jsonable(forward[["ds", "value"]]),
-        "boundaries": _jsonable(boundaries),
-        "windows": window_order,
-        "window": window,
-        "quarantine": quarantine,
-        "sku_count": len(skus),
+        "actuals": _jsonable(actuals),
+        "predicted": _jsonable(predicted),
+        "forward": _jsonable(forward),
+        "segments": segments,
+        "leads": leads,
+        "last_complete_week": last_complete.date().isoformat(),
+        "forward_run_date": forward_run_date,
+        "runs_stored": int(_hist.runs().shape[0]),
         "version": version,
+        "has_intervals": False,
     })

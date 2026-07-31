@@ -1366,3 +1366,28 @@ detail lives in the design document and codebase guide, not here.
   Also recorded, from the same session: the AI assistant is retired rather than ported, the old
   page's other gap. SKU Planning stays on the legacy statsforecast path for now, pending a wider
   refactor, so run_forward_forecast.py and the fc_ tables remain in service.
+
+2026-07-30  Rebuilt the demand-versus-forecast chart on the right source, after two corrections.
+  First attempt was a simplified line chart built from the project notes rather than from reading
+  the component being ported. The real one carries a P85 band in three places, a bridge polygon and
+  connector across the gap, a forward curve anchored to the last actual, segment pills, a lead
+  selector that disables leads with no data, a V1 toggle, a four-cell summary strip with
+  conditional colouring, a last-complete-week marker, seaborn colours and a 680px canvas.
+  Second attempt matched the layout but read the wrong data. That chart plots forecasts that were
+  served before the outcome was known, taken from fc_forward_forecasts across many forecast_dates,
+  where lead N means the run made N weeks before the target week. I had used the backtest windows,
+  which are a different claim and one the comparison grid already answers. The ML counterpart is
+  ml_forecast_history, and src/ml/serving/history.score_against_actuals already returns exactly that
+  shape, so the endpoint now reads it.
+  Consequence worth stating plainly: the store holds no runs yet, so the predicted line is empty
+  and the chart shows demand and the current forward horizon only. It fills as the weekly runs
+  accumulate and their weeks close. Verified by simulating three stored runs, after which a week is
+  covered at several leads, which is what makes the most-recent-run selection a real choice rather
+  than a formality.
+  One capability gap recorded rather than worked around: the LightGBM track emits a point forecast
+  and no intervals, so the P85 band cannot be ported at all. The old chart used it as a calibration
+  check, the actual line leaving the band meaning the interval missed. The Action List's safety
+  stock uses measured per-SKU error instead, which is a different instrument.
+  Also corrected along the way: segment labels were being taken from today's sku_profiles.csv, which
+  labels an old row with a current classification. Segments now come from the per-SKU accuracy
+  report, as of each window, and every pill reconciles with its grid row exactly.
