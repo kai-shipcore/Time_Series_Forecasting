@@ -151,3 +151,97 @@ for how long. That is the correction the model needs.
 **Note on scope.** The reference screens the forecasting team designed are a way of measuring
 this, not the goal. The goal is a demand estimate that is not distorted by supply, which then
 flows into every number the dashboard shows.
+
+---
+
+## 5. Forecast Validation outlier lists rank by an unweighted error
+
+**Status:** identified, needs one decision.
+
+**The problem.** The page's headline is pooled WAPE, which is demand-weighted, and the page says
+so: errors are summed across SKUs before dividing, so heavier SKUs count more. The per-SKU
+outlier lists directly beneath it then rank by *unweighted* per-SKU WAPE delta. The section under
+the portfolio figure measures the opposite way from the figure.
+
+**What that costs.** The 30 rows shown carry 1.85% of scored demand. Median volume on the "model
+does worse" list is 33 units. The extremes are structural rather than real: maximum absolute delta
+is 4.9 in the 10-to-50-unit band against 0.5 in the 200-plus band, because a small denominator lets
+WAPE swing freely, so taking the top 15 by delta mechanically selects the smallest SKUs. The
+section is headed "the list to read first: these are where trusting the model costs more than
+trusting the sheet", and a planner following that instruction studies a 33-unit SKU.
+
+**What is buried by it.** Restricting to 200 units and above surfaces a coherent pattern: 8 SKUs of
+`CC-CN-03` and 4 of `CC-CP-03` in Dec-Feb, 7,082 units between them, where V1 runs 0.47 to 0.63 and
+the model 0.00 to 0.16. That is the actual story of why the model wins, and the current list hides
+it behind twenty-unit noise.
+
+**The decision.** A stated minimum volume, adjustable on the page rather than applied silently.
+The threshold is a judgement: 200 units gives 103 of 519 scored rows and a usable list, but the
+number should be chosen rather than inherited from this note.
+
+---
+
+## 6. Retiring the old Demand Forecast page
+
+**Status:** decided, mostly unblocked.
+
+**The decision.** `/planning/demand-forecast` is replaced by Action List and Forecast Validation.
+The AI assistant on it (`forecast-chat.tsx`) is retired rather than ported: it was a side project,
+nobody uses it, and its tool calls had been failing silently for the whole life of the deployment
+because `src/chat.py` addressed port 8001 where nothing listened.
+
+**What is already covered.** Demand concentration and segment mix by the demand-patterns section.
+Per-SKU trajectory, order quantity, reliability and both charts by the Action List SKU detail. The
+model-versus-spreadsheet comparison, per-SKU outliers and demand-against-forecast by Forecast
+Validation.
+
+**What is not yet covered**, and should be checked before deleting rather than assumed:
+`all-skus-table` (per-SKU demand, trend, year-on-year, CSV export), `segmentation-overview`
+(segment counts with per-cell model and error), `segment-detail-table` (1,773 lines, the per-SKU
+smooth and intermittent tables), and `model-details`.
+
+**The one timing constraint.** `accuracy-trend.tsx` plots error per run over time from the legacy
+`fc_forecast_history`, which has real accumulated history. Its replacement fills from
+`ml_forecast_history`, which was empty until the first weekly run appended to it. Retiring before
+that store has several settled runs swaps a working chart for an empty one.
+
+**Scope.** The page's 13 components are self-contained: nothing outside the folder imports them.
+The only cross-folder import is SKU Planning pulling its own `demand-forecast-tab`, which is a
+different folder.
+
+**Explicitly out of scope.** SKU Planning stays on the legacy statsforecast path, pending a wider
+website refactor by a colleague. That keeps `run_forward_forecast.py`, the `shipcore.fc_*` tables
+and the Monday 9am cron in service, so retiring this page does not retire the legacy track.
+
+---
+
+## 7. The Run Forecast button and who owns the data files
+
+**Status:** resolved by the retirement above; the facts recorded so the resolution is checkable.
+
+**What the button does.** `POST /run-forecast` spawns `scripts/run_forward_forecast.py`, which
+writes its forecasts to the database (`shipcore.fc_forward_forecasts`), not to files. On the way it
+runs ingest, clean and profile, and those do write to disk: `sales_clean.parquet` and
+`sku_profiles.csv`, both of which the weekly data push also sends. Two writers, but both derived
+from the same database, so the server's copy would be fresher rather than wrong.
+
+**The real issue, and why the retirement settles it.** The button refreshes the legacy forecast the
+old page reads. It does not regenerate `ml_forward_forecasts.parquet`, so Action List and Forecast
+Validation do not move when it is pressed, while `sku_profiles.csv` does, shifting segmentation
+underneath a forecast file that did not change. The button lives only on the page being retired, so
+it goes with the page. If a manual trigger is ever wanted again, it should run the ML pipeline too
+or say plainly which half it refreshes.
+
+---
+
+## 8. Node version disagrees with what the project declares
+
+**Status:** open, needs a decision rather than work.
+
+`Commerce_Integration/package.json` declares `engines.node` as `>=20.9 <24`. The development
+machine runs v24.2.0, which npm reports as `EBADENGINE` on every install. Either the range is stale
+and should be widened deliberately after testing, or the machine should move to Node 22 LTS, which
+is inside it. Widening the range to match whatever happens to be installed is the same move as
+relaxing a version pin to make an install succeed. Worth checking what the deployment server runs
+while this is being decided: a major-version difference between there and a laptop is the usual
+shape of "works locally, fails in production".

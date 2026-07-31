@@ -1421,3 +1421,20 @@ detail lives in the design document and codebase guide, not here.
   checked before the weekly runs build up.
 
 --- SUMMARY PRODUCED 2026-07-30 (covering the 2026-07-30 entries above) ---
+
+2026-07-31  Wrote down the decisions and open questions that existed only in conversation.
+  Four items added to BACKLOG.md. The outlier lists on the validation page rank by an unweighted
+  per-SKU error while the headline above them is demand-weighted, so the thirty rows shown carry
+  under two percent of scored demand; the fix needs a threshold chosen rather than inherited.
+  Retiring the old Demand Forecast page, including what the new pages already cover, the four
+  components whose replacements have not been checked, and the timing constraint that its
+  accuracy-over-time chart has real history while the replacement fills from an empty store. The
+  Run Forecast button, recorded with the facts behind it so the conclusion is checkable rather
+  than remembered. And the Node version disagreeing with what package.json declares.
+  Two dependency notes added to Commerce_Integration/CLAUDE.md: that the nodemailer advisories
+  were never reachable in this codebase, checked option by option, so it is not re-litigated at
+  the next audit; and how to read npm audit here, since its forced fix proposes downgrading Next
+  by six major versions.
+  Current state for anyone picking this up: both repos are on main and clean, the forecast history
+  store holds six fabricated runs labelled v11-SAMPLE, and the first real weekly run retires them
+  without intervention.
