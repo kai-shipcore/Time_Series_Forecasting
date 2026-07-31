@@ -1407,3 +1407,17 @@ detail lives in the design document and codebase guide, not here.
   keep apart. And deriving fabricated predictions from actuals gave near-zero forecasts beyond the
   end of history, making later runs look like they forecast almost nothing; weeks past the last
   actual now fall back to each SKU's recent mean, so a stored horizon is shaped like a forecast.
+
+--- DAILY SUMMARY 2026-07-30 ---
+- Finished moving the forecasting service onto the company server, so colleagues can use it
+  without installing anything themselves.
+- Caught two faults before switching over: the update process would have deleted its own data,
+  and the AI assistant had been answering questions without ever reading any.
+- Replaced a spreadsheet library that was abandoned four years ago, and updated the email
+  library used for password resets.
+- Rebuilt the accuracy comparison table so it reads at a glance, and added whether the model
+  over- or under-predicts, which was being calculated and thrown away.
+- Added the demand-against-forecast chart from the old page, with sample data so it can be
+  checked before the weekly runs build up.
+
+--- SUMMARY PRODUCED 2026-07-30 (covering the 2026-07-30 entries above) ---
