@@ -2567,8 +2567,21 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
     # them. Empty until the history store has runs whose weeks have closed.
     predicted = pd.DataFrame(columns=["ds", "lead", "yhat", "n_skus", "forecast_date", "segment"])
     leads: list = []
+    history_version = None
     if not scored.empty:
-        scored = scored.copy()
+        # One version at a time. The store is built to hold several so they can
+        # be compared, which means summing them here would add two models'
+        # predictions into a single line. Prefer the version the current forward
+        # forecast came from; fall back to whichever version ran most recently,
+        # so a store holding only sample or older rows still renders.
+        available = scored["model_version"].unique().tolist()
+        if version in available:
+            history_version = version
+        else:
+            history_version = (
+                scored.sort_values("forecast_date")["model_version"].iloc[-1]
+            )
+        scored = scored[scored["model_version"] == history_version].copy()
         scored["segment"] = seg_of(scored)
         predicted = by_segment(
             scored,
@@ -2613,5 +2626,9 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
         "forward_run_date": forward_run_date,
         "runs_stored": int(_hist.runs().shape[0]),
         "version": version,
+        # Which version the predicted line is actually drawn from. Differs from
+        # `version` when the store has no rows for the current model, which is
+        # exactly the case while seeded sample data is standing in for real runs.
+        "history_version": history_version,
         "has_intervals": False,
     })

@@ -1391,3 +1391,19 @@ detail lives in the design document and codebase guide, not here.
   Also corrected along the way: segment labels were being taken from today's sku_profiles.csv, which
   labels an old row with a current classification. Segments now come from the per-SKU accuracy
   report, as of each window, and every pill reconciles with its grid row exactly.
+
+2026-07-30  Added scripts/seed_forecast_history.py so the chart can be reviewed before real runs land.
+  The demand-versus-forecast chart reads the accumulating history store, which gains one entry per
+  weekly run, so on a fresh store there is nothing to draw and no way to look at the thing working
+  until several Mondays have passed. The script fabricates weekly runs from actual sales with error
+  that widens with lead.
+  Two properties make it safe to leave lying around. The rows carry a model version ending in
+  -SAMPLE, and the serving endpoint prefers the version the current forward forecast came from, so
+  a single real run makes the sample invisible without anyone remembering to clean up. Verified by
+  writing a real-looking v11 run and watching the endpoint switch to it. The page also shows an
+  amber banner naming the version whenever the predicted line is not from the current model.
+  Two faults found while building it. The endpoint was not filtering the store by model version,
+  so two versions would have been summed into one line, which the store exists specifically to
+  keep apart. And deriving fabricated predictions from actuals gave near-zero forecasts beyond the
+  end of history, making later runs look like they forecast almost nothing; weeks past the last
+  actual now fall back to each SKU's recent mean, so a stored horizon is shaped like a forecast.
