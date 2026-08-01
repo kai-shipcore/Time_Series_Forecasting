@@ -1,8 +1,13 @@
+# Only the two live data directories, not data/ as a whole. data/snapshots/ and
+# data/dev_seed/ are tracked on purpose: the first pins the ML evaluation inputs
+# so results stay comparable, the second is what lets a fresh clone serve at all.
+# Both are immutable, and the deploy excludes data/ entirely, so neither can
+# reach the server or be overwritten by the weekly cron.
 data/raw/
 data/processed/
 logs/
 
-# Generated artifacts, with two exceptions below.
+# Generated artifacts, with three exceptions below.
 #
 # Most of outputs/ is experiment scratch: plots from hypotheses already settled
 # and multi-megabyte CV dumps. Git keeps every version forever, so committing
@@ -14,6 +19,15 @@ logs/
 # "this model beats the spreadsheet" lived in one working directory and was one
 # `rm -rf outputs/` from gone. Together they are 130 KB.
 #
+# ml_backtest_weekly.csv is the per-week detail underneath ml_accuracy_by_sku,
+# and the script that writes it refuses unless the two reconcile exactly, so it
+# is the same evidence at a finer grain rather than a separate artifact. It is
+# also the file a fresh clone needs for the backtest chart to draw anything: the
+# planning service treats it as optional and degrades to a totals-only view, so
+# untracked it made a working feature look unbuilt on every machine but this one.
+# At 430 KB it is larger than the pair above and rewritten per model version,
+# which is a real cost accepted deliberately rather than overlooked.
+#
 # Written as outputs/* rather than outputs/, because git cannot re-include a
 # file whose parent directory is excluded.
 outputs/*
@@ -21,6 +35,7 @@ outputs/*
 outputs/reports/*
 !outputs/reports/ml_accuracy.csv
 !outputs/reports/ml_accuracy_by_sku.csv
+!outputs/reports/ml_backtest_weekly.csv
 
 __pycache__/
 *.py[cod]

@@ -16,6 +16,12 @@ The alternative, everyone running the service locally, is what produced the
 original problem: a fresh clone has the code and none of the data, so the
 service starts, answers a liveness check, and raises on every real request.
 
+That is still the right answer for anyone who only wants to read a forecast. It
+is the wrong answer for someone working on the planning pages themselves, who
+needs the service in front of them. See "Running it locally" below: since
+`data/dev_seed` was added, that no longer requires a database or a copy of
+anyone's working tree.
+
 ## Two owners, no overlap
 
 | What | Owner | Arrives by |
@@ -23,11 +29,44 @@ service starts, answers a liveness check, and raises on every real request.
 | Code | GitHub Actions, on push to `main` | `rsync` from the checkout |
 | Data | The weekly cron on the machine that runs the forecast | `scripts/push_data_to_server.sh` |
 
-Nothing owns both, deliberately. `data/` and `outputs/` are gitignored, so the
-deploy's checkout does not contain them; the deploy therefore excludes both
-paths, which under `rsync --delete` means "do not upload" and equally "do not
-destroy". Without those excludes every deploy would wipe the server's data and
-leave the API serving 500s until the next Monday.
+Nothing owns both, deliberately. The deploy excludes `data/` and `outputs/`,
+which under `rsync --delete` means "do not upload" and equally "do not destroy".
+Without those excludes every deploy would wipe the server's data and leave the
+API serving 500s until the next Monday.
+
+Those excludes are not a restatement of `.gitignore`, and reading them that way
+is a mistake this document used to make. `.gitignore` covers `data/raw/`,
+`data/processed/` and most of `outputs/`, but `data/snapshots/`, `data/dev_seed/`
+and three CSVs under `outputs/reports/` are tracked on purpose. The deploy
+excludes those paths anyway, because the rule is about ownership rather than
+about what happens to be in git: the cron owns the server's data, and the deploy
+declines to touch it. Adding a tracked file under `data/` therefore cannot reach
+the server, which is exactly the property that makes a committed development
+fixture safe.
+
+## Running it locally
+
+For working on the planning pages. Not for figures to act on: the seed is frozen
+at the week of 2026-07-20, and the current forecast lives on the deployed app.
+
+```bash
+git clone <this repo> && cd Time_Series_Forecasting
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python scripts/seed_dev_data.py
+.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+`GET /health` should then report `ready: true` with an empty `missing_required`.
+
+No `.env` and no database access are needed for any of this. The seed copies
+four files that are already in the repository into `data/processed/`, which is
+gitignored and therefore the one thing a clone lacks. It refuses to overwrite an
+existing `data/processed/`, so running it on the cron machine is safe.
+
+Demand Pilot starts this service itself when `AI_SERVICE_URL` is localhost, so
+in practice the last command is only needed to see startup errors directly. If
+the planning pages report that the server has no data to read, the card names
+the seed command.
 
 ## Required GitHub secrets
 

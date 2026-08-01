@@ -183,23 +183,32 @@ def load_backtest_weekly() -> pd.DataFrame:
 #: bare "Internal Server Error" and sends the reader looking for a bug in the
 #: application. Naming the missing file is the difference between a five minute
 #: fix and an afternoon.
+#:
+#: Every required file, and two of the optional ones, can be put in place by
+#: ``scripts/seed_dev_data.py`` from data already in the repository. So the
+#: message a reader gets names that rather than the pipeline script that
+#: originally produced the file: on a machine with no database and no
+#: virtualenv, "run the forward forecast" is not an instruction anyone can
+#: follow, and it was the reason this failure state read as a dead end.
+SEED_SCRIPT = "scripts/seed_dev_data.py"
+
 _DATA_FILES: list[tuple[str, Path, bool, str]] = [
     ("forecast", FORWARD_FORECAST, True,
-     "scripts/ml_forward_forecast.py"),
+     f"{SEED_SCRIPT}, or scripts/ml_forward_forecast.py for a real run"),
     ("sales", SALES_CLEAN_PARQUET, True,
-     "the weekly ingest, or scripts/export_forecast_history.py"),
+     f"{SEED_SCRIPT}, or the weekly ingest"),
     ("profiles", SKU_PROFILES, True,
-     "scripts/ml_forward_forecast.py"),
+     f"{SEED_SCRIPT}, or scripts/ml_forward_forecast.py for a real run"),
     ("accuracy", ML_ACCURACY, False,
-     "scripts/ml_evaluate.py"),
+     "scripts/ml_evaluate.py (tracked in git; absent means a partial checkout)"),
     ("accuracy_by_sku", ML_ACCURACY_BY_SKU, False,
-     "scripts/ml_evaluate.py"),
+     "scripts/ml_evaluate.py (tracked in git; absent means a partial checkout)"),
     ("backtest_weekly", BACKTEST_WEEKLY, False,
-     "scripts/ml_backtest_weekly.py"),
+     "scripts/ml_backtest_weekly.py (tracked in git; absent means a partial checkout)"),
     ("v1_forward", V1_FORWARD, False,
-     "scripts/v1_forward.py"),
+     f"{SEED_SCRIPT}, or scripts/v1_forward.py for a real run"),
     ("inventory", INVENTORY_SNAPSHOT, False,
-     "scripts/export_inventory_snapshot.py"),
+     "scripts/export_inventory_snapshot.py (tracked in git; absent means a partial checkout)"),
 ]
 
 
@@ -350,6 +359,19 @@ def inventory_columns() -> list[str]:
     adds it to its own stock total, so it is exported to keep the two comparable,
     but what it counts is not documented anywhere and it may overlap
     ``confirmed_inbound``. Until that is settled it is reported, not consumed.
+
+    ``draft_inbound`` is units on containers still in draft: an order that exists
+    but is not committed. Also reported and not consumed, but for a different and
+    deliberate reason. A draft can be cancelled, so crediting it against the
+    recommended quantity would under-order the SKUs someone has already acted on.
+    It is shown beside the recommendation so a purchaser can see that an order
+    exists, while the arithmetic continues to assume it does not.
+
+    Absence of a draft row is a real zero, exactly as for ``confirmed_inbound``:
+    both come from container line items, so no matching row means no units. An
+    export written before these columns existed reads as zero too, which is
+    correct enough, because how far the whole export can be trusted is already
+    reported once by ``inventory_source`` rather than per column.
     """
     return [
         "unique_id",
@@ -358,6 +380,8 @@ def inventory_columns() -> list[str]:
         "preorder_backlog",
         "confirmed_inbound",
         "inbound_eta",
+        "draft_inbound",
+        "draft_eta",
         "transit_stock",
     ]
 

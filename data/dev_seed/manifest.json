@@ -1,0 +1,33 @@
+{
+  "purpose": "Development seed. The two forward-forecast files a fresh clone needs to make the planning endpoints serve. NOT the current forecast: it is the run trained through 2026-07-20 and is frozen there on purpose.",
+  "snapshot": "2026-07-20",
+  "sales_last_week": "2026-07-20",
+  "forecast_date": [
+    "2026-07-20"
+  ],
+  "horizon": [
+    "2026-07-27",
+    "2026-10-19"
+  ],
+  "model_version": [
+    "v11"
+  ],
+  "run_at": [
+    "2026-07-24T16:41:33+00:00"
+  ],
+  "skus": 447,
+  "rows": {
+    "ml_forward_forecasts": 5811,
+    "v1_forward_forecasts": 5811
+  },
+  "files": {
+    "ml_forward_forecasts.parquet": {
+      "md5": "fa2edafe5aba572a3e55aa8bb1349a75",
+      "bytes": 49082
+    },
+    "v1_forward_forecasts.parquet": {
+      "md5": "13ac251613b4ab682ba53ba0b83b16d3",
+      "bytes": 23080
+    }
+  }
+}

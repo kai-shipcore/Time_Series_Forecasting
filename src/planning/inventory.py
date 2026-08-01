@@ -53,6 +53,28 @@ _cached: tuple[float, pd.DataFrame] | None = None
 # deliberately excluded.
 CONFIRMED_STATUSES = ("shipped", "packing_received")
 
+# Containers where an order exists but is not yet committed. The Google Sheet
+# import sets status from the header colour: blue 'shipped', orange
+# 'packing_received', purple or uncoloured 'draft'. So this is where a container
+# sits between someone deciding to order and the packing list arriving, which at
+# an eight-week lead time is long enough to order the same units twice.
+#
+# Read from the same two tables the Container Planning screens use, so the two
+# cannot disagree about what has been drafted. Reported separately and never
+# added to confirmed inbound: see the note on the query below.
+DRAFT_STATUSES = ("draft",)
+
+
+def _status_list(statuses: tuple[str, ...]) -> str:
+    """Render a status tuple as a SQL IN list.
+
+    Not f-string interpolation of the tuple itself. A one-element Python tuple
+    renders as ``('draft',)`` and that trailing comma is a syntax error in
+    Postgres, so interpolating directly works for the two-element constant above
+    and breaks silently the day either list has one entry.
+    """
+    return "(" + ", ".join(f"'{s}'" for s in statuses) + ")"
+
 
 def _engine(prefix: str):
     """SQLAlchemy engine from ``{prefix}_*`` environment variables, or None.
@@ -127,8 +149,34 @@ def _sql():
                    MIN(c.eta_date) AS inbound_eta
             FROM shipcore.fc_container_items ci
             JOIN shipcore.fc_containers c ON c.id = ci.container_id
-            WHERE c.status IN {CONFIRMED_STATUSES}
+            WHERE c.status IN {_status_list(CONFIRMED_STATUSES)}
               AND c.eta_date >= CURRENT_DATE
+              AND ci.master_sku IN :skus
+            GROUP BY ci.master_sku
+        """),
+        # Same two tables, same join, different status and a different ETA rule.
+        #
+        # The ETA rule is the part worth reading. Confirmed inbound floors at
+        # today because a container still marked shipped after its ETA is stale
+        # bookkeeping. A draft is the opposite case: it has often not been
+        # scheduled yet, so a null ETA is the normal state of a container that
+        # was drafted this week, and applying the same floor would drop exactly
+        # the newest drafts, which are the ones that make a SKU look unordered.
+        # So nulls are kept and only a date already in the past is excluded.
+        #
+        # These units are never added to confirmed inbound. A draft is not a
+        # commitment and can be cancelled, so crediting it against the
+        # recommendation would under-order the SKUs someone has already worried
+        # about. It is reported alongside instead, and the screen shows the
+        # disagreement rather than resolving it.
+        "draft": q(f"""
+            SELECT ci.master_sku,
+                   SUM(ci.qty)     AS draft_inbound,
+                   MIN(c.eta_date) AS draft_eta
+            FROM shipcore.fc_container_items ci
+            JOIN shipcore.fc_containers c ON c.id = ci.container_id
+            WHERE c.status IN {_status_list(DRAFT_STATUSES)}
+              AND (c.eta_date IS NULL OR c.eta_date >= CURRENT_DATE)
               AND ci.master_sku IN :skus
             GROUP BY ci.master_sku
         """),
@@ -187,13 +235,14 @@ def fetch(skus: list[str], diagnostics: bool = False) -> pd.DataFrame | None:
             snapshot_at = conn.execute(sql["snapshot_at"]).scalar()
         with primary.connect() as conn:
             inbound = pd.read_sql(sql["inbound"], conn, params={"skus": skus})
+            draft = pd.read_sql(sql["draft"], conn, params={"skus": skus})
             names = pd.read_sql(sql["names"], conn, params={"skus": skus})
             transit = pd.read_sql(sql["transit"], conn, params={"skus": skus})
     except Exception:
         return None
 
     out = pd.DataFrame({"unique_id": list(skus)})
-    for frame in (names, stock, inbound, transit):
+    for frame in (names, stock, inbound, draft, transit):
         out = out.merge(frame, left_on="unique_id", right_on="master_sku",
                         how="left").drop(columns=["master_sku"], errors="ignore")
 
@@ -205,7 +254,8 @@ def fetch(skus: list[str], diagnostics: bool = False) -> pd.DataFrame | None:
     # numeric columns rather than just that one, because the same holds for any
     # of them the moment a query returns nothing.
     for col in ("available_inventory", "on_hand_physical", "allocated",
-                "preorder_backlog", "confirmed_inbound", "transit_stock"):
+                "preorder_backlog", "confirmed_inbound", "draft_inbound",
+                "transit_stock"):
         out[col] = pd.to_numeric(out[col], errors="coerce")
 
     # Defensive: backorder has never been negative in this source, so this is a
@@ -215,12 +265,19 @@ def fetch(skus: list[str], diagnostics: bool = False) -> pd.DataFrame | None:
     # unlike the stock columns above where absence means "no record at all" and
     # must stay null so it can be told apart from a recorded zero.
     out["confirmed_inbound"] = out["confirmed_inbound"].fillna(0).astype(int)
+    # Same reasoning as confirmed inbound: the query ran and matched no line
+    # items, which is a real zero. That is distinct from the column being absent
+    # entirely, which is what an older exported CSV gives and which must stay
+    # null so the screen can decline to claim that nothing is drafted.
+    out["draft_inbound"] = out["draft_inbound"].fillna(0).astype(int)
     out["transit_stock"] = out["transit_stock"].fillna(0).astype(int)
-    out["inbound_eta"] = pd.to_datetime(out["inbound_eta"], errors="coerce").dt.strftime("%Y-%m-%d")
-    out["inbound_eta"] = out["inbound_eta"].where(out["inbound_eta"].notna(), "")
+    for col in ("inbound_eta", "draft_eta"):
+        out[col] = pd.to_datetime(out[col], errors="coerce").dt.strftime("%Y-%m-%d")
+        out[col] = out[col].where(out[col].notna(), "")
 
     keep = ["unique_id", "product_name", "available_inventory", "preorder_backlog",
-            "confirmed_inbound", "inbound_eta", "transit_stock"]
+            "confirmed_inbound", "inbound_eta", "draft_inbound", "draft_eta",
+            "transit_stock"]
     if diagnostics:
         keep += ["on_hand_physical", "allocated"]
     out = out[keep]

@@ -1438,3 +1438,253 @@ detail lives in the design document and codebase guide, not here.
   Current state for anyone picking this up: both repos are on main and clean, the forecast history
   store holds six fabricated runs labelled v11-SAMPLE, and the first real weekly run retires them
   without intervention.
+
+2026-07-31  Gave the Forecast Validation outlier lists a stated minimum volume, defaulting to 100 units.
+  The page headline is pooled WAPE, which is demand-weighted, while the two per-SKU lists beneath it
+  ranked by an unweighted difference between the model's WAPE and V1's. Both are divided by the same
+  actual, so the difference is bounded by that denominator, and the report bears this out: the largest
+  absolute delta is 4.94 in the 10-to-50-unit band against 0.48 above 500 units. Taking the top fifteen
+  by delta therefore selected the smallest SKUs rather than the ones the model handles worst, and the
+  thirty rows shown carried 1.8 percent of scored demand under a heading telling a planner to read them
+  first.
+  The threshold was chosen from the distribution rather than inherited from the note that raised the
+  problem. At 100 units, 223 of 572 scored rows and 78 percent of scored demand stay eligible. The
+  stricter candidates buy a cleaner ranking by emptying the pool: 200 leaves 103 rows, 500 leaves 41,
+  at which point a top fifteen is over a third of everything eligible and is no longer an extreme of
+  anything. Presets of 0, 100, 200, 300 and 500 are on the page, and the active threshold is displayed
+  next to what it leaves, in rows and in share of scored demand, because the number is a judgement and
+  a reader who cannot see it cannot weigh it.
+  The endpoint now sends the whole scored pool, 572 rows and about 100 KB, instead of two ranked lists.
+  Ranking server-side would have fixed the threshold at whatever the endpoint chose, which is the thing
+  being removed. Verified by replaying the client's filter and slice against pandas: the lists match
+  nlargest and nsmallest exactly at 0, 100 and 200 units, and the displayed shares reproduce the
+  computed distribution.
+  Worth recording because it was the argument for the threshold: the CC-CN-03 and CC-CP-03 pattern the
+  backlog said was buried does surface at the chosen default. The improvements list goes from 957 units
+  across three product families to 4,823 across four.
+  Two states are called out on the page rather than left to be inferred. Selecting no minimum shows why
+  the ranking then reflects size rather than error, and a threshold leaving fewer than thirty eligible
+  rows warns that a SKU can appear in both lists, since both are drawn from one pool.
+
+2026-07-31  Fixed the Action List reliability sort, and took three model-facing details off the purchaser screens.
+  Sorting by Reliability interleaved the unmeasured SKUs with the measured ones at what looked like random
+  positions. The column prints each SKU's own measured error, or "n/a" where no backtest window covers it,
+  but it sorted on a second figure: the error safety stock actually spends, which for an unmeasured SKU is a
+  substituted cohort or segment value. On the current table 174 of 432 SKUs are unmeasured, 158 of them
+  carrying 0.199 and 16 carrying 0.240, against measured errors spanning 0.006 to 1.823. So the "n/a" block
+  parked itself at 0.199 in the ordering with 142 measured rows above it and 116 below. The column now sorts
+  on the figure it prints, which lets the existing blanks-last rule fire for the first time. Verified by
+  replaying the table's own sort against the live planning table: the unmeasured rows move from scattered
+  positions 79 to 289 into a contiguous block at 258 to 431, in both directions. The substituted figure was
+  the only thing the sort exposed about an unmeasured SKU, so the cell now names it on hover rather than
+  losing it.
+  Removed the history-length split from the Action List and the SKU detail page: the filter, and the word
+  in every row's subtitle on both screens. Checked against the data before cutting it rather than on taste.
+  The two groups do differ, 0.121 pooled WAPE across 80 long SKUs against 0.197 across 352 short ones, but
+  the reliability column already carries that at SKU resolution and by measurement rather than inference.
+  Using the group as a trust signal would actively mislead: 16% of long SKUs sit in the poor tier and 19% of
+  short ones in the good tier, so a reader following the group would treat a long and poor SKU more gently
+  than a short and good one. The bias gap, +4.3% against -0.2%, is too small to move an order quantity. The
+  one thing the split marked is that 174 of the 352 short SKUs have no measurement at all, and the "not
+  measured" tier already says so, is already filterable, and identifies exactly the affected SKUs instead of
+  a group that is half measured. Forecast Validation keeps the split, where the vocabulary is correct and
+  the reader is the modeller.
+  Also removed the SKU count from the Action List provenance bar, where it was the third copy of one number.
+  The same figure is the count on the Forecast tab of the section toggle and the figure on the first summary
+  chip, and three copies crowded the two things in that bar that have to be read, namely how old the forecast
+  is and whether the stock figures are real.
+
+2026-07-31  Reworked the Action List summary row and made the portfolio chart's two spans adjustable.
+  The row of counts at the top of the page had a total that behaved unlike everything beside it. Five of the
+  six narrowed the list; the first widened it back to everything, while wearing the same box and the same
+  large-number treatment as the statistics. It was removed and then restored on the owner's judgement, which
+  was the right call: the total and the one-click way out of a filter are both worth having. What it needed
+  was not deletion but separation, so it now sits ahead of the five conditions with a rule between them and
+  reads as the neutral position of a group rather than a sixth condition. Selecting an active condition also
+  clears it now, so stepping back one decision no longer costs the search, the category, the reliability tier
+  and the sort, which is what Reset does.
+  The recommended-units total beside them now counts the rows on screen rather than the whole list, with the
+  list total kept underneath whenever a filter is narrowing the view. There were previously two totals in two
+  visual languages a few inches apart, and the one answering "what am I about to buy" was the one rendered as
+  small grey text at the end of the filter row.
+  The portfolio chart is collapsed by default. Open, it put 460px of chart plus controls above the first table
+  row on the one screen whose job is what to order today, and the same question is answered twice on Forecast
+  Validation with better instruments. Both of its spans are now selectable: history at 13, 26, 52 or 104 weeks,
+  which refetches because the server holds the weekly series, and the forecast horizon at 4, 8, 13 weeks or all
+  of it, trimmed in the browser because the whole horizon is already in hand. The forecast presets are filtered
+  against what the run actually produced, so a 13-week horizon does not offer a 26-week view that would quietly
+  show 13.
+  Also renamed "chip" out of the code. It was never a term this project defined, and it appeared in comments
+  and in two variable names as though it were.
+
+2026-07-31  Made the Action List data-quality warnings filterable, and put the inbound date beside the quantity.
+  The warning line named the flagged SKUs and then left the reader to find them, on a page where every other
+  count is a way into the work. Each warning is now a control: one for every flagged row, one per named
+  warning. The counts are taken over the rows the other filters left rather than over the final view, so
+  selecting one warning does not hide the others and strand the reader in the one place they cannot switch
+  from. A warning that loses all its rows to a later filter change stays on screen at zero so the selection
+  can be cleared, rather than vanishing and leaving an empty table unexplained.
+  The confirmed-inbound column showed a quantity and no date. The ETA did exist on the row, but only rendered
+  in the stockout cell and only when the container lands too late to help, which is 128 of the 376 rows
+  carrying inbound. The other 248 read as "500 units, at some point". The column now carries days-to-arrival
+  under the quantity, with the calendar date on hover. Days rather than the date because the question asked of
+  that cell is whether it beats the stockout figure a few columns over, which is also in days.
+  That made the stockout cell's own annotation a duplicate, since it printed the same arrival figure. It now
+  prints the gap instead, the days the SKU spends at zero between running dry and being refilled, which the
+  row already carried and nothing displayed. The reader was previously expected to subtract one column from
+  another. On the current table 128 rows carry a gap, median 12 days and up to 43, and none of them can close
+  it by ordering today, so that mark is also the only thing on the row saying the recommended quantity will
+  not help.
+  Recorded the CSV export as backlog item 5 rather than fixing it. It builds its header from the row object,
+  so the file carries about forty internal field names instead of the ten columns on screen. Deferred because
+  nobody is using the export yet, and because the fix contains a decision about which columns belong in a
+  file as opposed to on a screen.
+
+2026-07-31  Fixed two long-standing rendering faults in the planning tables' sticky headers.
+  Body rows were visible through the Priority column while scrolling. Every sticky header cell needs an
+  opaque background of its own, since a cell that inherits nothing is transparent and the rows travelling
+  underneath show straight through it. Every cell in that row had one except Priority, which was the only
+  column belonging to no colour band and so was the only one passed no background class.
+  A hairline also ran between the two header rows, through which content was visible. The second row was
+  pinned at 28px to sit flush under a 28px band row, but the row's bottom border sits outside that height,
+  so the two did not meet. The second row is now pinned one pixel higher so they overlap instead of abut.
+  Both rows are opaque, so an overlap cannot be seen where the gap plainly could. The band row also gained a
+  rule beneath it, drawn as an inset shadow rather than a border: the table collapses its borders, and a
+  collapsed border belongs to the table's border grid rather than to the cell, so it does not travel with a
+  cell lifted out of flow by sticky positioning.
+  The non-forecast table had copied these constants rather than sharing them, so it carried the same hairline.
+  It now imports them, which is the point of the shared constant.
+
+2026-07-31  Made a fresh clone able to run the forecast service, so the planning pages can be worked on
+  without a database or a copy of anyone's working tree.
+  A colleague could not start the service locally. The cause was not the start-up code, which already
+  reports a missing virtualenv and a wrong FORECAST_SERVER_DIR clearly. It was that data/processed/ is
+  gitignored, so a clone has the code and none of the three files the planning endpoints require, and the
+  service therefore starts, answers its liveness check, and raises on every real request.
+  Two of those three were already in the repository, pinned under data/snapshots/2026-07-20/ and not
+  ignored. Only the forward forecast was missing anywhere in git, at 49 KB. So the fix was a seed step
+  rather than a data handover: added data/dev_seed/ holding the forward forecast and its V1 counterpart
+  (72 KB together), and scripts/seed_dev_data.py, which copies those plus the pinned sales and profile
+  files into data/processed/.
+  The seeded pair is exactly consistent, which was luck worth recording. The committed forecast was
+  trained through 2026-07-20, the same week the pinned snapshot's sales history ends, so the seeded
+  history and the seeded forecast meet with no gap. Live data/processed/ has since moved to 2026-07-27
+  and is now a worse match for that forecast than the snapshot is. The seed script checks this equality
+  and refuses to run if the two ever drift apart.
+  It also refuses to overwrite an existing data/processed/ without --force, because on the machine that
+  runs the weekly cron those files are live and newer, and silently replacing them with a frozen July copy
+  would be the worst thing the script could do.
+  Tracked outputs/reports/ml_backtest_weekly.csv alongside the two accuracy reports it reconciles with.
+  It is optional to the service and degrades to a totals-only chart, which meant an untracked file made a
+  working feature look unbuilt on every machine but this one. 430 KB, rewritten per model version, which
+  is a real cost taken deliberately.
+  The failure messages now name the seed script instead of the pipeline script that originally produced
+  each file. "Run the forward forecast" is not an instruction anyone can follow on a machine with no
+  database, and naming it was the reason this state read as a dead end. The Demand Pilot error card shows
+  the command itself, above the list of what is missing.
+  Corrected DEPLOYMENT.md, which claimed data/ and outputs/ are gitignored and gave that as the reason the
+  deploy excludes them. Both are now partly tracked, and the excludes are about ownership rather than
+  about git: the cron owns the server's data and the deploy declines to touch it. That distinction is what
+  makes a committed fixture safe, since nothing under data/ is ever rsynced to the server. Added a
+  "Running it locally" section with the four commands.
+  Verified against a genuine clone: at HEAD it has neither data/processed/ nor a forward forecast; after
+  the seed, readiness() reports ready with nothing missing, required or optional, and the planning table
+  builds 447 rows with real recommendations.
+
+2026-07-31  Audited the SKU Detail and Forecast Validation pages against the purchaser's questions in
+  dashboard/PLAN.md, and fixed the one defect the audit turned up.
+  SKU Detail's header said "Trained through" and showed the first week of the forecast horizon, which is
+  one week later than the training cutoff by construction. So the page reported 2026-07-27 where the
+  Action List, reading the forecast file's own forecast_date, correctly reported 2026-07-20. Two screens
+  disagreeing about how old a number is, in the one place a purchaser looks to decide whether it is stale.
+  The cause was that the SKU detail endpoint did not return the figure at all, so the page inferred it.
+  It now returns trained_through from the same source the list uses, and the page reads it.
+  Confirmed the Forecast Validation page is not a purchaser's screen and should not become one. The plan
+  classes it as the administrator view and says it is visited deliberately rather than during purchasing
+  work. The one question on it a purchaser would ask, whether a number can be trusted, is already answered
+  per SKU by the reliability card at the moment of the decision, which is the better place for it: a
+  pooled portfolio error says nothing about the SKU in front of them.
+  Noted that a purchaser currently sees five Planning entries in the navigation, two of them the legacy
+  pages this work replaces, because forecast-validation and demand-forecast are both in the default
+  visible set for a non-admin. Retiring the old page is backlog item 6 and remains the more valuable next
+  move than adding a screen.
+  Recorded two gaps found in the audit rather than building them. Backlog item 9: nothing lets a purchaser
+  mark a SKU actioned, which the plan's own weekly walkthrough depends on twice and lists as unblocked;
+  it needs a decision on browser-local against persisted before it is worth writing. Backlog item 10:
+  no screen carries money, confirmed as a real gap but deferred, since it needs a decided cost basis and
+  a source before a column would mean anything.
+
+2026-07-31  Showed draft container coverage on the Action List, so a SKU that has already been ordered
+  stops reading as though it had not.
+  This began as a plan to let a purchaser mark a SKU actioned by hand, and that framing was wrong. The
+  state it proposed to record is already recorded by the container system, and a manual flag would have
+  been a second, private, weaker copy of it. Once a container reaches shipped or packing_received it is
+  counted as confirmed inbound, the order formula subtracts it, and the SKU drops off the list on its own.
+  That half never needed building.
+  The gap was draft. Containers are created by the Google Sheet import, which sets status from the header
+  colour, and the inbound query deliberately excluded drafts. So between someone deciding to order and
+  the container shipping, the SKU kept showing a full recommended quantity with nothing saying an order
+  existed. At an eight-week lead time that window is long enough to order the same units twice.
+  Reads the same two tables the Container Planning screens use, so the two cannot disagree about what has
+  been drafted. The ETA rule differs from confirmed inbound on purpose: confirmed floors at today because
+  a container still marked shipped after its ETA is stale bookkeeping, while a draft often has no date yet,
+  so nulls are kept and only dates already past are excluded. Applying the confirmed rule would have
+  dropped exactly the newest drafts, which are the ones that make a SKU look unordered.
+  Drafted units are never subtracted from the recommendation. A draft can be cancelled, so crediting it
+  would under-order the SKUs someone has already acted on. It is shown beside the number instead, as an
+  italic sub-line under the recommended order, which is the treatment the order breakdown already gives
+  lines that sit outside its arithmetic. It is a quantity rather than a badge because partial coverage is
+  the case that matters: a badge would read as "handled" on a SKU drafted for 300 against a recommended
+  1,117 and stop someone looking.
+  Built and then removed a distinction between a missing draft figure and zero, on the argument that an
+  export written before these columns existed cannot say whether anything is drafted and should not be
+  shown as though it had said no. That was wrong twice over. The figure comes from container line items,
+  so no matching row genuinely means no units, exactly as for confirmed inbound; and both database
+  connections sit in one try block, so there is no state where stock is live but drafts are unknown.
+  More to the point, how far the whole inventory source can be trusted is already reported once by
+  inventory_source and inventory_is_sample, and the removed code was a second per-column version of that
+  same answer. Zero is now zero everywhere, and the type is a plain number rather than a nullable one.
+  Fixed a latent trap while in the query builder: the confirmed status list was interpolated into SQL as a
+  Python tuple, which renders a one-element tuple with a trailing comma and is a syntax error in Postgres.
+  It happens to work for the two-element constant and would have broken silently the day either list had
+  one entry, which the new draft list does.
+  Not yet verified against the live database, which the assistant cannot reach. The display was exercised
+  against simulated draft data instead; backlog item 9 records the three things to check on a real
+  connection, the most consequential being how many rows carry drafts, since that decides whether the
+  sub-line should become its own sortable column.
+
+2026-07-31  Did the draft subtraction for the purchaser on the SKU detail page, and left the Action List
+  alone.
+  The recommended quantity ignores drafted units entirely, which is correct and is not obvious: a row
+  reading 55 with 19 drafted means 55 is the requirement if that container never ships, and 36 if it does.
+  Someone reading it as "55, already net of the 19" would order 19 too many. The list now carries the flag
+  and the detail page carries the arithmetic, which suits where each is used: the list is for triage and
+  the detail page is where a quantity is decided.
+  The order breakdown gained the drafted units as an aside line, using the Sign=None role the table
+  already had for inbound arriving too late to count. Same reason in both cases: the figure is real and it
+  is not in the sum. The signed lines still reconcile exactly to the total, which was checked.
+  The net figure sits on the order card under the caption rather than in that table. A second line with an
+  equals sign inside the breakdown would read as a second answer to the same question rather than the
+  answer to a different one, so it is a small boxed figure labelled "if the draft stands", holding the
+  recommendation as the headline. The model does not know whether a draft will ship, so the committed
+  number stays primary and the conditional one is offered beside it.
+  Trimmed the caveat above the card, which had been stating the same subtraction in words. It now states
+  the fact and stops, since the card does the arithmetic.
+
+2026-07-31  Removed the Action List's priority filter, which was a second control over a field the summary
+  cards already filtered, and gave Routine a card of its own.
+  Reported as a display problem: selecting a summary card left every select below reading "all", so the
+  screen looked unfiltered while it was not. The cause was structural rather than cosmetic. The cards and
+  the priority select held separate state over the same column, so they could be driven into combinations
+  that return nothing and explain nothing, "Preorder" on a card against "Best Seller" in the select being
+  empty by construction. The data-quality filter beside them already states the rule this broke: two
+  pieces of state that can contradict each other should be one.
+  A comment on the select said it existed because Routine was the only priority with no button. So Routine
+  now has a button, with a count like every other condition, and the select is gone. Nothing became
+  unreachable and there is one place to look.
+  That comment was also wrong in a way that mattered. It claimed the cards covered three of the four
+  labels. They cover two. The third, "out of stock", is the raw condition available_inventory <= 0, while
+  "No Stock" is a queue assigned by precedence, so a SKU with no stock and a preorder backlog is badged
+  Preorder and appears in one and not the other. On the current table that is 115 against 16, a difference
+  of 99 rows between two controls whose names were nearly the same. The card is now labelled "no stock on
+  hand" to say it is a stock condition rather than a priority.

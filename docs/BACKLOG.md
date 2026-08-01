@@ -154,30 +154,32 @@ flows into every number the dashboard shows.
 
 ---
 
-## 5. Forecast Validation outlier lists rank by an unweighted error
+## 5. The Action List CSV export ships the wire format, not the screen
 
-**Status:** identified, needs one decision.
+**Status:** identified, deferred. Nobody is using the export yet, which is the only reason
+this is not urgent.
 
-**The problem.** The page's headline is pooled WAPE, which is demand-weighted, and the page says
-so: errors are summed across SKUs before dividing, so heavier SKUs count more. The per-SKU
-outlier lists directly beneath it then rank by *unweighted* per-SKU WAPE delta. The section under
-the portfolio figure measures the opposite way from the figure.
+**The problem.** `exportCsv` in `action-list-content.tsx` builds its header from
+`Object.keys(view[0])`, so the file contains every field on the row in whatever order the API
+returned them: about forty columns including `forecast_over_recent`, `gap_closable_by_order`,
+`n_windows`, `error_basis`, `demand_state` and `supply_gap_days`. The table above it shows ten,
+chosen and ordered so a row reads as a sentence. Someone who filters the list and exports it
+gets a different artefact from the one they were reading, with internal names as headings.
 
-**What that costs.** The 30 rows shown carry 1.85% of scored demand. Median volume on the "model
-does worse" list is 33 units. The extremes are structural rather than real: maximum absolute delta
-is 4.9 in the 10-to-50-unit band against 0.5 in the 200-plus band, because a small denominator lets
-WAPE swing freely, so taking the top 15 by delta mechanically selects the smallest SKUs. The
-section is headed "the list to read first: these are where trusting the model costs more than
-trusting the sheet", and a planner following that instruction studies a 33-unit SKU.
+**Why it matters when it matters.** The export is the last step of the weekly cycle in
+`dashboard/PLAN.md` §3.4: the purchaser works the list, then exports what they decided. A file
+nobody can read without the schema in front of them does not close that loop, and a column
+named `gap_closable_by_order` in a spreadsheet sent to a supplier is worse than absent.
 
-**What is buried by it.** Restricting to 200 units and above surfaces a coherent pattern: 8 SKUs of
-`CC-CN-03` and 4 of `CC-CP-03` in Dec-Feb, 7,082 units between them, where V1 runs 0.47 to 0.63 and
-the model 0.00 to 0.16. That is the actual story of why the model wins, and the current list hides
-it behind twenty-unit noise.
+**The fix, and the decision inside it.** Name the export columns explicitly rather than
+deriving them. The decision is which set: the ten on screen is the obvious answer and the
+wrong one, because a few fields that are deliberately not columns are useful in a spreadsheet,
+the inbound ETA as a date and the estimated stockout date among them. Worth also settling
+whether headings are the human labels the table uses or stable machine names, which depends on
+whether the file is read by a person or loaded by something downstream.
 
-**The decision.** A stated minimum volume, adjustable on the page rather than applied silently.
-The threshold is a judgement: 200 units gives 103 of 519 scored rows and a usable list, but the
-number should be chosen rather than inherited from this note.
+**Related.** The non-forecast section has the same defect in its own `exportCsv`, and should be
+fixed in the same pass so the two files are consistent with each other.
 
 ---
 
@@ -245,3 +247,104 @@ is inside it. Widening the range to match whatever happens to be installed is th
 relaxing a version pin to make an install succeed. Worth checking what the deployment server runs
 while this is being decided: a major-version difference between there and a laptop is the usual
 shape of "works locally, fails in production".
+
+---
+
+## 9. A SKU already on a draft container still reads as needing an order
+
+**Status:** BUILT 2026-07-31, pending verification against the live database. The assistant's
+sandbox cannot reach Postgres, so the query below has been written and the display exercised
+against simulated draft data, but no one has yet seen it run on real containers. What to check
+is recorded at the end of this item.
+
+**How this was reached, because the first answer was wrong.** This started as "let the purchaser
+mark a SKU actioned", taken from `dashboard/PLAN.md` §3.4, where the walkthrough has the
+purchaser accept a quantity and mark the SKU so the list holds their place. That framing was
+rejected on review: the state it proposes to record by hand is already recorded by the container
+system, and a manual flag would be a second, private, weaker copy of it. The real gap is
+narrower and needs no new user action.
+
+**What already works.** `confirmed_inbound` is `fc_container_items` joined to `fc_containers`
+under `status IN ('shipped', 'packing_received')` with `eta_date >= CURRENT_DATE`, and
+`build_planning_table` subtracts it as `inbound_in_window`. So a SKU whose container has shipped
+already sees its recommended quantity fall and drops off the list without anyone marking
+anything. That half of the problem is solved.
+
+**The gap.** `draft` is excluded from that filter. Containers are created by the Google Sheets
+import, which sets status from the header colour: blue `shipped`, orange `packing_received`,
+purple or uncoloured `draft`. A container that has been decided and entered but not yet shipped
+therefore contributes nothing, and the SKU keeps showing a full recommended quantity with
+nothing on the row saying an order exists. At an eight-week lead time that window is long enough
+to order the same units twice.
+
+**Precedent.** `src/app/api/planning/dashboard/route.ts` and
+`src/app/api/planning/sku-forecasts/inbound/route.ts` both accept `includeDrafts=1` and widen to
+`('shipped', 'packing_received', 'draft')`. The question is already asked elsewhere in the
+application; the action list is the screen that does not ask it.
+
+**The design constraint, and it is the whole of the work.** Draft units must not be added to
+`confirmed_inbound`. A draft is not a commitment, it can be cancelled, and crediting it against
+the recommendation would under-order exactly the SKUs someone has already worried about. It
+belongs on the row as its own signal, a separate figure reading "N units on a draft container",
+so the purchaser sees that an order exists while the recommended quantity continues to assume it
+does not. This is the same treatment the runs-high callout gets: show the disagreement rather
+than resolve it silently.
+
+**Known limit.** Draft coverage is only as current as the last sheet import, which is explicitly
+not a full synchronisation: rows missing from the sheet are not deleted and a zero does not
+reset an existing quantity. So this narrows the double-order window rather than closing it, and
+how far depends on how promptly the sheet is maintained. Worth stating on the screen rather than
+implying the figure is live.
+
+**Dead end, recorded so it is not investigated twice.** `PurchaseOrder` and `POItem` exist in
+`prisma/schema.prisma` but nothing in the application references them. A purchase order would be
+an earlier signal than a draft container, but it is not how this system works: the real path is
+Google Sheet to container.
+
+**Not to be confused with item 5 or S5.** The CSV export is how a finished list leaves the
+application. S5 tracks what was ordered against what was recommended and stays blocked on
+purchase order outcomes, which as above do not exist here yet.
+
+**What was built.** `src/planning/inventory.py` gained a `draft` query against the same two
+tables, `data.py` carries `draft_inbound` and `draft_eta` in `inventory_columns()`, and
+`calc.py` coerces them without letting either into the order formula. The Action List shows the
+quantity as an italic sub-line under the recommended order, and gains an "already drafted"
+filter. The SKU detail page carries it as a caveat above the order card, with the other caveats.
+
+**What still needs checking against the live database, and why it cannot be checked here.**
+
+1. That the numbers are right. Run `scripts/export_inventory_snapshot.py`, which now writes the
+   two new columns, and compare the drafted totals against the Container Planning screens. They
+   read the same tables, so they should agree exactly; if they do not, the status filter or the
+   ETA rule is the place to look.
+2. How many rows actually carry draft coverage. This decides whether the sub-line is the right
+   shape or whether it should be promoted to its own sortable column. A sub-line was chosen on
+   the expectation that most rows show nothing; if a large fraction carry drafts, "sort by what
+   I have already drafted" becomes a real way to work the list and the column earns its width.
+3. Whether `fc_containers.status` holds any value other than the three the sheet import writes.
+   `DRAFT_STATUSES` assumes `draft` is the only uncommitted state.
+
+**Known limit, unchanged by this work.** Draft coverage is only as current as the last sheet
+import, which is not a full synchronisation: rows missing from the sheet are not deleted and a
+zero does not reset an existing quantity. This narrows the double-order window rather than
+closing it.
+
+---
+
+## 10. Nothing on the planning screens carries money
+
+**Status:** identified, deferred by decision (2026-07-31). Recorded so it is not rediscovered.
+
+**The gap.** Every figure on the Action List and SKU Detail is in units. Purchasing does work to
+a budget, so a recommended 1,117 units is a materially different decision at $200 a unit than at
+$20, and a list of 447 SKUs cannot be triaged by spend.
+
+**Why it is deferred rather than built.** Confirmed as real but explicitly set aside for now. It
+is also not only a screen change: it needs a decided cost basis, unit cost against landed cost,
+and a source for it, most likely SKU master or a related table in the Commerce database. That is
+the same shape as the inventory export in §2.2, a data question that has to be settled before a
+column means anything.
+
+**Where it would surface if taken up.** Order value beside the recommended quantity on both
+screens, and a value-sorted view of the list, so the largest commitments are visible without
+opening 447 rows.

@@ -198,6 +198,23 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     for col in ["available_inventory", "preorder_backlog", "confirmed_inbound"]:
         df[col] = pd.to_numeric(df.get(col), errors="coerce").fillna(0.0)
 
+    # Draft container coverage. Absence is a real zero, like confirmed inbound
+    # and for the same reason: the figure comes from container line items, so a
+    # SKU with no matching draft row genuinely has nothing drafted. The column is
+    # only ever missing outright on the sample path, and whether that source can
+    # be trusted is already answered once for the whole inventory block by
+    # `inventory_source`, rather than per column.
+    #
+    # Kept out of the loop above because those three feed the order formula and
+    # this one deliberately does not: a draft is not a commitment, so crediting
+    # it would under-order the SKUs someone has already acted on.
+    if "draft_inbound" not in df.columns:
+        df["draft_inbound"] = 0.0
+    df["draft_inbound"] = pd.to_numeric(df["draft_inbound"], errors="coerce").fillna(0.0)
+    if "draft_eta" not in df.columns:
+        df["draft_eta"] = ""
+    df["draft_eta"] = df["draft_eta"].fillna("")
+
     df["history_group"] = [
         history_group(b, h) for b, h in zip(df["bucket"], df["history_length"])
     ]
@@ -499,6 +516,16 @@ def order_quantity_breakdown(row: pd.Series, params: dict | None = None) -> pd.D
     if excluded > 0:
         rows.append({"Component": "…inbound arriving too late, not counted",
                      "Units": round(excluded), "Sign": None})
+    # An aside for the same reason the line above is one: it is real and it is
+    # not in the sum. Drafted units are not subtracted because a draft can be
+    # cancelled, so the total below is the requirement if it is. What the
+    # requirement becomes if it is not is on the card rather than here, because
+    # a second figure with an equals sign in this table would read as a second
+    # answer to the same question instead of the answer to a different one.
+    draft = float(row.get("draft_inbound", 0.0) or 0.0)
+    if draft > 0:
+        rows.append({"Component": "…drafted, not committed, not subtracted",
+                     "Units": round(draft), "Sign": None})
     rows.append({"Component": "Recommended order quantity", "Units": round(roq), "Sign": 0})
     return pd.DataFrame(rows)
 

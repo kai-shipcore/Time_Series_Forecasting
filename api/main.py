@@ -2151,6 +2151,15 @@ def planning_sku_detail(
             # from sample inventory should say so wherever it appears.
             "inventory_is_sample": bool(_plan_data.inventory_is_sample()),
             "inventory_source": _plan_data.inventory_source(),
+            # Same source as the action list's own figure, for the same reason.
+            # Absent it the page had to infer the training week from the first
+            # week of the horizon, which is one week later by construction, so
+            # the two screens disagreed about how stale the forecast was.
+            "trained_through": (
+                snapshot.date().isoformat()
+                if (snapshot := _plan_data.forecast_snapshot_date()) is not None
+                else None
+            ),
         },
         "order": {
             "total": int(row["recommended_order_qty"]),
@@ -2288,6 +2297,26 @@ def _pooled(g: pd.DataFrame, err="ae", act="y_total") -> float:
     return float(g[err].sum() / total) if total else float("nan")
 
 
+# Default minimum volume for the per-SKU outlier lists, in units over a scored
+# window. Stated here so the page and this endpoint cannot disagree about it.
+#
+# Why a threshold exists at all: the lists rank by the difference between the
+# model's per-SKU WAPE and the baseline's, and that difference is bounded by the
+# denominator. On the 2026-07-30 report the largest absolute delta is 4.94 in the
+# 10-to-50-unit band against 0.48 above 500 units, so an unfiltered top-15 selects
+# the smallest SKUs rather than the ones the model handles worst. The two lists
+# together then carry 1.8% of scored demand, under a heading that tells a planner
+# to read them first.
+#
+# Why 100 and not higher: 100 keeps 223 of 572 scored rows and 78% of scored
+# demand eligible, which leaves a pool the top-15 is still an extreme of. The
+# stricter candidates trade that away: 200 leaves 103 rows, 500 leaves 41, at
+# which point a top-15 is over a third of everything eligible and the word
+# "outlier" stops being accurate. Adjustable on the page, and displayed there,
+# because the right number depends on what the reader is looking for.
+OUTLIER_MIN_UNITS = 100
+
+
 @app.get("/planning/validation")
 def planning_validation(
     baseline: str = Query(default="v1", description="version to compare against"),
@@ -2377,7 +2406,22 @@ def planning_validation(
 
     # Largest individual wins and losses, so the aggregate can be checked against
     # real products rather than taken on faith.
-    outliers = {"best": [], "worst": []}
+    #
+    # The whole scored pool is returned rather than the two ranked lists. Ranking
+    # here would fix the minimum volume at whatever this endpoint chose, and the
+    # threshold is a judgement the reader has to be able to see and move; see
+    # OUTLIER_MIN_UNITS above for why it exists. It is 572 rows and about 100 KB
+    # on the current report, small enough that sending all of it costs less than
+    # a round trip per adjustment.
+    #
+    # `top_n` is now how many rows the page displays per list, not how many are
+    # sent. Ranking happens client-side, after the threshold is applied.
+    outliers = {
+        "rows": [],
+        "top_n": top_n,
+        "default_min_units": OUTLIER_MIN_UNITS,
+        "scored_units": 0.0,
+    }
     if sku_path.exists() and comparison.get("current"):
         s = pd.read_csv(sku_path)
         cur = s[s["model_version"] == comparison["current"]]
@@ -2389,10 +2433,14 @@ def planning_validation(
             j["wape_base"] = j["ae_base"] / j["y_total_cur"]
             j["delta"] = j["wape_cur"] - j["wape_base"]
             cols = ["unique_id", "window", "y_total_cur", "wape_cur", "wape_base", "delta"]
-            outliers = {
-                "best": _jsonable(j.nsmallest(top_n, "delta")[cols]),
-                "worst": _jsonable(j.nlargest(top_n, "delta")[cols]),
-            }
+            # Both WAPEs use the actual from the current version's row, so the two
+            # are divided by the same denominator and their difference is a like
+            # for like comparison rather than an artefact of two different bases.
+            outliers["rows"] = _jsonable(j.sort_values("delta", ascending=False)[cols])
+            # The denominator for "what share of scored demand this list carries".
+            # Taken over the unfiltered pool, since the point of the figure is to
+            # measure the filtered list against everything that was scored.
+            outliers["scored_units"] = float(j["y_total_cur"].sum())
 
     # Performance over time, from the accumulating history. Empty until enough
     # runs have been stored and their weeks have closed.
