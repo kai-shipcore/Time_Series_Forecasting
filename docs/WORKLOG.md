@@ -1860,3 +1860,17 @@ detail lives in the design document and codebase guide, not here.
   where the route takes a path segment, /api/forecast/status/[jobId], and read an error field the job
   payload does not have; its shape is job_id, status, lines, exit_code, so the last log line is the
   message, and it is the better one since the script prints which of its three steps failed.
+
+2026-07-31  Added setup.cmd, so Windows setup does not begin with guessing the interpreter's name.
+  A colleague hit "python3 is not recognized", which is not a misconfiguration: python3 is a Unix
+  convention and does not exist on Windows at all. It is also the name in every macOS instruction, which
+  is how anyone arrives at it. The two names that might work are py, from the python.org launcher, and
+  python, which may be a real interpreter or may be the Microsoft Store execution alias, a stub that opens
+  the Store and exits successfully without running anything. That last case is the worst, because it looks
+  like it worked.
+  setup.cmd tries py -3, then verifies python by running code through it rather than by asking whether the
+  command resolves, since the Store stub resolves. If neither answers it says what to install and points
+  out that a terminal opened before the install will not see it, PATH being read at startup.
+  It only finds the interpreter; everything it does lives in scripts/setup_local.py, so there is one
+  definition of what setup means and the batch file cannot drift from it. The mirror of start-dev.cmd in
+  the Commerce repo, which exists for the same class of Windows friction.

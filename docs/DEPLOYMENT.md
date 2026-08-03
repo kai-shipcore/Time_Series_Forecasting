@@ -94,10 +94,21 @@ deployed app.
 One command, once, on a new machine:
 
 ```bash
-git clone <this repo> && cd Time_Series_Forecasting
+git clone https://github.com/kai-shipcore/Time_Series_Forecasting.git
+cd Time_Series_Forecasting
+
 python3 scripts/setup_local.py            # macOS / Linux
-py scripts\setup_local.py                 # Windows PowerShell
+setup.cmd                                 # Windows
 ```
+
+`setup.cmd` exists because the interpreter has three plausible names on Windows
+and only one of them works on any given machine. `python3` is a Unix convention
+and is absent there, which is exactly the name every macOS instruction uses.
+`python` may be real or may be the Microsoft Store's execution alias, a stub
+that opens the Store and exits successfully without running anything, which is
+the worst case because it looks like it worked. The batch file tries `py -3`,
+then verifies `python` by running code through it rather than trusting that the
+command resolved, and says what to install if neither answers.
 
 It creates the virtualenv, installs the dependencies, seeds `data/processed/`,
 writes `.env`, and then checks that the data files are present and that both

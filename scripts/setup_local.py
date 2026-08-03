@@ -1,7 +1,7 @@
 """One-time local setup. Run once on a new machine, then forget about it.
 
     python3 scripts/setup_local.py              # macOS / Linux
-    py scripts\\setup_local.py                   # Windows PowerShell
+    setup.cmd                                   # Windows (finds the interpreter)
 
 Runs on the system Python deliberately: it creates the virtualenv, so it cannot
 live inside one, and it imports nothing outside the standard library.
