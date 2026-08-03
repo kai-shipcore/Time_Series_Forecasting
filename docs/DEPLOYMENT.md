@@ -27,7 +27,15 @@ anyone's working tree.
 | What | Owner | Arrives by |
 | --- | --- | --- |
 | Code | GitHub Actions, on push to `main` | `rsync` from the checkout |
-| Data | The weekly cron on the machine that runs the forecast | `scripts/push_data_to_server.sh` |
+| Data | `scripts/run_forecast_cron.sh`, on the server itself | written in place, nothing to transfer |
+
+The data row used to read differently, and the change matters. The weekly run
+happens on the server, as cron for the `coverland` user, writing straight into
+`/opt/coverland-forecast-api/data/processed` where the service reads. So no
+machine outside the server is involved in keeping the forecast current, and none
+has to be powered on for it to happen. `scripts/push_data_to_server.sh` still
+exists and still works, but it is now the out-of-band path for data generated on
+a laptop rather than the weekly step. See "Pushing data by hand" below.
 
 Nothing owns both, deliberately. The deploy excludes `data/` and `outputs/`,
 which under `rsync --delete` means "do not upload" and equally "do not destroy".
@@ -44,16 +52,93 @@ declines to touch it. Adding a tracked file under `data/` therefore cannot reach
 the server, which is exactly the property that makes a committed development
 fixture safe.
 
+## Why the deployed service cannot be used from a laptop
+
+Asked often enough to belong here. The systemd unit binds
+`--host 127.0.0.1 --port 8000`, so the service accepts connections only from
+processes on that machine, which in practice means the Next.js process sitting
+in front of it. There is no public port, no firewall rule and no CORS, and that
+is the point rather than an oversight: the service holds credentials for both
+databases and has no authentication of its own beyond a shared token.
+
+So pointing a local `AI_SERVICE_URL` at the server does not work and should not
+be made to work by opening a port. Three honest options, cheapest first.
+
+**1. Use the deployed app.** For anyone who wants to read a forecast rather than
+change one, `app.shipcore.com` already has it, and no local setup is involved at
+all. This is the right answer far more often than it is taken.
+
+**2. Tunnel to it.** For running the Next.js app locally against real, current
+data without a Python environment or a copy of the database:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 <user>@<server>
+```
+
+Leave that open, set `AI_SERVICE_URL=http://localhost:8000` and
+`FORECAST_API_TOKEN` to the deployed value, and the local app talks to the
+deployed service over the tunnel. Nothing is exposed publicly: the forwarding
+lives inside an SSH session that ends when the terminal closes. Note the app
+will still consider `localhost` a server it may start, which is harmless while
+the tunnel is up, since it only spawns uvicorn when nothing answers.
+
+**3. Run the service locally**, below. Needed only when the Python side itself
+is being changed.
+
 ## Running it locally
 
-For working on the planning pages. Not for figures to act on: the seed is frozen
-at the week of 2026-07-20, and the current forecast lives on the deployed app.
+For working on the planning pages or the service. Not for figures to act on: the
+seed is frozen at the week of 2026-07-20, and the current forecast lives on the
+deployed app.
+
+One command, once, on a new machine:
 
 ```bash
 git clone <this repo> && cd Time_Series_Forecasting
+python3 scripts/setup_local.py            # macOS / Linux
+py scripts\setup_local.py                 # Windows PowerShell
+```
+
+It creates the virtualenv, installs the dependencies, seeds `data/processed/`,
+writes `.env`, and then checks that the data files are present and that both
+databases answer. Every step detects work already done and skips it, so
+re-running after a pull is safe and is the right thing to do when
+`requirements.txt` changes.
+
+It runs on the system Python on purpose: it creates the virtualenv, so it cannot
+live inside one, and it imports nothing outside the standard library.
+
+If a `Commerce_Integration` checkout sits nearby it finds that repo's `.env` and
+derives the database settings from it, because the two describe the same
+databases in different shapes. Point it somewhere else with
+`--commerce-env <path>`. Without one it writes a template with the keys blank,
+which is not fatal: the seeded data needs no database.
+
+Doing it by hand instead is four commands:
+
+```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/seed_dev_data.py
+```
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe scripts\seed_dev_data.py
+```
+
+Call the interpreter directly rather than activating the virtualenv. On Windows
+`Activate.ps1` is a script and the default execution policy blocks it, which is
+the same obstacle the Commerce app documents for `npm run dev`. Activation buys
+nothing here.
+
+Either way, that is the whole setup. Demand Pilot starts the service itself when
+`AI_SERVICE_URL` is localhost, so opening a Planning page is enough; start it by
+hand only to watch it fail:
+
+```
 .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+.venv\Scripts\python.exe -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
 `GET /health` should then report `ready: true` with an empty `missing_required`.
@@ -63,10 +148,10 @@ four files that are already in the repository into `data/processed/`, which is
 gitignored and therefore the one thing a clone lacks. It refuses to overwrite an
 existing `data/processed/`, so running it on the cron machine is safe.
 
-Demand Pilot starts this service itself when `AI_SERVICE_URL` is localhost, so
-in practice the last command is only needed to see startup errors directly. If
-the planning pages report that the server has no data to read, the card names
-the seed command.
+One thing to check before anything else if the pages report they cannot reach
+the server: `FORECAST_SERVER_DIR` in the local `.env`. Copied from a colleague it
+points at their checkout, which does not exist here, and that is the most common
+cause. Unset it and the app finds the checkout itself.
 
 ## Required GitHub secrets
 
@@ -177,9 +262,31 @@ systemd already supervises the process with `Restart=always`, and a second
 supervisor racing it to bind port 8000 turns a clean restart into two half-alive
 servers. Unset, the app reports the outage and points at `systemctl` instead.
 
-## The weekly data push
+## The weekly run
 
-After the Monday forecast, on the machine that produced the files:
+On the server, as the `coverland` user:
+
+```
+0 10 * * 1 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
+```
+
+It runs the forecast, then asks the service whether it can still serve and exits
+non-zero if not, so cron mails a failure on the Monday it breaks rather than
+leaving a colleague to find a stale page on Thursday.
+
+10:00 UTC was 3am Pacific when this was set up. The server stays on UTC, so the
+Pacific wall-clock time moves by an hour at each DST transition; adjust the line
+then if it matters.
+
+Nothing else has to happen. The run writes into the same checkout the service
+reads from, so there is no transfer step and no laptop in the loop.
+
+## Pushing data by hand
+
+Not part of the weekly cycle. This is for data produced somewhere other than the
+server: a forecast re-run on a laptop, or a fresh
+`scripts/export_inventory_snapshot.py`, that is wanted on the server before the
+next Monday.
 
 ```bash
 scripts/push_data_to_server.sh
@@ -191,20 +298,17 @@ Configure it in this repo's `.env`:
 FORECAST_DEPLOY_HOST=...
 FORECAST_DEPLOY_USER=coverland
 FORECAST_DEPLOY_PATH=/opt/coverland-forecast-api
-FORECAST_DEPLOY_KEY=~/.ssh/id_ed25519     # optional
+FORECAST_DEPLOY_KEY=~/.ssh/id_ed25519     # a path to a key, not the key; optional
 ```
 
 It pushes only the nine files `src/planning/data.py` reads, about 1.5 MB, rather
 than the 19 MB of experiment plots and CV dumps in `outputs/` that the server has
 no use for. Then it asks the server whether it can actually serve, and exits
-non-zero if not. That exit code is the point: cron mails a failure on the Monday
-it breaks, instead of a colleague finding a broken page on Thursday.
+non-zero if not.
 
-A crontab line, after the forecast run:
-
-```
-0 10 * * 1 cd /path/to/Time_Series_Forecasting && scripts/push_data_to_server.sh >> logs/push.log 2>&1
-```
+Whoever runs it needs a key authorised on the server. That is worth having for
+`scripts/verify_deployment.sh` too, but it is not needed to keep the forecast
+current, which the server does on its own.
 
 ## Checking it
 

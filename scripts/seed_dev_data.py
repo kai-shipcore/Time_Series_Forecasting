@@ -25,9 +25,20 @@ run, no data handover.
 
 Usage
 -----
+macOS and Linux::
+
     .venv/bin/python scripts/seed_dev_data.py           # seed, refusing to clobber
     .venv/bin/python scripts/seed_dev_data.py --force   # overwrite what is there
     .venv/bin/python scripts/seed_dev_data.py --check   # report, write nothing
+
+Windows PowerShell::
+
+    .venv\\Scripts\\python.exe scripts\\seed_dev_data.py
+
+Calling the interpreter directly rather than activating the virtualenv first is
+deliberate on Windows: `Activate.ps1` is a script, and the default execution
+policy blocks it. That is the same obstacle the Commerce app documents for
+`npm run dev`, and it has no bearing on running Python itself.
 
 What it will not do
 -------------------
@@ -220,11 +231,20 @@ def main() -> int:
         print(f"  {verb} {dest.relative_to(ROOT)}  ({dest.stat().st_size:,} bytes)")
 
     print(f"\nSeeded: {summary}")
+    # Printed for the platform this is running on rather than for the author's.
+    # A next step a reader has to translate is one they can get wrong, and the
+    # Unix path was the first thing to break for a colleague on PowerShell.
+    launch = (
+        r".venv\Scripts\python.exe -m uvicorn api.main:app --host 0.0.0.0 --port 8000"
+        if sys.platform == "win32"
+        else ".venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000"
+    )
     print(
         "\nThis is a frozen development fixture, not the current forecast. For figures to\n"
         "act on, use the deployed app.\n"
-        "\nNext: .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000\n"
-        "Then GET /health should report ready: true."
+        f"\nNext: {launch}\n"
+        "Then GET /health should report ready: true.\n"
+        "\nOr just start Demand Pilot and open a Planning page: it starts this server itself."
     )
     return 0
 

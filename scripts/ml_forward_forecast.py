@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src.ml.serving import store  # noqa: E402
 from src.ml.serving.forecast import forward_forecast  # noqa: E402
 from src.ml.serving.history import append as append_history  # noqa: E402
 from src.ml.serving.models import CURRENT_BEST  # noqa: E402
@@ -63,6 +64,19 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     fc.to_parquet(out, index=False)
 
+    # And to the database, so the horizon is readable from a machine that did
+    # not produce it. The parquet stays: it is what a clone without credentials
+    # reads, and the seeded fixture depends on that path continuing to work.
+    #
+    # Never fatal. The forecast is already written above, and a database that is
+    # briefly unreachable should not turn a good run into a failed one.
+    fwd_rows = store.write_forward(fc)
+    if fwd_rows >= 0:
+        print(f"forecast        {fwd_rows:,} rows written to {store.FORWARD_TABLE}")
+    else:
+        print(f"forecast        NOT written to {store.FORWARD_TABLE} "
+              "(no DB credentials, or it could not be reached)")
+
     cutoff = fc["forecast_date"].iloc[0].date()
     model_path = ROOT / args.models_dir / f"{args.version}_{cutoff}.joblib"
     save_model(model, model_path)
@@ -88,6 +102,18 @@ def main() -> None:
             print(f"history         +{summary['added']:,} rows "
                   f"({summary['replaced']:,} replaced), {summary['total']:,} total "
                   f"across {summary['runs']} run(s)")
+            # Said out loud rather than left to inference. On the server a
+            # failed table write means this run exists on one disk only, which
+            # is the condition the table was added to end; on a laptop with no
+            # credentials it is expected and worth distinguishing from it.
+            db_rows = summary.get("db_rows", -1)
+            if db_rows >= 0:
+                print(f"                {db_rows:,} rows also written to "
+                      f"shipcore.ml_forecast_history")
+            else:
+                print("                NOT written to shipcore.ml_forecast_history "
+                      "(no DB credentials, or it could not be reached)")
+                print("                the parquet above is the only copy of this run")
         except Exception as e:  # noqa: BLE001 — history must not fail a good forecast
             print(f"history FAILED  {type(e).__name__}: {e}")
             print("                (the forecast above is written and unaffected)")

@@ -1688,3 +1688,175 @@ detail lives in the design document and codebase guide, not here.
   Preorder and appears in one and not the other. On the current table that is 115 against 16, a difference
   of 99 rows between two controls whose names were nearly the same. The card is now labelled "no stock on
   hand" to say it is a stock condition rather than a priority.
+
+2026-07-31  Made the local-setup instructions work on Windows, and wrote down why the deployed service
+  cannot simply be pointed at from a laptop.
+  Every command in the seed script, the deployment doc and the Demand Pilot error card used .venv/bin,
+  which does not exist on Windows. A colleague on PowerShell could not run any of them. All three now give
+  both forms, and the script prints the one for the platform it is actually running on rather than the
+  author's. The Windows form calls the interpreter directly instead of activating the virtualenv, because
+  the default execution policy blocks Activate.ps1, which the Commerce app already documents for its own
+  dev script. Activation buys nothing here.
+  Also recorded the answer to a question that keeps being asked: the deployed forecast service binds
+  127.0.0.1, so it accepts connections only from the Next.js process on the same machine. That is
+  deliberate, since the service holds both database credentials and has no real authentication of its own,
+  and it is why a local AI_SERVICE_URL pointed at the server cannot work and should not be made to. The
+  doc now lists the three honest options in order of cost: use the deployed app, forward the port over SSH
+  and keep everything local except the data, or run the service locally, which is only necessary when the
+  Python side itself is being changed.
+
+2026-07-31  Reduced local setup to one command, for handing the project over.
+  Added scripts/setup_local.py: virtualenv, dependencies, seed, .env, then a verification pass. It runs on
+  the system Python and imports only the standard library, because it creates the virtualenv and so cannot
+  live inside one. Every step detects its own completed state, so re-running after a pull is safe and is
+  the right thing to do when requirements.txt changes.
+  The part worth recording is the .env derivation. This repo and Commerce_Integration read the same two
+  databases but describe them differently: one connection URL each there, five discrete variables each
+  here. So a colleague who already has the Commerce credentials does not need new ones, only the same ones
+  reshaped, and the script does that from their existing file rather than asking anyone to send secrets
+  around. The naming runs backwards, COMMERCE_DB_* being the Supabase lookup database rather than the
+  Commerce app's primary, which is an easy mistake to make by hand and fails as missing tables rather than
+  as a connection error.
+  The verification connects rather than checking that an engine could be built. _engine returns None for
+  missing variables, a missing driver and an unusable URL alike, so a check that could not tell them apart
+  named the wrong fix two times in three, which was caught while testing this against a sandbox that had
+  no psycopg2.
+  Completed .env.example, which documented three optional LLM keys out of twenty and so read as though the
+  rest did not exist. It now covers every variable, what reads it, which Commerce variable it corresponds
+  to, and states at the top that none of it is needed to run the planning pages, since the seeded data
+  covers every required file.
+
+2026-07-31  Corrected a wrong claim about FORECAST_DEPLOY_KEY in the env template, made while writing it.
+  It was described as an SSH private key, and it is a path to one: _deploy_env.sh expands any tilde and
+  passes it to ssh as -i, so the key material itself never enters .env. The advice that followed from the
+  misreading, that the block is more sensitive than the rest of the file, was wrong too.
+  The template now says what the block is actually for. The four FORECAST_DEPLOY_* variables drive
+  push_data_to_server.sh and verify_deployment.sh, which is how each weekly forecast reaches the deployed
+  service, the code deploy carrying no data by design. They are needed only on the machine running the
+  Monday cron and are unrelated to the DEPLOY_* secrets in GitHub Actions that deploy the code.
+  Also recorded the consequence for handover: since the value names a key that has to be authorised on the
+  server, taking over the cron means having your own key added there rather than inheriting a file.
+
+2026-07-31  Corrected DEPLOYMENT.md, which still described the weekly forecast as running on a laptop and
+  being pushed to the server.
+  It does not. scripts/run_forecast_cron.sh runs on the server as cron for the coverland user and writes
+  straight into the checkout the service reads from, which its own header says was the point: freshness
+  should not depend on any individual machine being powered on. The ownership table and a "weekly data
+  push" section both predated that move and read as though the Mac were still in the loop, with their own
+  crontab line for a step that no longer happens.
+  push_data_to_server.sh is kept and still works, but is now documented as the out-of-band path for data
+  produced somewhere other than the server, alongside verify_deployment.sh. The section explaining the
+  weekly run now describes the cron that actually exists.
+  This also corrects handover advice given earlier today from the stale text: taking over the project does
+  not require taking over a forecast cron, because there is no laptop-side cron to take over. An
+  authorised key is worth having for verification and for ad-hoc pushes, and is not needed to keep the
+  forecast current.
+  Settled backlog item 8 while checking what the server runs. The Commerce repo carries a .nvmrc reading
+  22, which agrees with the engines range of >=20.9 <24 that the same file declares. The project therefore
+  states its intended version twice and consistently; the development machine on 24.2.0 is the only thing
+  disagreeing, so it moves rather than the declaration. Recorded that CI pins no Node version at all,
+  which is a smaller separate gap.
+
+2026-07-31  Recorded a single-point-of-failure found while answering where the weekly cron stores its
+  output (backlog item 11).
+  The answer is the server's own checkout, not a laptop, and for almost everything that is fine: the
+  forward forecast, cleaned sales, profiles and the V1 baseline all rebuild from the database, and the
+  accuracy reports are tracked in git. One file is not like the others. ml_forecast_history.parquet gains
+  one entry per run and is the only record of what was predicted before the outcome was known, so it
+  cannot be rebuilt; re-running past versions against past cutoffs yields backtest figures, which is a
+  weaker and different claim. It exists on one disk, gitignored and excluded from the deploy.
+  It also matters more each week rather than less. It is what Forecast Validation's served-forecast
+  section and the demand-versus-forecast chart read, and backlog item 6 names it as the one timing
+  constraint on retiring the old Demand Forecast page, so losing it resets that clock.
+  Git is not the fix, since the server writes the file and committing it would need someone connecting
+  weekly. The codebase already points elsewhere: src/ml/serving/history.py says in its own docstring that
+  the refactor it underwent was the prerequisite for serving this from an API that does not share the
+  filesystem, and the legacy track already writes its equivalent to shipcore.fc_forecast_history. The ML
+  track writing a parquet is the asymmetry. A dated copy after each successful cron run is the stopgap.
+
+2026-07-31  Moved the accumulating forecast history into the database, so it is neither on one disk nor
+  visible from one machine (backlog item 11).
+  ml_forecast_history.parquet was the only artifact the weekly run produces that cannot be rebuilt: it
+  records what was predicted before the outcome was known, and re-deriving it would yield backtest
+  figures, which is a different claim. It sat on the server's disk alone, gitignored and excluded from the
+  deploy, so it could be lost and could not be read by anyone else.
+  Added src/ml/serving/store.py holding shipcore.ml_forecast_history and a keyed upsert, and changed
+  history.py's load and append to use it. That was the two-function change the module's own docstring
+  predicted years of comments ago, which is a good argument for writing that kind of note.
+  Both stores are written, table first so a crash between them costs the local copy rather than the shared
+  one. Reads prefer the table and fall back to the parquet, which is what makes a machine with credentials
+  see the server's runs while a clone without any still works from its own. Nothing raises when the
+  database is absent; a credential-free clone stays a supported way to run this.
+  A failed table write does not fail the run either. The forecast is already produced and the parquet has
+  it, so the pipeline now prints whether the run reached the table and says plainly when it did not, that
+  being the case where one copy is all there is.
+  scripts/migrate_history_to_db.py imports an existing parquet and is idempotent on the key, which is what
+  lets it run on both the laptop and the server and merge the two divergent copies rather than forcing a
+  choice between them.
+  run_forecast_cron.sh also keeps twelve dated copies under data/history_backups/, gitignored. That covers
+  what the table cannot: a run where the database was unreachable, which is exactly when the file is the
+  only copy.
+  The database path is unexecuted. The fallback path was tested: no credentials gives engine None,
+  available False, read None, upsert -1, and append still writes the parquet, still replaces rather than
+  duplicates on re-run, and still returns a summary. The migration script exits non-zero with a plain
+  message rather than a traceback. Backlog item 11 lists the four things to do on a machine that can
+  actually reach Postgres.
+
+2026-07-31  Dropped the backfill, and gave the forward forecast a table of its own.
+  The migration script was removed on the user's call, and the call was right: it existed to import
+  parquets nobody needs imported, and it would have merged two divergent local histories into a shared
+  store to no stated end. Both tables now simply start empty and fill from the next run, created on first
+  write, so there is no migration step at all.
+  Added shipcore.ml_forward_forecasts beside the history table, written by ml_forward_forecast.py and
+  preferred by src/planning/data.py's read, falling back to the parquet. This is the half that was
+  missing: the history table made "is the model improving" answerable from any machine, but the Action
+  List still showed whatever horizon that machine had locally, which on a colleague's laptop is the seeded
+  July fixture. Now it shows what the server last produced.
+  The two tables share one DDL definition, since they hold the same rows over different spans, the forward
+  one being the current horizon and the history one every horizon ever served. Written once so they cannot
+  drift into disagreeing about a column.
+  The forward table accumulates rather than replacing wholesale. _read_forecasts already took the latest
+  forecast_date and ignored the rest, which predates this change and is what lets the table keep older
+  horizons at no cost to any caller.
+  Neither write is fatal. The parquet is written first in both cases, so a database that is briefly
+  unreachable costs visibility for a week rather than a forecast.
+
+2026-07-31  Finished wiring the infrastructure to the forward-forecast table rather than the file.
+  Writing and reading the table was not enough on its own: four places still assumed a parquet on disk.
+  readiness() listed it as a required file, so a machine reading the table but holding no local copy was
+  reported as unable to serve while it was serving, and the error card told the reader to run a seed
+  script they did not need. The forecast requirement is now satisfied by the file or the table, matching
+  what _read_forecasts accepts. The table is probed only when the file is absent, so a seeded developer
+  machine and the server still stat and open no connection.
+  export_inventory_snapshot.py read the parquet directly to get its SKU list, which meant it could not run
+  on a machine with credentials and no local forecast, and could in principle disagree with the dashboard
+  about which SKUs are forecast. It now goes through load_forecasts, so there is one definition.
+  Corrected two long comments that said the ML forecast is written to a parquet and never to Postgres, in
+  src/planning/data.py and api/main.py. Both described the arrangement accurately until today. Sales and
+  the SKU profiles are what remain file-only, and they are now named as the remaining prerequisite for
+  deploying the API away from this repo.
+  Verified on the fallback path: readiness unchanged when the file is present, correctly failing with the
+  table named in produced_by when neither is available, and correctly ready when the file is absent but
+  the table answers.
+
+2026-07-31  Made the "no data" card actionable, instead of running the pipeline automatically on startup.
+  The proposal was for the app to check for the parquets on startup and build them if absent. Right in
+  spirit and wrong in three specifics. Generating sales_clean means src/ingest.py, which is SQL against
+  the orders table, so it needs credentials and cannot help the machine that has none, which is the case
+  that was actually blocking anyone. A page load cannot wait for it either: the proxy times out at 20 to
+  60 seconds and the work is minutes, so the request would fail while the pipeline ran on invisibly and
+  the reader would retry into a second run. And the endpoint that exists, POST /run-forecast, spawns the
+  legacy statsforecast pipeline, which regenerates sku_profiles.csv while writing forecasts to
+  shipcore.fc_forward_forecasts, so using it to repair ML data would move segmentation underneath an
+  unchanged ML forecast, which is the failure backlog item 7 describes.
+  On the server it would have been worse: data/processed there is live data owned by the Monday cron, and
+  this would have let anyone rebuild it mid-week, from a full order pull, by opening a tab.
+  Built the deliberate version instead. scripts/ml_prepare_data.py chains ingest, clean, profile and the
+  ML forward forecast, refusing to overwrite without --force. POST /planning/prepare-data runs it through
+  the same job-and-poll machinery the Run Forecast panel already uses, and refuses with 409 when readiness
+  says nothing is missing. The no_data card now offers both routes in the order they should be tried: the
+  seed, which is instant and needs no database, then a button for building current data.
+  Two bugs caught by reading the endpoints rather than trusting the types. The poll used a query parameter
+  where the route takes a path segment, /api/forecast/status/[jobId], and read an error field the job
+  payload does not have; its shape is job_id, status, lines, exit_code, so the last log line is the
+  message, and it is the better one since the script prints which of its three steps failed.

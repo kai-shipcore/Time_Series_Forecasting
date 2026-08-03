@@ -12,13 +12,20 @@ both the Streamlit app and the FastAPI service read through it. Anything that
 computes a number a user will act on belongs here, so the two hosts cannot
 disagree; anything that renders belongs to the host.
 
-Known limitation, and the main prerequisite for serving this from the Next.js
-app: these are files on disk, not database tables. The v11 forward forecast is
-written to ``data/processed/ml_forward_forecasts.parquet`` and never to Postgres
-(``shipcore.fc_forward_forecasts`` holds the legacy statsforecast output), and
-inventory arrives as an exported CSV rather than a live query. FastAPI can serve
-from these files because it runs inside this repo, but a deployment that does not
-share the filesystem would need both moved into the database first.
+Where the inputs live, which is no longer one answer:
+
+- The forward forecast is read from ``shipcore.ml_forward_forecasts`` when the
+  database is reachable, and from ``data/processed/ml_forward_forecasts.parquet``
+  otherwise. Both are written by every run. The table is what lets a machine
+  that did not produce the forecast show the current one; the file is what lets
+  a clone with no credentials work at all.
+- Inventory is a live query against two databases, falling back to an exported
+  CSV and then to labelled sample data.
+- Sales, the SKU profiles and the accuracy reports are still files only.
+
+So the old note here, that everything is on disk and moving it is the
+prerequisite for deploying the API away from this repo, is now half done. Sales
+and profiles are what remain.
 """
 
 from __future__ import annotations
@@ -71,8 +78,31 @@ def _read_sales() -> pd.DataFrame:
 
 def _read_forecasts() -> pd.DataFrame:
     """LightGBM model forecast: unique_id, forecast_date, ds, yhat, bucket,
-    history_length, segment, model_version, served_by, run_at."""
-    df = pd.read_parquet(FORWARD_FORECAST)
+    history_length, segment, model_version, served_by, run_at.
+
+    Prefers `shipcore.ml_forward_forecasts`, falling back to the parquet.
+
+    The table is what the weekly run on the server writes, so preferring it is
+    what lets a laptop show this week's horizon rather than whatever that
+    machine last produced or was seeded with. The parquet remains the path for a
+    clone with no credentials, which is a supported way to run this and the one
+    the seeded fixture depends on.
+
+    Only the newest training run is kept either way. That filter predates the
+    table and is why the table can accumulate horizons without changing what any
+    caller sees.
+    """
+    df = None
+    try:
+        from src.ml.serving import store
+
+        df = store.read_forward()
+    except Exception:
+        df = None
+
+    if df is None or df.empty:
+        df = pd.read_parquet(FORWARD_FORECAST)
+
     df["ds"] = pd.to_datetime(df["ds"])
     df["forecast_date"] = pd.to_datetime(df["forecast_date"])
     # Keep only the most recent training run's horizon.
@@ -194,7 +224,8 @@ SEED_SCRIPT = "scripts/seed_dev_data.py"
 
 _DATA_FILES: list[tuple[str, Path, bool, str]] = [
     ("forecast", FORWARD_FORECAST, True,
-     f"{SEED_SCRIPT}, or scripts/ml_forward_forecast.py for a real run"),
+     f"{SEED_SCRIPT}, scripts/ml_forward_forecast.py, or DB_* in .env "
+     f"to read shipcore.ml_forward_forecasts"),
     ("sales", SALES_CLEAN_PARQUET, True,
      f"{SEED_SCRIPT}, or the weekly ingest"),
     ("profiles", SKU_PROFILES, True,
@@ -218,6 +249,18 @@ def readiness() -> dict:
     Cheap enough to call on every health check: it stats a handful of paths and
     reads nothing. Sales is satisfied by either the parquet or the CSV, matching
     what ``_read_sales`` will accept.
+
+    The forecast is satisfied by either the parquet or
+    ``shipcore.ml_forward_forecasts``, matching ``_read_forecasts``. Without
+    this, a machine that reads the table but has no local file was reported as
+    unable to serve while it was in fact serving, and the error card told the
+    reader to run a seed script they did not need. The check has to describe
+    what the service can do rather than which files happen to exist, and that
+    stopped being the same question when the table was added.
+
+    The table probe is the one part of this that is not free: it opens a
+    connection. Only attempted when the file is absent, so the common paths, a
+    seeded developer machine and the server, still stat and nothing more.
     """
     files = []
     missing_required = []
@@ -225,6 +268,13 @@ def readiness() -> dict:
         exists = path.exists()
         if name == "sales" and not exists:
             exists = SALES_CLEAN_CSV.exists()
+        if name == "forecast" and not exists:
+            try:
+                from src.ml.serving import store
+
+                exists = store.available(store.FORWARD_TABLE)
+            except Exception:
+                exists = False
         files.append({
             "name": name,
             "path": str(path.relative_to(REPO_ROOT)),

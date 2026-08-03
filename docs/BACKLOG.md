@@ -238,15 +238,25 @@ or say plainly which half it refreshes.
 
 ## 8. Node version disagrees with what the project declares
 
-**Status:** open, needs a decision rather than work.
+**Status:** decided 2026-07-31. Move the machine to Node 22. Neither repository changes.
 
 `Commerce_Integration/package.json` declares `engines.node` as `>=20.9 <24`. The development
-machine runs v24.2.0, which npm reports as `EBADENGINE` on every install. Either the range is stale
-and should be widened deliberately after testing, or the machine should move to Node 22 LTS, which
-is inside it. Widening the range to match whatever happens to be installed is the same move as
-relaxing a version pin to make an install succeed. Worth checking what the deployment server runs
-while this is being decided: a major-version difference between there and a laptop is the usual
-shape of "works locally, fails in production".
+machine runs v24.2.0, which npm reports as `EBADENGINE` on every install.
+
+**What settles it.** The repository also carries a `.nvmrc`, and it reads `22`. So the project
+states its intended version twice, in two files, and they agree: 22, comfortably inside the
+declared range. The laptop on 24.2.0 is the only thing disagreeing, and widening `engines` to
+accommodate it would be editing the declaration to match an accident. That is the same move as
+relaxing a version pin to make an install succeed.
+
+**What to do.** In the Commerce checkout, `nvm use` reads `.nvmrc` and needs no argument;
+`nvm install 22` first if it is not already there.
+
+**Still worth confirming, and not blocking.** The CI workflow runs `npm install` with no
+`setup-node` step, so the deployed app builds against whatever Node the server happens to have.
+Unpinned rather than wrong, but it means a major-version gap between the server and a laptop stays
+invisible until something breaks, which is the usual shape of "works locally, fails in production".
+Pinning CI to 22 with `actions/setup-node` would close it, and is a small separate change.
 
 ---
 
@@ -348,3 +358,107 @@ column means anything.
 **Where it would surface if taken up.** Order value beside the recommended quantity on both
 screens, and a value-sorted view of the list, so the largest commitments are visible without
 opening 447 rows.
+
+---
+
+## 11. The forecast history exists on one disk and cannot be rebuilt
+
+**Status:** BUILT 2026-07-31. The table, the dual write, the fallback read, the one-off migration
+and the cron backup all exist. NOT YET RUN against a real database, which the assistant cannot
+reach; see "What has to happen on a machine with credentials" at the end.
+
+**What is at risk.** `data/processed/ml_forecast_history.parquet` gains one entry per weekly run,
+keyed by `model_version, forecast_date, unique_id, ds`. It is the only record of what the model
+predicted before the outcome was known. Everything else the cron writes is regenerable from the
+database by re-running the pipeline, and the accuracy reports are tracked in git; this one is not
+recoverable by any means. Re-running past versions against past cutoffs would produce backtest
+figures, which is a weaker and different claim: the value of this store is precisely that the
+predictions were served in advance.
+
+**Where it lives.** `/opt/coverland-forecast-api/data/processed/` on the server, written in place
+by `scripts/run_forecast_cron.sh`. Gitignored, and excluded from the deploy's `rsync` by the same
+rule that stops a code push overwriting the server's data. One copy, no backup.
+
+**Why it matters more each week.** Forecast Validation's "Performance on forecasts actually
+served" section and the demand-versus-forecast chart both read it, and both are empty until runs
+accumulate. Backlog item 6 lists exactly this as the one timing constraint on retiring the old
+Demand Forecast page. Losing the file resets that clock to zero.
+
+**Why git is not the answer.** The server writes it, so git cannot be the transport back without
+someone connecting weekly to commit the result, which is a manual step that will be forgotten. It
+is also the arrangement `data/` is excluded from the deploy specifically to prevent.
+
+**The fix the codebase already points at.** `src/ml/serving/history.py` says in its own docstring
+that moving this behind functions rather than callers is "the prerequisite for serving this from an
+API that does not share the filesystem". The legacy track already writes its equivalent to
+`shipcore.fc_forecast_history`, a database table, which is backed up, shared, and reachable from
+any machine. The ML track writing a parquet instead is the asymmetry, and closing it removes the
+single-disk problem rather than mitigating it.
+
+**A stopgap worth taking today either way.** Have `run_forecast_cron.sh` write a dated copy
+somewhere durable after each successful run. Minutes of work, and it bounds the loss to one week
+until the table exists.
+
+**One thing to check first.** Both a laptop and the server have run forecasts at different times,
+so two divergent copies of this file may exist. They would merge cleanly, since the key makes rows
+idempotent, but nothing merges them today and the server's copy is the one being served. Worth
+comparing before either is treated as authoritative.
+
+**What was built.** `src/ml/serving/store.py` holds the table definition and a keyed upsert.
+`history.py`'s `load` and `append` now use it, which is the two-function change the module's own
+docstring predicted. Writes go to both stores: the table first, so a crash between them loses the
+local copy rather than the shared one. Reads prefer the table and fall back to the parquet, so a
+machine with credentials sees the server's runs and a clone without any still works from its own.
+Nothing raises when the database is absent, because a credential-free clone is a supported way to
+run this project.
+
+`scripts/migrate_history_to_db.py` imports an existing parquet. It is idempotent on the key, which
+is what lets it be run on both the laptop and the server to merge the two divergent copies rather
+than having to choose one.
+
+`run_forecast_cron.sh` also keeps twelve dated copies of the parquet under `data/history_backups/`.
+That covers the case the table cannot: a run where the database was unreachable, which is exactly
+when the file is the only copy.
+
+**No backfill.** The tables start empty and fill from the next weekly run. Importing the existing
+parquets was built and then removed: it solved a problem nobody had, and it would have merged two
+divergent local histories into a shared store for no stated benefit. The parquets remain on disk
+and remain readable as the fallback, so nothing is lost by not importing them.
+
+**What has to happen on a machine with credentials.** None of the database path has been executed.
+
+1. Run a forecast, or wait for Monday. Both tables are created on first write, so there is no
+   separate migration step.
+2. Watch the run's output for `rows written to shipcore.ml_forward_forecasts` and `rows also
+   written to shipcore.ml_forecast_history`. If either says NOT written, that artifact is still
+   single-copy and the server's credentials need looking at.
+3. From a different machine with credentials, confirm the Action List shows that run's
+   `trained_through` rather than the seeded 2026-07-20 fixture. That is the whole point of the
+   forward table.
+4. Confirm a clone with no `.env` still works from the seed, which is the path that must not
+   regress.
+
+---
+
+## 12. Two loose ends from moving the ML artifacts into tables
+
+**Status:** identified 2026-07-31, both small, neither urgent.
+
+**~~`readiness()` still requires the forward-forecast parquet.~~ Fixed 2026-07-31.** The forecast
+requirement is now satisfied by the parquet *or* `shipcore.ml_forward_forecasts`, matching what
+`_read_forecasts` actually accepts, and the table is only probed when the file is absent so the
+common paths still stat and nothing more. `scripts/export_inventory_snapshot.py` was reading the
+parquet directly for its SKU list and now goes through `load_forecasts` for the same reason.
+
+**V1 has no history table.** `v1_forward_forecasts` is recomputed per run and overwritten, so the
+V1 comparison exists for the current horizon and for the pinned backtest windows, but not for
+forecasts actually served over time. The Forecast Validation page says so in place rather than
+implying otherwise. If model-versus-spreadsheet on served forecasts is ever wanted as a trend, V1
+needs the same treatment the model forecast just received, which is one more table with the same
+key. Not obviously worth it: the backtest grid already answers the adoption question, and V1 is
+retained for comparison rather than as a candidate.
+
+**Prediction intervals, when they arrive.** The ML tables have no `yhat_lo_*` / `yhat_hi_*`
+columns, because v11 emits a point forecast only. The legacy track's `_MIGRATE_PI_SQL` in
+`src/db.py` is the pattern for adding them later without a migration tool: `ALTER TABLE` guarded by
+`information_schema` checks, run on every write.

@@ -5,6 +5,9 @@
 # reach the server or be overwritten by the weekly cron.
 data/raw/
 data/processed/
+# Dated copies of the forecast history, written by the weekly cron on the
+# server. Machine-local by nature and never wanted in a checkout.
+data/history_backups/
 logs/
 
 # Generated artifacts, with three exceptions below.

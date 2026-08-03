@@ -55,11 +55,19 @@ OUT_CSV = ROOT / "dashboard" / "data" / "inventory_snapshot.csv"
 
 
 def main() -> None:
-    if not FORECAST_PARQUET.exists():
-        print(f"Forecast file not found: {FORECAST_PARQUET}")
-        sys.exit(1)
+    # Through the same loader the service uses, rather than reading the parquet
+    # directly. That loader prefers shipcore.ml_forward_forecasts and falls back
+    # to the file, so this script now works on a machine that has credentials
+    # but no local forecast, and cannot disagree with the dashboard about which
+    # SKUs are forecast.
+    from src.planning import data as D
 
-    forecast_skus = sorted(pd.read_parquet(FORECAST_PARQUET)["unique_id"].unique().tolist())
+    forecast_skus = sorted(D.load_forecasts()["unique_id"].unique().tolist())
+    if not forecast_skus:
+        print("No forward forecast found, in the database or at "
+              f"{FORECAST_PARQUET}. Run scripts/ml_forward_forecast.py, or "
+              "scripts/seed_dev_data.py for the committed fixture.")
+        sys.exit(1)
     print(f"Forecast SKUs: {len(forecast_skus)}")
 
     # Same query path the dashboard and the API use at request time. Keeping one

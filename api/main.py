@@ -1915,6 +1915,87 @@ def run_forecast(horizon: int = Query(default=13, ge=1, le=104)):
     return {"job_id": job_id}
 
 
+@app.post("/planning/prepare-data")
+def planning_prepare_data(horizon: int = Query(default=13, ge=1, le=104)):
+    """Build the ML data files from the database, for a machine that has none.
+
+    The counterpart to /run-forecast, and deliberately a separate endpoint
+    rather than a flag on it. That one runs the legacy statsforecast pipeline,
+    which regenerates sku_profiles.csv while writing its forecasts to
+    shipcore.fc_forward_forecasts, leaving the ML artifacts untouched. Using it
+    to repair missing ML data would move segmentation underneath an unchanged ML
+    forecast, which is the failure docs/BACKLOG.md item 7 describes.
+
+    Async, returning a job_id to poll, because this is minutes of work and a
+    request cannot wait for it. Reuses the same job machinery the Run Forecast
+    panel already polls, so the client side is a button rather than a mechanism.
+
+    Refuses when the data is already there. The caller reaching this endpoint
+    means readiness said something was missing, so a request that arrives when
+    nothing is is either a stale page or a second click, and rebuilding live
+    data from a page load is exactly what should not happen on the server.
+    """
+    status = _plan_data.readiness()
+    if status["ready"] and not status["missing_required"]:
+        raise HTTPException(
+            status_code=409,
+            detail="The data files are already present; nothing to prepare.",
+        )
+
+    job_id = create_job("forecast")
+    if job_id is None:
+        raise HTTPException(status_code=409, detail="A forecast job is already in progress")
+
+    def _run():
+        logger = JobLogger(job_id)
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(ROOT / "scripts" / "ml_prepare_data.py"),
+                 "--horizon", str(horizon)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                cwd=str(ROOT), start_new_session=True,
+            )
+            try:
+                set_job_pgid(job_id, os.getpgid(proc.pid))
+            except Exception:
+                pass
+            stop_watch = threading.Event()
+
+            def _watch():
+                while not stop_watch.wait(2.0):
+                    try:
+                        touch_job(job_id)
+                        if job_cancel_requested(job_id):
+                            try:
+                                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                            except (ProcessLookupError, PermissionError):
+                                pass
+                            return
+                    except Exception:
+                        pass
+            threading.Thread(target=_watch, daemon=True).start()
+
+            for line in proc.stdout:
+                logger.append(line.rstrip())
+            proc.wait()
+            stop_watch.set()
+            logger.flush()
+
+            if job_cancel_requested(job_id):
+                finish_job(job_id, "cancelled", exit_code=proc.returncode)
+            elif proc.returncode == 0:
+                finish_job(job_id, "done", exit_code=0)
+            else:
+                finish_job(job_id, "failed", exit_code=proc.returncode)
+        except Exception as exc:
+            logger.append(f"Error: {exc}")
+            logger.flush()
+            finish_job(job_id, "failed", exit_code=-1)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"job_id": job_id}
+
+
 @app.post("/cancel-forecast/{job_id}")
 def cancel_forecast(job_id: str):
     """Request cancellation of a running forecast job (kills the whole
@@ -1997,12 +2078,12 @@ async def chat(req: ChatRequest):
 # exists, so the two surfaces cannot disagree, and retiring Streamlit later
 # removes a renderer rather than a calculation.
 #
-# Unlike the endpoints above, these read files rather than Postgres. The v11
-# forward forecast is written to data/processed/ml_forward_forecasts.parquet and
-# never to shipcore.fc_forward_forecasts, which still holds the legacy
-# statsforecast output, and inventory arrives as an exported CSV. That works
-# because this service runs inside the forecasting repo. Moving either of those
-# into the database is the prerequisite for deploying the API away from it.
+# Unlike the endpoints above, these read a mixture. The v11 forward forecast now
+# lives in shipcore.ml_forward_forecasts, separate from the legacy
+# shipcore.fc_forward_forecasts which still holds the statsforecast output, and
+# falls back to a parquet when the database is unreachable. Inventory is a live
+# query with a CSV fallback. Sales and the SKU profiles are still files only,
+# and are what remains before this API could be deployed away from this repo.
 # ─────────────────────────────────────────────────────────────────────────────
 
 from src.planning import calc as _plan_calc  # noqa: E402

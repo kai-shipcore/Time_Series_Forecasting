@@ -14,11 +14,15 @@ a new one coexists with its predecessors rather than replacing them, and the
 comparison between them is a query rather than an archaeology exercise. Nothing
 here knows or cares which version is current.
 
-Storage is a single parquet file for now, matching the rest of the ML track
-while the model is still moving. The read and write paths are the only places
-that know that, so moving to a `shipcore` table later is a change to two
-functions rather than to every caller. That move is the prerequisite for serving
-this from an API that does not share the filesystem.
+Storage was a single parquet file, and that move to a `shipcore` table has now
+happened: it was a change to `load` and `append` only, as this note predicted.
+See `src/ml/serving/store.py` for why, in short that one file was both
+irreplaceable and readable from exactly one machine.
+
+Both stores are written. Reads prefer the table and fall back to the file, so a
+machine with credentials sees the server's runs while a clone without any still
+works from its own. The parquet is therefore still a real backup rather than a
+vestige, and nothing here requires a database to function.
 """
 
 from __future__ import annotations
@@ -26,6 +30,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+
+from . import store
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HISTORY_PATH = REPO_ROOT / "data" / "processed" / "ml_forecast_history.parquet"
@@ -40,7 +46,37 @@ COLUMNS = KEY + ["yhat", "bucket", "history_length", "segment", "served_by", "ru
 
 
 def load() -> pd.DataFrame:
-    """Every stored prediction. Empty frame with the right columns if none yet."""
+    """Every stored prediction. Empty frame with the right columns if none yet.
+
+    The table wins when it can be read, because it is the one the weekly run on
+    the server writes and therefore the only complete record. The parquet is
+    whatever this machine happened to produce locally, which on a developer's
+    laptop is a different and usually shorter history.
+
+    Falls back rather than failing: a clone with no credentials is a supported
+    way to run this project, and the seeded fixture is expected to work alone.
+    """
+    from_db = store.read(COLUMNS)
+    if from_db is not None and not from_db.empty:
+        return from_db
+
+    if not HISTORY_PATH.exists():
+        return pd.DataFrame(columns=COLUMNS)
+    df = pd.read_parquet(HISTORY_PATH)
+    for col in ("forecast_date", "ds"):
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col])
+    return df
+
+
+def _load_parquet() -> pd.DataFrame:
+    """The local file alone, ignoring the table.
+
+    `append` needs this. Merging incoming rows against the table and then
+    writing the result to the parquet would copy the server's entire history
+    into a laptop's file the first time anyone ran a forecast with credentials
+    set, which is a surprising side effect of writing one run.
+    """
     if not HISTORY_PATH.exists():
         return pd.DataFrame(columns=COLUMNS)
     df = pd.read_parquet(HISTORY_PATH)
@@ -57,12 +93,19 @@ def append(forecast: pd.DataFrame) -> dict:
     claiming success blindly: how many rows arrived, how many replaced earlier
     ones, and how large the store now is.
 
-    Read-modify-write on one file is safe here because the pipeline is a weekly
-    cron with a single writer. It would not be safe under concurrent runs, which
-    is one of the reasons this belongs in a database eventually.
+    Writes both stores. The table is the durable, shared one; the parquet stays
+    as a local backup and as the path a machine without credentials uses. The
+    table write is an upsert on the key, so it needs no read first and is safe
+    under concurrent runs; the file write is still read-modify-write, which is
+    safe only because the pipeline is a weekly cron with a single writer.
+
+    A failed table write does not fail the run. The forecast itself has already
+    been produced and the parquet has it, so raising here would turn a
+    recoverable bookkeeping problem into a failed Monday. It is reported in the
+    returned summary instead, which the caller prints.
     """
     if forecast is None or forecast.empty:
-        return {"added": 0, "replaced": 0, "total": len(load()), "runs": 0}
+        return {"added": 0, "replaced": 0, "total": len(load()), "runs": 0, "db_rows": 0}
 
     incoming = forecast.copy()
     for col in ("forecast_date", "ds"):
@@ -73,7 +116,11 @@ def append(forecast: pd.DataFrame) -> dict:
     keep = [c for c in COLUMNS if c in incoming.columns]
     incoming = incoming[keep]
 
-    existing = load()
+    # The durable store first, so a crash between the two writes loses the
+    # local copy rather than the shared one.
+    db_rows = store.upsert(incoming)
+
+    existing = _load_parquet()
     replaced = 0
     if not existing.empty:
         # Anti-join on the key: drop what this run supersedes, keep the rest.
@@ -96,6 +143,10 @@ def append(forecast: pd.DataFrame) -> dict:
         "replaced": replaced,
         "total": len(out),
         "runs": int(out.groupby(["model_version", "forecast_date"]).ngroups),
+        # Rows written to the table: -1 means it could not be reached, which is
+        # normal on a machine with no credentials and worth saying out loud on
+        # the server, where it means this run is not backed up.
+        "db_rows": db_rows,
     }
 
 

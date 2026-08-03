@@ -48,4 +48,30 @@ else
   exit 1
 fi
 
+# Dated copy of the one artifact that cannot be rebuilt.
+#
+# Everything else this run wrote regenerates from the database. The accumulating
+# history does not: it records what was predicted before the outcome was known,
+# and re-running past versions against past cutoffs would produce backtest
+# figures, which is a different and weaker claim.
+#
+# The run also writes it to shipcore.ml_forecast_history, which is the real fix
+# and is backed up with the rest of the database. This is the belt to that
+# braces, and it is what covers the case the table cannot cover: a run where the
+# database was unreachable, which is exactly when the file is the only copy.
+#
+# Keeps the last 12 weeks. Older ones are strictly contained in newer ones,
+# since the store only grows, so retention here is about surviving a corrupt
+# write rather than about depth of history.
+HIST="data/processed/ml_forecast_history.parquet"
+if [ -f "$HIST" ]; then
+  mkdir -p data/history_backups
+  cp "$HIST" "data/history_backups/ml_forecast_history_$(date -u '+%Y-%m-%d').parquet"
+  ls -1t data/history_backups/ml_forecast_history_*.parquet 2>/dev/null \
+    | tail -n +13 | xargs -r rm --
+  echo "History backed up: $(ls -1 data/history_backups | wc -l | tr -d ' ') copies retained."
+else
+  echo "WARNING: $HIST does not exist after a successful run; nothing to back up."
+fi
+
 echo "=== $(date -u '+%Y-%m-%d %H:%M:%S UTC') : done ==="
