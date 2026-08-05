@@ -201,15 +201,29 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 
 def find_commerce_env(explicit: str | None) -> Path | None:
+    """The Commerce env file to derive settings from, preferring `.env.local`.
+
+    Next.js loads `.env.local` at higher precedence than `.env`, so when both
+    exist the local one is what that app is actually using. Reading `.env` and
+    ignoring it would copy values the other app has already overridden, which is
+    the same trap that cost an afternoon on AI_SERVICE_URL: two people editing
+    `.env` while `.env.local` quietly won.
+    """
+    names = (".env.local", ".env")
     if explicit:
         p = Path(explicit).expanduser()
-        if p.is_dir():
-            p = p / ".env"
-        return p if p.is_file() else None
-    for guess in COMMERCE_GUESSES:
-        p = (ROOT / guess / ".env").resolve()
         if p.is_file():
             return p
+        if p.is_dir():
+            for name in names:
+                if (p / name).is_file():
+                    return p / name
+        return None
+    for guess in COMMERCE_GUESSES:
+        for name in names:
+            p = (ROOT / guess / name).resolve()
+            if p.is_file():
+                return p
     return None
 
 

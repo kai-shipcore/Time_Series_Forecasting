@@ -1874,3 +1874,451 @@ detail lives in the design document and codebase guide, not here.
   It only finds the interpreter; everything it does lives in scripts/setup_local.py, so there is one
   definition of what setup means and the batch file cannot drift from it. The mirror of start-dev.cmd in
   the Commerce repo, which exists for the same class of Windows friction.
+
+2026-07-31  Found why the forecast API worked on one machine and not another, after most of a day on it.
+  Commerce_Integration has both .env and .env.local, and Next.js loads .env.local at higher precedence.
+  .env held AI_SERVICE_URL=http://localhost:8000 and .env.local held the deployed server's address, so the
+  machine that worked was reading the second file while every instruction, and every edit either person
+  made, went to the first. Both files are gitignored, so nothing travelled between machines and the two
+  could disagree indefinitely with no symptom other than one of them working.
+  That repo's CLAUDE.md asserted "The project uses a .env file (not .env.local)", which is false and is
+  what sent us to the wrong file. Corrected, with the precedence stated, the check for which file supplies
+  a variable, and the reminder that env is read at startup so a change without restarting the dev server
+  does nothing and reads as the change having failed.
+  The same error is corrected in DEPLOYMENT.md, which claimed the service binds 127.0.0.1 and is therefore
+  unreachable from a laptop. A laptop has been observed reaching it directly, so it is listening publicly
+  and the ExecStart line quoted in that document does not match what runs. Both the claim and the two
+  passages that depended on it are rewritten, and the consequence is now stated plainly: the service reads
+  both database credential sets and its only protection is a shared token, with /health outside that check.
+  Whether it should be publicly reachable is a decision someone should make rather than discover.
+  scripts/setup_local.py had the same bug I was diagnosing: it derived database settings from the Commerce
+  .env and would have ignored .env.local. It now prefers .env.local, matching what that app actually reads.
+  The lesson worth keeping: I asserted the binding from a document three times over several hours instead
+  of asking for one curl against the host. The document had already been wrong twice that same day.
+
+2026-07-31  Established, finally by measurement rather than inference, that port 8000 is firewalled from
+  the internet, and corrected DEPLOYMENT.md back after I had wrongly "corrected" it the other way.
+  The confusion had one cause. A developer machine appeared to be reaching the server with AI_SERVICE_URL
+  set to its public address. It was not: that machine had a local forecast server running, and the app
+  starts and uses a local one when the configured address does not answer, so the fallback served every
+  request while the configuration looked correct. Removing the local server made the truth visible
+  immediately.
+  So the original claim in that document was right in substance and I overturned it on the strength of one
+  machine appearing to work, which is exactly the kind of evidence the fallback is designed to manufacture.
+  The document now states what was measured, records the mistake and its cause, and says that the test is
+  curl from a machine with no local server, first rather than last.
+  The deployed app works because it runs on the same box, where the public address resolves to a local
+  interface. Port 3000 is open and 8000 is not, so this is a per-port rule rather than the host being
+  unreachable.
+  Three routes are now documented in order of cost: run the service locally against the committed fixture,
+  tunnel over SSH when current data is wanted, or open the port, which is a deliberate decision rather
+  than a fix and carries the note that the shared token is the entire perimeter for a service holding two
+  sets of database credentials.
+
+2026-07-31  Three changes to the SKU detail page, and a new endpoint behind one of them.
+  Intermittent SKUs now show their sales history instead of only an explanation. The planning endpoint
+  still returns 404 for them, correctly: without a forecast there is no order quantity, coverage demand or
+  reliability, so there is no planning row to return. Sales history exists either way, so it moved to its
+  own endpoint, /planning/sku/{id}/history, which reads the same weekly series the rest of the planning
+  layer uses and is fetched only after the planning call has 404'd as intermittent. The chart draws actuals
+  and nothing else. No forecast line, no band, no reliability figure, because none of them exist for these
+  SKUs and an empty axis where a forecast belongs would read as missing rather than as not applicable. Note
+  that the sparsest of these draw almost nothing, two units across 104 weeks in one case, which is itself
+  the reason they are not forecast.
+  Added a legend to the reliability card's Miss column. Seven colour steps in two directions is more than a
+  reader can infer, and the direction is the part that matters, since over and under call for opposite
+  responses. The Action List already gives its four tiers a legend for the same reason.
+  Enlarged the two smallest labels on the order card from 8.5px, which was smaller than anything else in
+  the app and was labelling the two figures most easily mistaken for the headline quantity.
+  Recorded but not changed, after checking: the reliability percentage is not misleading in the way it
+  looks. Of the 60 scored rows above 50% WAPE the median absolute miss is 37 units against 38 actual, so
+  those are real misses rather than rounding on tiny volumes; only 13% miss by under 20 units. The genuine
+  asymmetry runs the other way, a 9% error on a 200-plus unit SKU being 43 units against 13 for a 60% error
+  on a small one. No change made: the ratio is the right instrument for sizing safety stock, which is what
+  it feeds, and the window table already shows predicted against actual in units directly beneath it.
+  Also identified, not yet resolved: the plausible band and safety stock are the same arithmetic. Safety
+  stock is service_z x error x coverage demand, and the band's upper edge is coverage demand x (1 + error),
+  so at the default service level the recommendation lands exactly on the band's top edge rather than
+  inside it. The docstring on order_quantity_range asserts the opposite.
+
+2026-07-31  Removed the plausible band, flagged the consistently-biased SKUs, and made the non-forecast rows clickable.
+  The band is gone from the order card, the API and the types. It flexed coverage demand by the SKU's own
+  error, which is the same quantity safety stock adds, so at the default service level its upper edge was the
+  recommendation itself: one figure shown twice, once as a decision and once as a range that appeared to
+  contain it while ending at it. Uncertainty now sits only on the reliability card, where it is measured over
+  the backtest windows rather than restated from an error term the order card had already spent.
+  Added a data-quality flag for SKUs the model misses in the same direction every window. Deliberately narrow,
+  and the narrowness is the finding: bias is mostly a property of the season rather than of the SKU. Of the
+  SKUs scored in two or more windows, 58% flip sign between them and the median spread within one SKU is 31
+  percentage points, so a per-SKU bias correction would be fitting noise. Requiring the same sign in every
+  window, a mean miss above 20%, and at least two windows leaves 41 SKUs, 33 over-forecast and 8 under,
+  carrying 13% of recommended units. The recommended quantity is not adjusted; a consistent over-forecast
+  means coverage demand is already high and safety stock is buffering on top of it, which is worth a planner
+  seeing and not worth a silent correction fitted to two windows.
+  Recorded against the same question, because it was asked and answered with evidence: safety stock should
+  not be made direction-aware. It buffers dispersion, and a SKU that swung +50% then -50% genuinely needs the
+  larger buffer. Correcting the buffer for bias would shrink it on exactly the SKUs whose direction cannot be
+  called. Bias belongs on the forecast; dispersion belongs on the buffer.
+  The non-forecast table's rows now link to the SKU detail page, which was the missing half of the previous
+  entry: that page draws sales history for an intermittent SKU, and nothing linked to it, so it was reachable
+  only by typing a URL.
+  Two corrections to earlier notes in this log and in dashboard/PLAN.md, both from assumptions that should
+  have been questions. Every purchase order is on a container, and the three container statuses the Sheet
+  import sets are exhaustive, so there is no population of orders invisible to confirmed or draft inbound.
+  And inventory has not been sample data since the export landed: inventory_source() reports "export".
+  PLAN.md Section 2.2 rewritten accordingly, since it was telling readers to distrust figures that are real.
+
+2026-07-31  Removed the consistently-biased flag added earlier today. It was measuring noise.
+  The flag marked SKUs the model misses in the same direction in every backtest window, with a mean miss
+  above 20% and at least two windows. It was tested against a null before being trusted, which is what it
+  did not survive. Randomising the sign of each window's bias and re-applying the same criteria catches 49
+  SKUs on average over 2,000 permutations, against 41 observed, with a 5th-to-95th percentile range of 41 to
+  57 and p(null >= observed) = 0.954. Same-sign consistency is 41.9% observed against 43.3% expected by
+  chance. The flag identifies fewer SKUs than chance does.
+  The cause is structural rather than a threshold that needs tuning. There are three evaluation windows, and
+  180 of the 246 SKUs scored in two or more appear in exactly two, so "the same sign twice" is a coin flip.
+  No choice of threshold recovers a signal that is not there, and adding windows is not available: the
+  evaluation windows are pinned, and which SKUs are eligible for them is the subject of backlog item 2.
+  Reverted from quality.py, reliability.py and calc.py. The reasoning is recorded in per_sku's docstring so
+  the same flag is not proposed again from the same data. Direction remains measurable per segment, which is
+  what the validation grid already shows; it is not measurable per SKU on this evidence.
+  Worth separating from the question that prompted it, which stands. Safety stock is a percentage of coverage
+  demand, so when the forecast is high the buffer is high for the same reason, and the two compound. That is
+  real. What is not available is a per-SKU estimate of which SKUs are affected, so the compounding cannot be
+  corrected per SKU on this evidence either.
+
+2026-07-31  Added the per-SKU model-versus-spreadsheet comparison, and made the detail page step through the list the user is actually looking at.
+  The reliability card now shows this SKU's model against V1 on the windows both were scored on: pooled WAPE,
+  signed bias and units missed, all three because one is not enough. WAPE says how far off, bias says which
+  way, units say whether the difference is worth anything. Both errors divide by the same actual, the one from
+  the model's own row, so the two are like for like rather than each measured against its own denominator.
+  It renders for 260 of the 447 served SKUs. The model is closer on 186 of them and the spreadsheet on 74, and
+  those 74 carry a line saying so, because that is exactly where the portfolio result does not transfer. V1's
+  error is season-dependent, so an individual SKU can run opposite to the aggregate, and several of the ones
+  it wins on are large: CA-SC-10-F-169-BK-1TO at 24% against V1's 12% over 697 units, CC-SS-03-K-GR-1TO at 23%
+  against 10% over 645. The page drew both curves and listed both columns and had never said which was closer.
+  CA-SC-10-R-90-DG-1TO, the SKU that prompted this, is one of them: model 0.373, V1 0.132.
+  Prev, Next and the SKU selector now walk the sequence the list was showing rather than the server's worklist
+  order over every forecastable SKU. Filtering to 128 rows, sorting by stockout date, then clicking in and
+  pressing Next used to land on a SKU that was neither in the filter nor next in the sort. The selector lists
+  the same subset, which is what makes it usable at all: it previously held all 432 with no search.
+  Passed through sessionStorage rather than the URL or the API, and the reason is the sort. Filters could have
+  travelled as parameters; sort order could not, without a second implementation of the sort on the Python
+  side that would drift from the one in action-list-table.ts. The list has already computed the exact sequence
+  on screen, so that sequence is what moves. The cost is that a shared link does not reproduce the subset,
+  which is the right trade: the planning parameters that must reproduce still travel in the URL. Read through
+  useSyncExternalStore so there is no synchronous setState in an effect and no hydration mismatch, and honoured
+  only when it contains the SKU being viewed, intersected with what the server still serves.
+
+2026-07-31  Extended the SKU detail history to cover its backtest windows, and gave demand trend the same treatment as reliability.
+  The backtest chart was drawing shaded windows and predicted lines over weeks with no actuals beneath them.
+  Both charts on that page read one history array sized by history_weeks, which defaults to 26 and therefore
+  started in late January, while the earliest backtest cutoff is the previous October. 246 of the 260 scored
+  SKUs were affected: those with two windows were missing ten weeks of actuals and those with three were
+  missing twenty, which is exactly where the comparison the chart exists to make had nothing to compare
+  against. The endpoint now extends the history back to the earliest cutoff it is also returning, plus four
+  weeks so there is observed demand to the left of that cutoff line, and reports history_weeks in meta so the
+  demand chart trims to what was asked for rather than silently lengthening on SKUs with old windows.
+  Demand trend now has a filter on the Action List and a legend under the table stating its thresholds, which
+  is where reliability's thresholds already live. It had arrived on the SKU detail page as a single word with
+  no definition and no way to reach the other SKUs in the same state, which is not a vocabulary a reader can
+  learn. The rule is stated once: last 4 weeks against the last 12 on deseasonalized demand, 1.10x or more
+  rising, 0.70 to 1.10 steady, 0.40 to 0.70 falling, under 0.40 collapsing, and unknown where the ratio cannot
+  be computed. The ratio is the model's own ramp_4_12 feature imported from src.ml.seasonal, so what the
+  dashboard calls falling and what the model treats as falling cannot drift apart. The detail tile carries the
+  same rule on hover for a reader who arrived directly.
+  Also relabelled "30-day sales" to four weeks, on the detail page and in the table header. recent_units sums
+  four W-MON buckets, so it was a 28-day figure under a 30-day name in two places. A true 30 days is not
+  available from either source: the weekly series buckets by W-MON so the window falls inside a bucket, and the
+  daily order lines are a velocity cache running several days behind it, so a tile taken from there would not
+  reconcile with the chart below it. The number was right; the label was not.
+
+--- DAILY SUMMARY 2026-07-31 ---
+- Spent most of the day on why the forecasting service ran on one colleague's machine and not
+  another: two settings files disagreed, and our own notes named the wrong one. Setup is now a
+  single command, and works on Windows.
+- Chased a false alarm about the forecasting service being exposed to the internet. It is not:
+  a developer machine was quietly serving itself from a local copy, which made the configuration
+  look like something it was not.
+- Moved the record of past forecasts off one machine's disk and into the database.
+- Each product page now says whether the model or the old spreadsheet was more accurate for that
+  product. The spreadsheet still wins on about a quarter of them.
+- Fixed several faults on the planning screens, the largest a chart hiding most of the sales
+  history it was meant to compare forecasts against.
+
+--- SUMMARY PRODUCED 2026-07-31 (covering the 2026-07-31 entries above) ---
+
+2026-08-04  The weekly cron was running the legacy pipeline only, so the two live planning screens were never refreshed.
+  scripts/run_forecast_cron.sh called run_forward_forecast.py and nothing else. That is the legacy
+  statsforecast pipeline: it ingests fresh orders, rewrites sales_clean.parquet, and writes the shipcore.fc_*
+  tables SKU Planning reads. It does not touch ml_forward_forecasts or ml_forecast_history, which are what
+  the Action List and Forecast Validation serve. So those two screens had been showing whichever ML forecast
+  someone last produced by hand, trained through 2026-07-20, and the accumulating history had never received
+  a real run at all. The Performance on forecasts actually served section would have stayed on the seeded
+  fixture indefinitely.
+  Nothing looked broken, which is why it lasted. The legacy tables stayed current and the readiness check
+  passed, because the ML files existed from that manual run. Two details in the same script were already
+  written for the ML run and had been quietly doing nothing useful: the readiness check tests ML files, and
+  the final step backs up ml_forecast_history.parquet, which that job never wrote. It had been copying the
+  same seeded fixture every Monday.
+  The cron now runs both, legacy first because the ML script has no ingest of its own and reads the sales
+  file the first run refreshes. --snapshot live is passed explicitly: without it the ML script defaults to
+  config.ML_DATA_SNAPSHOT, the pinned copy that exists so evaluation figures cannot drift, and every weekly
+  run would reproduce the same forecast while appearing to work. Each pipeline's status is tracked
+  separately and either failing exits non-zero, since they serve different screens and a legacy backtest
+  failure says nothing about whether the ML forecast can be produced.
+  Also settled the open question in CUTOVER_TASK.md rather than leaving it: the pipeline has moved to the
+  server, so the Mac's push_data_to_server.sh cron is retired. That document asked for a deliberate choice
+  between retiring it and removing the Run Forecast button, and warned that picking one by accident is not
+  defensible. DEPLOY_TASK.md's instruction to add that cron line is marked superseded rather than deleted,
+  since it was correct for the arrangement it was written for. The script stays for a one-off manual push
+  and is deliberately not scheduled.
+  Not done here, because it is not in this repo: the crontab edits themselves.
+
+2026-08-04  Made the demand trend tile define itself, by printing the ratio beside the word.
+  It read "rising" and nothing else. The Action List legend states the thresholds and the tile carried them
+  on hover, but a reader on the SKU page saw a bucket label with no measurement behind it. It now shows
+  "rising 1.11x": the last four weeks over the last twelve on deseasonalized demand, which is the number the
+  bucket was cut from. That is a better answer than any wording, because the buckets are wide. Rising spans
+  1.10 to 1.73 and collapsing spans 0.17 to 0.39 on the current table, so two SKUs sharing a label can be
+  quite different and the label alone hides it.
+  `ramp` was already on the row and non-null for all 432 SKUs, so this needed no API change. Added to the
+  TypeScript row type, where it was missing, with a note that it is the model's own ramp_4_12 feature
+  imported from src.ml.seasonal rather than reimplemented.
+  Recorded because it was asked and is worth having decided: demand trend is deliberately not folded into the
+  Action List's summary cards. Those answer why a SKU needs attention now, preorder, out of stock, dry before
+  inbound. Trend answers which way it is moving. A SKU can be rising and out of stock at once, so they are
+  different axes and merging them would lose one. What the question was right about is that "out of stock"
+  needs no definition and "collapsing" does, so the burden falls on this one to carry its own, which printing
+  the ratio does.
+
+2026-08-04  Made the demand-trend bands symmetric, after noticing they were not.
+  Steady ran 0.70 to 1.10: thirty points below 1.0 and ten above, so a SKU down 25% read "steady" while one
+  up 15% read "rising". The cause was one number answering two questions. 0.70 was COLLAPSE_RAMP, measured as
+  the point where a plain 4-week average beat the model on the development windows, 0.28 pooled WAPE against
+  1.49, and correct for that question. But the flag that asked it was deliberately moved off ramp, because
+  ramp describes how history moved rather than whether the forecast agrees with where demand now is, so a
+  model-reliability threshold was left labelling a descriptive band. 1.10 and 0.40 were never justified
+  anywhere; they were bare literals.
+  Now 0.80 to 1.25, reciprocal rather than additive. Ramp is a ratio, so 0.80 and 1.25 are the same distance
+  from 1.0 in the units it is measured in, where 0.80 and 1.20 are not. On the current table that moves the
+  split from 7/47/257/121 to 7/75/296/54: the old 28% "rising" was an artifact of the boundary sitting at
+  1.10 while its counterpart sat at 0.70, not a finding that a third of the catalogue is growing. The
+  distribution is centred at 0.98 with a median of 0.98, so it really is balanced around 1.0.
+  Not narrowed further, and the measurement is the reason. Ramp deviation scales inversely with volume:
+  median |ramp - 1| is 0.28 for SKUs selling under 10 units in four weeks against 0.07 above 100 units, so
+  half the smallest SKUs fall outside a 0.80/1.25 band on small-number variation alone. Tightening to
+  0.90/1.11 would label 60% of the catalogue as moving, which distinguishes nothing. Recorded on the
+  constants so the next person does not tighten them by eye.
+  0.40 is kept and its lack of justification is now written down rather than implied. Its reciprocal, a 2.5x
+  surge, has no state of its own, which is a separate question: under-ordering a breakout costs as much as
+  over-ordering a collapse, and only one of the two has a label.
+
+2026-08-04  Forecast Validation now dates its own evidence, and its performance table says when it is showing sample data.
+  The page carried no provenance at all, which is the wrong way round: it is the screen whose entire purpose
+  is evidence and it was the only one of the three not saying where its figures came from. The Action List
+  has said "Trained through" in its header since it was built. The absence here is how a forecast three weeks
+  stale went unnoticed while this page reported on it.
+  Four facts now sit under the heading: the model version, the pinned snapshot the evaluation used, the date
+  the accuracy report was computed, and the training week of the forecast actually being served. The last two
+  are the point. The snapshot is pinned deliberately so recorded figures cannot drift, and a reader seeing
+  identical numbers on two visits should know that is by design rather than a broken refresh; the training
+  week does move, and the gap between the two is how you see whether the model being validated is the one in
+  use. On the current data those read 2026-07-20, scored 2026-07-30, serving a forecast trained through
+  2026-07-20, so they agree.
+  Separately, the "Performance on forecasts actually served" table now warns when its rows are not the served
+  model's. That heading is the strongest claim on the page, and the table rendered whatever the store held
+  without qualifying it: on a store holding only the seeded fixture that meant fabricated figures reading
+  pooled WAPE 0.076 against the real backtest 0.174 on the same screen, with the version string in a small
+  first column as the only tell. The chart above it has carried this warning since the seed script was
+  written and the table below never did. It disappears by itself once real runs land, which the cron change
+  earlier today makes possible for the first time.
+
+2026-08-04  Made "v11" clickable on the validation page, so the name is explained where it is used.
+  The page reported on a model by version string and never said what the string meant, on the one screen
+  whose job is technical detail. A version number is where most readers first meet the model, and it was the
+  single thing that page assumed rather than explained.
+  Clicking it opens a card: what the version is, the feature names it fits per segment, what it predicts,
+  the horizon, what it was measured on, and what is being held back. The description and the feature lists
+  are served from the registered model class in src/ml/serving/models.py, where a `description` attribute
+  already existed, rather than written into the web app. That matters because the page cannot then describe
+  a version the API is not serving; the alternative is two statements of what v11 is, drifting apart at the
+  next adoption.
+  Feature names are shown raw, lead, ramp_4_12, y_last_r, lag_1_r, elev_long, because those are the words
+  the design doc and the experiment scripts use, and a reader moving between the three should meet the same
+  term rather than a friendlier synonym that matches nothing.
+  The structural notes are labelled as track-level rather than version-level: the ratio target against the
+  SKU's own trailing 12-week average, the deseasonalize-then-reseasonalize step, and the direct 13-week
+  horizon with lead as a feature. Those would still be true of v12, and a reader should not have to guess
+  which lines change when the number does. The card also says plainly that version numbers count attempts
+  rather than adoptions, since most of the numbers in between were tested and rejected.
+
+2026-08-04  Rebuilt the served-performance table as a matrix, the same shape the comparison grid above it uses.
+  Flat, it repeated the model version on all 36 rows, the run date on every sixth, and the weeks-scored count
+  six times per run despite that being a property of the run rather than of a segment: every segment in a run
+  closes the same weeks, which the data confirms, one distinct value per run. Six results took thirty-six
+  rows and three columns of labels. As a matrix, runs down and segments across, it is 6 rows by 6 columns,
+  the labels appear once each on the edges, and a cell carries only what differs. It also means the two
+  comparisons a reader meets on this page now have the same shape rather than two.
+  Runs read oldest first, matching the windows in the grid above and for the reason recorded there: this is a
+  time series, the question asked of it is which way the error is moving, and newest-first invites reading
+  that trend backwards. Weeks scored moved to the row header, where it qualifies the whole row, since a run
+  measured on two weeks is thin evidence whichever column you read. SKU counts and units sold moved to hover,
+  being context rather than the comparison. Bias keeps the two-direction colouring from the grid above, so
+  over and under do not read as one severity scale.
+  Added the state between the two the section already handled: runs stored but no week closed yet. It was
+  falling through to an empty matrix under a heading promising results. That is not a hypothetical, it is
+  what next Monday looks like, since the first real run will sit unscorable until the week after it. `runs`
+  had been fetched and used only for an emptiness check; distinguishing these two cases is what it is for.
+
+2026-08-04  Replaced the served-performance table with a trend strip and a detail panel, because the table did not scale.
+  It gains a run a week and never stops, so any layout with a row or a column per run is unusable within a
+  year: 52 by the first anniversary, 104 by the second. It was a flat table of 36 rows for six runs, then
+  briefly a matrix of six, which is better but scales the same way and only postpones the problem. Rebuilding
+  it twice in one day is the cost of fixing the format before asking what the format has to survive.
+  The two questions are separated now, because they want different shapes. Which way the error is moving is a
+  time series, answered by a strip of one bar per run, oldest left: a hundred runs is a hundred bars in a
+  scrolling strip rather than a hundred rows down the page. How a particular run did is a snapshot, answered
+  in full for the one run selected, with the SKU count and the units behind each error on the face of the
+  card rather than hidden on hover the way a compressed table had to.
+  Bars are scaled against the worst run rather than zero-to-one. Pooled WAPE clusters in a narrow band once a
+  model settles, so a full-scale axis flattens every bar to the same nub and the differences between runs,
+  which is the entire point of the strip, become invisible. Floored at 8% so a very good run stays a visible
+  click target. They are plain divs, not a third Plotly instance on a page that already loads two: this needs
+  one dimension, a click target and a colour.
+  The selection is held by run key rather than index, so it survives a refetch, and resolves against the
+  current list on every render: a selection that no longer exists falls back to the newest run instead of
+  blanking the panel. Runs from a version other than the served one are tinted amber in the strip, which is
+  the same signal the banner above gives, at the level of the individual run.
+
+2026-08-04  Settled the served-performance layout as a scrolling list of runs with a detail panel, after two wrong turns.
+  Built three times today, which is worth recording because the first two were wrong in instructive ways. A
+  flat table with a row per run per segment multiplies: 36 rows for six runs. A matrix with a row per run and
+  a column per segment fixes the multiplication and still grows a row a week, so it is unusable within a year.
+  A horizontal strip of one bar per run scales, and throws away everything a row can carry: dates end up as
+  9px labels under 36px bars, unreadable at fifty runs, and the SKU counts and weeks scored have nowhere to
+  go.
+  The mistake behind the strip was assuming a row per run means a page that grows. It does not, once the list
+  scrolls inside a fixed height, which is what the action list's own table already does. That was pointed out
+  rather than noticed here.
+  What it is now: a list of runs, newest first, in a fixed 22rem box that scrolls, so a hundred runs is a
+  scrollbar and not a longer page. Each row carries the run date, weeks scored, total WAPE, bias and SKU
+  count. Clicking or pressing Enter on a row selects it and the panel below shows that run per segment, which
+  is the part that was already right. Rows are keyboard reachable with a visible focus ring; the action list's
+  sortable headers still are not, and there was no reason to repeat that here.
+  The trend did not need its own shape after all. A bar inside the error cell, scaled against the worst run
+  rather than zero-to-one because pooled WAPE clusters narrowly once a model settles, reads down the column
+  while every figure beside it keeps its room. One dimension of chart inside a layout that is otherwise a
+  list, which is what this data is.
+
+2026-08-04  Removed the intermittent segments from the demand-versus-forecast chart, and wrote the underlying rule into the design doc.
+  The chart offered intermittent/long and intermittent/short as segment pills for a model that only forecasts
+  smooth SKUs. Two causes, not one. The scored history carried them because the seed script had stamped
+  today's profile onto fabricated runs, fixed earlier today. The actuals series carried them independently,
+  because it merged load_profiles() onto historical sales, which is the same error the predicted line beside
+  it had been corrected for on 2026-07-30. Fixing the forecast alone would have left them arriving through
+  the actuals, since the pill list is the union of the two.
+  Actuals now take their segment from a map built out of the runs themselves, the forward forecast first
+  since it is the newer statement, falling back to the scored history. A SKU with sales but present in
+  neither is dropped rather than given a current label. A guard on top of that removes any row whose segment
+  is not smooth, from all three series, which is defensible rather than cosmetic: serving/forecast.py filters
+  to smooth and writes that literal, so a real run cannot produce another bucket and a row saying otherwise
+  is bad data.
+  Added the rule to design doc Section 2.4, where the as-of guarantee the scorer enforces is already stated.
+  The point of putting it there is that the guarantee stops at the scorer: evaluate.score applies as-of
+  segmentation by default so an experiment cannot forget it, and nothing downstream has an equivalent, which
+  is where all three occurrences happened. The rule is that ml_forward_forecasts and ml_forecast_history
+  carry bucket, history_length and segment per row as of their run, so read them off the row and do not call
+  load_profiles() to re-derive them, and where a row lacks them omit it rather than assign a current label.
+  All three occurrences are listed by date and place so the next reader sees a pattern rather than an
+  isolated fix.
+  Correction to what I said in conversation: I called this the fourth occurrence and counted the reliability
+  sort among them. That was a different bug, sorting on a substituted error while displaying the measured
+  one, not a stale-classification bug. Three occurrences, not four.
+
+2026-08-04  Ported what the Streamlit prototype explained and the web app had dropped, plus three changes it prompted.
+  Comparing the two screen by screen, the port had become less explanatory than the prototype it replaced in
+  one specific way: every planning control in the sidebar carried a sentence saying what it does, and the web
+  app had four bare numeric inputs. That is exactly the gap behind the question asked here two days ago about
+  what the risk window and the reorder cycle actually change. Both now say so on the face of the control, not
+  on hover, since the question came from someone looking straight at them. The caption the prototype had
+  underneath is back too, stating the sum the first two controls jointly produce and neither states alone:
+  orders cover 9 weeks, 8 lead plus 1 cycle.
+  The controls are one component now, used by the action list and the SKU detail page. The detail page had
+  none, so a purchaser deciding on a single SKU had to go back to the list to ask what a longer lead time
+  would do to that quantity, losing the SKU they were on. Sharing the component also means the two screens
+  cannot explain the same control differently.
+  Three changes that came out of the comparison rather than from it.
+  The demand column now shows demand over the coverage window rather than the 13-week horizon total. The
+  recommendation is built from the coverage figure, so the row carried a number nothing else on it added up
+  to. The header names the window and moves with the controls: "9w demand", not "13w fcst".
+  A trend column, because the list gained a trend filter and still showed nothing per row, so a reader could
+  select "falling" and see no indication on any row of which way anything was moving. Arrow glyph, the ramp
+  ratio, colour by direction, matching the SKU page.
+  Named sort orders beside the header clicks, not instead of them. The default was the most load-bearing
+  ordering on the page and was described only as "worklist order" in grey text. Seven named orders now,
+  including that default under its real name, and the select reads "custom" when someone has built an order
+  by shift-clicking rather than mislabelling it as the nearest name.
+  Also: the priority badge is on the SKU detail header, so arriving from a filtered worklist no longer leaves
+  behind the reason for being there. The action list header carries the model version and the horizon end
+  alongside the training date, which the prototype's caption had and this did not.
+  Deliberately not ported. `served_by`, which says whether the hybrid's shared or long model produced a SKU's
+  forecast: it is the short/long split under another name, and that split was removed from both purchaser
+  screens for the reason it was removed the first time. The backtest section opening automatically on a poor
+  reliability tier, which the prototype does and which was judged not worth the surprise.
+
+--- DAILY SUMMARY 2026-08-04 ---
+- Found the weekly automatic run was only refreshing the old forecasting method, so two planning
+  screens had been showing a three-week-old forecast produced by hand. Fixed, and the record of
+  past forecasts starts filling properly from next Monday.
+- Made the validation screen say where its figures come from and when, and warn when they are
+  placeholders. Nothing said so before, which is why the stale forecast went unnoticed.
+- Rebuilt the past-runs results view, three attempts, until it was a layout that still works
+  after a hundred weekly runs rather than only the first few.
+- Fixed the demand trend labels. A product falling 25% read as steady while one rising 15% read
+  as growing; the actual figure now sits beside the label.
+- Restored explanations the screens had lost in the rebuild, so every planning setting says what
+  it changes, and corrected a column showing a demand figure the recommendation was not based on.
+
+--- SUMMARY PRODUCED 2026-08-04 (covering the 2026-08-04 entries above) ---
+
+## 2026-08-05
+
+- Considered adding prediction intervals to the SKU forecast chart, built a measured-error band,
+  then removed it again. It failed the Section 1.4 test: safety stock already sizes the buffer, so
+  no purchaser acts differently for seeing a range, and the band duplicated the reliability tier.
+  Measured for the record: per-week error (median 0.377) runs about 1.9x the window-total error
+  (median 0.176) on the same weeks, because the window total lets a high week cancel a low one.
+  Pooled WAPE is the right instrument for an order covering nine weeks; the per-week version
+  answers a question nobody on these screens asks.
+- Weekly figures table on SKU detail now shows whole units. Rounded as a column by largest
+  remainder so the weeks still add to the total beneath them and the total still matches the
+  Action List, which computes from the same unrounded figures.
+- Removed the sort dropdown from the Action List. Every order it offered was already reachable by
+  clicking a column header, including the default. Replaced with a sentence stating the current
+  order, which also covers the multi-column case the dropdown could only call "custom".
+- Retired the old Demand Forecast page and the Demand Forecast tab on SKU Planning from the menus.
+  Both reported on the legacy statsforecast pipeline while the Action List and Forecast Validation
+  report on the LightGBM one; the same SKU showed a different number depending on which screen was
+  open, with nothing saying why. Hidden rather than deleted, pending a few weeks without them.
+- Found and removed a beforeunload handler on SKU Planning that shut down the forecast service when
+  that page closed. Harmless while its forecast tab existed; with the tab gone it meant closing one
+  page could take down the two ML screens in another.
+- Segment labels from the stored forecast history are normalised on read: intermittent rows dropped,
+  medium and full collapsed to long. The performance table had been showing five segments directly
+  under a comparison grid showing two, all of it from the seeded fixture's stale labels.
+- Forecast Validation restructured into six numbered sections with a contents bar and longer
+  explanations; type sizes raised across both ML screens (the floor was 9px).
+- Planning assumptions are collapsed by default, with the values still stated while closed. Two of
+  the four cannot honestly be answered by the person being asked, and every figure moved with them.
+- SKU detail's demand-trend tile explains itself now: what the ratio divides, and the four bands,
+  both on screen rather than in a hover title nobody would find.
+- Added a Run Forecast panel to the Action List: sync, ingest, profile, forecast, with live step
+  progress and cancellation, reusing the existing job machinery.
+- Found while building it that ml_prepare_data.py never called the velocity sync, although ingest()
+  reads the table that sync refreshes. Every run through that path trained on whatever had last
+  been synced and reported it as fresh. The sync is now its first step, and the shared call moved to
+  src/velocity_sync.py so both pipelines use one implementation.
+- Also fixed a latent bug in that call: its success message formatted a missing row count with a
+  thousands separator, which raises, gets caught by the surrounding handler, and reports a sync
+  that worked as a failure.

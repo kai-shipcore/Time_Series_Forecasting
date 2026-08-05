@@ -333,12 +333,34 @@ def recent_sales(weeks: int = 4) -> pd.DataFrame:
     return agg
 
 
-#: Below this, a SKU's recent demand is treated as collapsing. It is the
-#: threshold at which a plain 4-week average was measured to beat the model on
-#: the development windows (design doc, v14 entry and the analysis beneath it):
-#: pooled WAPE 0.28 against 1.49 on the worst group. It is a display threshold
-#: only. Nothing here changes what the model predicts or what is ordered.
-COLLAPSE_RAMP = 0.70
+#: Display bands for the demand-trend label, on the 4-week-over-12-week
+#: deseasonalized ramp. Nothing here changes what the model predicts or what is
+#: ordered; these only decide which word appears beside the ratio.
+#:
+#: Reciprocal rather than additive. Ramp is a ratio, so 0.80 and 1.25 are the
+#: same distance from 1.0 in the units it is measured in; 0.80 and 1.20 are not.
+#:
+#: These replaced 0.70 and 1.10 on 2026-08-04. The 0.70 was COLLAPSE_RAMP,
+#: measured as the point where a plain 4-week average beat the model on the
+#: development windows, 0.28 pooled WAPE against 1.49, and correct for that
+#: question. But the flag that asked it moved off ramp deliberately: ramp
+#: describes how history moved, not whether the forecast agrees with where
+#: demand is now (see the note above `forecast_runs_high` in calc.py). That left
+#: a model-reliability threshold labelling a descriptive band, where it called a
+#: 30% fall "steady" and a 10% rise "rising". The old 1.10 and 0.40 were never
+#: justified anywhere.
+#:
+#: Not narrowed further, and the measurement is why. Ramp deviation scales
+#: inversely with volume: median |ramp - 1| is 0.28 for SKUs selling under 10
+#: units in four weeks against 0.07 above 100, so half the smallest SKUs fall
+#: outside this band on small-number variation alone. Tightening to 0.90/1.11
+#: labels 60% of the catalogue as moving, which distinguishes nothing.
+TREND_STEADY_LOW = 0.80
+TREND_STEADY_HIGH = 1.25
+#: Below this, "collapsing" rather than "falling". Inherited unjustified and
+#: kept for now: its reciprocal (2.5x, a surge) has no state of its own, which
+#: is a separate question about whether a breakout deserves its own label.
+TREND_COLLAPSE = 0.40
 
 
 @_cache(show_spinner=False)

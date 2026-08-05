@@ -45,6 +45,48 @@ KEY = ["model_version", "forecast_date", "unique_id", "ds"]
 COLUMNS = KEY + ["yhat", "bucket", "history_length", "segment", "served_by", "run_at"]
 
 
+def canonical_segments(df: pd.DataFrame) -> pd.DataFrame:
+    """Put stored rows into the one segment vocabulary the project reports in.
+
+    Two corrections, both applied on read rather than trusted from the writer.
+
+    Intermittent rows are dropped. The model forecasts smooth SKUs and nothing
+    else: serving/forecast.py filters to ``bucket == "smooth"`` and writes that
+    literal, so a real run cannot produce another bucket. A stored row saying
+    otherwise is bad data, and reporting it shows the model apparently
+    predicting the SKUs it declines to predict.
+
+    ``medium`` and ``full`` collapse to ``long``, matching src/ml/evaluate.py
+    and design doc Section 4.4. Without this the performance table reports
+    smooth/full and smooth/medium directly underneath a comparison grid that
+    reports smooth/long, on the same page, for the same model.
+
+    Where the bad rows come from: seed_forecast_history.py stamped the current
+    profile onto fabricated historical runs, so SKUs demoted since the seed date
+    arrived labelled intermittent, and it wrote raw history_length rather than
+    the collapsed one. That script is fixed and real runs supersede the fixture,
+    but the normalisation lives here rather than in the fixture because the
+    store is written by a pipeline and read by several endpoints, and every one
+    of those readers was otherwise free to disagree about what a segment is.
+
+    Applied in load(), so a consumer cannot reach the store without it.
+    """
+    if df.empty:
+        return df
+    out = df
+    if "bucket" in out.columns:
+        out = out[out["bucket"].fillna("?") == "smooth"].copy()
+    if "history_length" in out.columns:
+        out["history_length"] = out["history_length"].replace(
+            {"medium": "long", "full": "long"}
+        )
+    # Rebuilt from the corrected parts rather than string-patched, so segment
+    # cannot survive as a stale concatenation of labels that have since moved.
+    if "segment" in out.columns and {"bucket", "history_length"} <= set(out.columns):
+        out["segment"] = out["bucket"].fillna("?") + "/" + out["history_length"].fillna("?")
+    return out.reset_index(drop=True)
+
+
 def load() -> pd.DataFrame:
     """Every stored prediction. Empty frame with the right columns if none yet.
 
@@ -55,10 +97,12 @@ def load() -> pd.DataFrame:
 
     Falls back rather than failing: a clone with no credentials is a supported
     way to run this project, and the seeded fixture is expected to work alone.
+
+    Segment labels are normalised on the way out; see canonical_segments().
     """
     from_db = store.read(COLUMNS)
     if from_db is not None and not from_db.empty:
-        return from_db
+        return canonical_segments(from_db)
 
     if not HISTORY_PATH.exists():
         return pd.DataFrame(columns=COLUMNS)
@@ -66,7 +110,7 @@ def load() -> pd.DataFrame:
     for col in ("forecast_date", "ds"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col])
-    return df
+    return canonical_segments(df)
 
 
 def _load_parquet() -> pd.DataFrame:

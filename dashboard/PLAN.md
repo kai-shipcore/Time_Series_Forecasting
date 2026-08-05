@@ -87,15 +87,36 @@ in this project so far were all discovered at build time rather than at planning
 | Model accuracy, pooled and per SKU | `outputs/reports/ml_accuracy*.csv` | Model against V1, three backtest windows, by segment |
 | Order lines, daily, by stream | `data/processed/orders_raw.parquet` | Includes `west_preorder` and `east_preorder`, about 19,400 rows |
 
-### 2.2 Sample until an export lands
+### 2.2 Inventory: real since July 2026
 
-Available inventory, preorder backlog, confirmed inbound, inbound ETA, product name, size
-and product status. These live in the Commerce and Supabase databases. The dashboard reads
-`dashboard/data/inventory_snapshot.csv` when present and falls back to a labelled sample.
+**This section previously said these fields were sample data. That is no longer true and the
+correction matters, because it was the stated reason to distrust every figure below it.**
 
-Everything downstream of these fields is therefore also provisional: recommended order
-quantity, estimated stockout date, the Preorder and No Stock priorities, best sellers at
-risk, and the inventory-dependent data-quality checks.
+Available inventory, preorder backlog, confirmed inbound and inbound ETA are real. They are
+exported from the Commerce and Supabase databases by `scripts/export_inventory_snapshot.py`
+into `dashboard/data/inventory_snapshot.csv`, and `inventory_source()` reports `export`
+rather than `sample`. The screens still carry a sample banner, but it is conditional on
+`inventory_is_sample()` and does not render. `draft_inbound` and `draft_eta` arrived with the
+same export.
+
+Everything downstream is therefore real too: the recommended order quantity, the estimated
+stockout date, the Preorder and No Stock priorities, best sellers at risk, and the
+inventory-dependent data-quality checks.
+
+**What the export does not carry**, and what still qualifies those figures:
+
+- **A single current snapshot, no history.** It answers "what is on the shelf now", not "what
+  was on the shelf during that window", which is what keeps backlog item 1 blocked.
+- **Confirmed inbound counts two container statuses,** `shipped` and `packing_received`.
+  `draft` is reported separately as `draft_inbound` and never added, because at an eight-week
+  lead time a draft sitting between decision and packing list is long enough to order the
+  same units twice. Those three statuses are exhaustive: the Sheet import sets them from the
+  header colour, and every purchase order is on a container, so nothing ordered is invisible.
+- **Inbound arriving after the coverage window is not credited** against the order (§5.5),
+  and is reported separately rather than subtracted.
+- **`transit_stock` is carried and unused.** It may double-count confirmed inbound, nobody
+  has established what it counts, and it is zero everywhere. It should be removed rather
+  than left looking like a field somebody forgot to display.
 
 ### 2.3 Not available anywhere
 
@@ -108,8 +129,11 @@ limits how precisely supply-distorted demand can be detected. See `docs/BACKLOG.
 logic inside the profiler is restricted to forward runs, because a current snapshot cannot
 answer an as-of question in a backtest without leaking. See `docs/BACKLOG.md` item 1.
 
-**Purchase order outcomes.** No record of what was previously ordered, so the operational
-workflow gap in Section 3.2 has no history to draw on yet.
+**Purchase order outcomes.** No record of what was *recommended* previously, so the
+operational workflow gap in Section 3.2 has no history to draw on yet. Note this is narrower
+than it once read: what was ordered is visible, since every purchase order is on a container
+and the three container statuses are all read. What is missing is the pairing of a past
+recommendation against what a planner actually did with it.
 
 ### 2.4 Consequence for sequencing
 

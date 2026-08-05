@@ -297,8 +297,8 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     )
     # Descriptive only: it words the callout and is not what triggers it.
     df["demand_state"] = np.select(
-        [df["ramp"].isna(), df["ramp"] < 0.40, df["ramp"] < D.COLLAPSE_RAMP,
-         df["ramp"] < 1.10],
+        [df["ramp"].isna(), df["ramp"] < D.TREND_COLLAPSE,
+         df["ramp"] < D.TREND_STEADY_LOW, df["ramp"] <= D.TREND_STEADY_HIGH],
         ["unknown", "collapsing", "falling", "steady"],
         default="rising",
     )

@@ -368,6 +368,38 @@ at least 13 weeks of history at the cutoff are scored, and each SKU's segment is
 history length as of the cutoff rather than today. Both are on by default in
 `evaluate.score`, so an experiment cannot forget them.
 
+**That guarantee stops at the scorer, and everything downstream must apply the same rule
+by hand.** Segmentation moves: a SKU that was smooth when a forecast ran can be
+intermittent a fortnight later, and 15 of the 447 in the 2026-07-20 run were. Anything
+that reads a stored prediction and re-derives its segment from the current profile
+therefore produces a row that is half one moment and half another, with the forecast from
+the run and the label from today. The symptom is a screen reporting that the model
+predicted SKUs it declines to predict.
+
+The rule: `ml_forward_forecasts` and `ml_forecast_history` carry `bucket`,
+`history_length` and `segment` per row, recorded as of the run that produced them. Read
+them off the row. Do not call `load_profiles()` to re-derive them. Where a row genuinely
+lacks them, omit it rather than assign a current label, because "we cannot say what this
+was classified as" is a different statement from "it was classified as this."
+
+Recorded because it has been got wrong three times, each in a different place and each
+from the same reflex:
+
+1. The demand-versus-forecast predicted line, 2026-07-30, labelling stored predictions
+   from today's `sku_profiles.csv`.
+2. `scripts/seed_forecast_history.py`, 2026-08-04, stamping today's profile onto
+   fabricated historical runs, which put `intermittent/long` and `intermittent/short` into
+   a chart of a model that only forecasts smooth SKUs.
+3. The actuals series of that same endpoint, 2026-08-04, still merging `load_profiles()`
+   after the predicted line beside it had been fixed.
+
+The serving path itself is not at fault and shows what right looks like:
+`src/ml/serving/forecast.py` filters to `bucket == "smooth"`, writes that literal, and
+derives `history_length` from `asof_history_length(profiles, cutoff)` against the run's own
+cutoff. A real run cannot produce a non-smooth segment, which is why
+`/planning/demand-vs-forecast` now drops any row that claims otherwise rather than
+charting it.
+
 Rules of practice:
 
 - Raw per-segment results are reported before any summary or interpretation.

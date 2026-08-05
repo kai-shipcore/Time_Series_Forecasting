@@ -146,6 +146,12 @@ Do not fix this during the cutover. Report it, and it will be settled
 separately: either the pipeline moves to the server and the Mac cron is retired,
 or the button is removed. Both are defensible; picking one by accident is not.
 
+**Settled, 2026-08-04: the pipeline moved to the server and the Mac cron is
+retired.** `scripts/run_forecast_cron.sh` on the server now runs both the legacy
+and the ML pipelines, in that order, and is the only weekly job. The Mac's
+`push_data_to_server.sh` line should be removed from its crontab; the script
+stays for a one-off manual push. See `DEPLOYMENT.md` under "The weekly run".
+
 ## Do not
 
 - Do not delete `/home/coverland/Time_Series_Forecasting`. It is the rollback,

@@ -462,3 +462,100 @@ retained for comparison rather than as a candidate.
 columns, because v11 emits a point forecast only. The legacy track's `_MIGRATE_PI_SQL` in
 `src/db.py` is the pattern for adding them later without a migration tool: `ALTER TABLE` guarded by
 `information_schema` checks, run on every write.
+
+---
+
+## 13. UI changes on the planning screens
+
+**Status:** wanted, none blocked. Five items, listed smallest first. They are grouped because
+they are all presentation changes on screens that already have their numbers right.
+
+**13.1 Reorder the Forecast Validation page.** The page grew section by section and its order
+reflects when each part was built rather than what a reader needs first. Decide the reading order
+deliberately: what is being validated and against what, then the headline result, then the
+supporting breakdowns, then the per-SKU detail. The provenance block added on 2026-08-04 assumes
+it is met early, so it constrains where the top of the page can go.
+
+**13.2 Change the table of contents on that page.** It follows the current section order, so it
+inherits whatever 13.1 decides and has to be redone with it. Worth settling at the same time
+whether it lists every section or only the top level, since a contents list that mirrors the page
+one-for-one is navigation the scrollbar already provides.
+
+**13.3 Replace the demand table with a Pareto curve.** The concentration point the table makes is
+a distribution, and a table of rows is a poor way to read one: a reader has to add the top rows
+mentally to see how much of demand sits in how few SKUs. A cumulative curve, SKUs ranked by demand
+on one axis and cumulative share on the other, states it directly. The table is replaced rather
+than supplemented, since keeping both leaves two statements of the same fact to maintain.
+Decide what the axis counts, units or revenue, noting that revenue is not available (item 10), so
+units for now, and label it as such.
+
+**13.4 Fit the Action List table to the screen.** It currently scrolls horizontally, which breaks
+the row-reads-as-a-sentence property the column order was chosen for and hides whichever columns
+fall off the right edge. Two directions, and the choice matters: narrow the columns that do not
+need their width, or drop columns to a detail view. Neither should be done by shrinking the pinned
+SKU column, which is what makes the scroll survivable today. The draft-inbound sub-line and the
+trend column both landed after the widths were set, so this is partly accumulated rather than
+original.
+
+**13.5 Explain the priorities on the screen.** The Action List shows a priority label per row and
+a set of summary counts, and nothing on the page says what earns each label. The Streamlit
+prototype carried a plain-language explanation of every priority and the port dropped it, which is
+the same gap as the planning controls fixed on 2026-08-04. The explanation belongs where the
+labels appear rather than in a legend elsewhere.
+
+Sequenced after item 14, which changes what the labels are. Writing the explanation first means
+writing it twice, and the current set is the harder one to explain because one of its members is
+not the same kind of thing as the others.
+
+---
+
+## 14. Best Seller is not a supply state and should leave the priority ladder
+
+**Status:** decided 2026-08-04, unblocked. Small change, and it moves counts on a screen people
+are already reading, so it wants announcing rather than slipping in.
+
+**The criteria as they stand** (`_priority` in `src/planning/calc.py`). First match wins, so a SKU
+carries one label even when several are true:
+
+| Label | Criterion | Rank |
+|-------|-----------|------|
+| Preorder | `preorder_backlog > 0`, units already owed to customers | 1 |
+| No Stock | `available_inventory <= 0`, nothing free to sell | 2 |
+| Best Seller | in the top 20% of forecasted SKUs by `recent_units` | 3 |
+| Routine | none of the above | 99 |
+
+**The category error.** Preorder, No Stock and Routine all answer one question, what the supply
+situation is. They are mutually exclusive states of a single variable, which is what makes a
+precedence ladder the right shape for them. Best Seller answers a different question, how much the
+SKU matters, and every SKU has both a supply state and an importance at all times. Putting them in
+one slot means one of the two is discarded on every row.
+
+**What that costs, in the three ways it shows.** The label is drained by its own membership: 86 of
+432 SKUs carry the `best_seller` flag and 27 carry the badge, because a top seller is precisely the
+kind of SKU that is out of stock or on preorder, so the badge thins out exactly where importance
+would be most useful. Importance then vanishes from the queues that outrank it, and a best seller
+with a preorder backlog is badged identically to a tail SKU with a preorder backlog, when working
+the first one first is the whole reason for tracking best sellers. And because Routine is the
+residual, the star ends up living in the one queue whose members by definition need nothing urgent
+today. The badge currently means "top 20% by demand and nothing more pressing about it", which is
+not a concept anybody asked for.
+
+**The change.** Take it out of the ladder. Priority keeps Preorder, No Stock and Routine. Best
+seller becomes an attribute on the row, its own marker and its own filter, and a tiebreaker inside
+each queue: sort by priority, then by best seller, then by recommended quantity. The star then
+means "top 20% by demand", full stop, and it appears on the preorder and no-stock rows where it
+currently cannot.
+
+**Consequences to expect rather than discover.** The best-seller count on the summary cards goes
+from 27 to 86, and the card stops being a priority filter and becomes an attribute filter, which is
+a change in kind and not only in number. Anyone reading the star today as a queue position loses
+that reading. `best_seller_at_risk` already cuts across labels and should be revisited in the same
+pass, since it is a third set again and the summary card was corrected once for confusing it with
+the label. Nothing in the order quantity or the stockout projection depends on `priority`, so the
+recommended numbers do not move.
+
+**Still to decide.** Whether the 20% cut earns its place at all once it is an attribute. It is
+`best_seller_top_pct` in the planning parameters, chosen rather than measured, and a relative cut
+means the set stays a fifth of the list whatever demand does. A Pareto view (13.3) may be the
+better statement of the same fact, in which case the star is a shortcut for reading it and should
+be labelled as one.

@@ -71,6 +71,14 @@ def per_sku(version: str | None = None) -> pd.DataFrame:
 
     Returns unique_id, wape, n_windows, tier. SKUs with no history are absent;
     join with how="left" and let `tier` fall back to "none".
+
+    Deliberately no per-SKU bias. It was added and removed on 2026-07-31 after a
+    sign-permutation test: flagging SKUs that miss the same way in every window
+    caught 41, where randomising the signs catches 49 on average, p=0.95. Same-sign
+    consistency runs at 41.9% observed against 43.3% expected by chance. With three
+    evaluation windows, and 180 of 246 scored SKUs appearing in only two, "the same
+    sign twice" is a coin flip. Direction is measurable per segment, which is what
+    the validation grid shows; it is not measurable per SKU on this evidence.
     """
     acc = D.load_ml_accuracy_by_sku()
     if acc.empty:

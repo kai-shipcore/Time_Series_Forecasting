@@ -3,8 +3,14 @@
     .venv/bin/python scripts/ml_prepare_data.py
     .venv\\Scripts\\python.exe scripts\\ml_prepare_data.py     (Windows)
 
-ingest -> clean -> profile -> forward forecast, which is the shortest path from
-credentials to a machine that can serve the planning pages with current data.
+sync -> ingest -> clean -> profile -> forward forecast, which is the shortest
+path from credentials to a machine that can serve the planning pages with
+current data.
+
+Also the on-demand path behind the Action List's Run Forecast panel, which
+calls it with --force through POST /planning/run-forecast. That is why the step
+lines are printed in a fixed "Step N/4" form and flushed: the API streams this
+script's stdout and the browser recognises progress by that prefix.
 
 Why this is a separate script from run_forward_forecast.py
 ---------------------------------------------------------
@@ -58,6 +64,8 @@ def main() -> int:
     ap.add_argument("--force", action="store_true",
                     help="rebuild even when the files are already present")
     ap.add_argument("--horizon", type=int, default=13)
+    ap.add_argument("--no-sync", action="store_true",
+                    help="skip the velocity sync and ingest whatever was last synced")
     args = ap.parse_args()
 
     present = [p.name for p in (SALES, PROFILES, FORECAST) if p.exists()]
@@ -75,9 +83,27 @@ def main() -> int:
     from src.clean import clean
     from src.ingest import ingest
     from src.profile import profile
+    from src.velocity_sync import sync_velocity_snapshot
 
     t0 = time.time()
-    print("Step 1/3  ingest + clean: pulling orders from the database …", flush=True)
+
+    # Ahead of the ingest, because ingest() reads
+    # shipcore.fc_velocity_link_snapshot_forecast and the sync is what refreshes
+    # it. Without this the script pulled whatever had last been synced and
+    # reported it as fresh: on a machine that had never run the weekly cron,
+    # that could be an empty table, and on one that had, it was silently as old
+    # as the last Monday.
+    #
+    # Never fatal, matching run_forecast_cron.sh: a forecast on slightly stale
+    # velocity beats no forecast, and sync_velocity_snapshot prints what
+    # happened either way.
+    if args.no_sync:
+        print("Step 1/4  sync: skipped (--no-sync)", flush=True)
+    else:
+        print("Step 1/4  sync: refreshing the velocity snapshot …", flush=True)
+        sync_velocity_snapshot()
+
+    print("Step 2/4  ingest + clean: pulling orders from the database …", flush=True)
     raw = ingest()
     weekly = clean(raw)
     PROCESSED.mkdir(parents=True, exist_ok=True)
@@ -85,7 +111,7 @@ def main() -> int:
     print(f"          {len(weekly):,} weekly rows, "
           f"{weekly['unique_id'].nunique():,} SKUs -> {SALES.name}", flush=True)
 
-    print("Step 2/3  profile: classifying each SKU …", flush=True)
+    print("Step 3/4  profile: classifying each SKU …", flush=True)
     profiles = profile(weekly)
     profiles.to_csv(PROFILES, index=False)
     counts = profiles["bucket"].value_counts().to_dict()
@@ -94,7 +120,7 @@ def main() -> int:
     # A subprocess rather than an import: it is a script with its own argument
     # handling and its own database writes, and shelling out keeps one
     # definition of what a forward run does.
-    print("Step 3/3  forward forecast: training and predicting …", flush=True)
+    print("Step 4/4  forward forecast: training and predicting …", flush=True)
     proc = subprocess.run(
         [venv_python(), str(ROOT / "scripts" / "ml_forward_forecast.py"),
          "--snapshot", "live", "--horizon", str(args.horizon)],

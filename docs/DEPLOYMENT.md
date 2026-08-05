@@ -6,11 +6,14 @@ systemd.
 
 ## Why the same box
 
-Next.js proxies every forecast request from its own server process, never from
-the browser, so a service on `127.0.0.1:8000` is reachable to it and to nothing
-else. That gives three things for free. No public port and no firewall rule. No
-CORS. And no colleague needing Python, a virtualenv, or a copy of the data,
-because they open the deployed app and the forecast is already behind it.
+Next.js proxies every forecast request from its own server process rather than
+from the browser, so there is no CORS to configure and no colleague needing
+Python, a virtualenv or a copy of the data: they open the deployed app and the
+forecast is already behind it.
+
+It also means no public port for the API, which is checked and true: 8000 is
+firewalled from the internet. See "Reaching the deployed service from a laptop"
+below for what that means for local development.
 
 The alternative, everyone running the service locally, is what produced the
 original problem: a fresh clone has the code and none of the data, so the
@@ -52,38 +55,57 @@ declines to touch it. Adding a tracked file under `data/` therefore cannot reach
 the server, which is exactly the property that makes a committed development
 fixture safe.
 
-## Why the deployed service cannot be used from a laptop
+## Reaching the deployed service from a laptop
 
-Asked often enough to belong here. The systemd unit binds
-`--host 127.0.0.1 --port 8000`, so the service accepts connections only from
-processes on that machine, which in practice means the Next.js process sitting
-in front of it. There is no public port, no firewall rule and no CORS, and that
-is the point rather than an oversight: the service holds credentials for both
-databases and has no authentication of its own beyond a shared token.
+You cannot, directly. Port 8000 is not open to the internet: the deployed Next.js
+app reaches the service because it runs on the same box, where
+`144.24.40.252:8000` resolves to a local interface. From anywhere else the
+connection is refused. Port 3000 is open, which is the site, so this is a
+per-port firewall rule rather than the host being unreachable.
 
-So pointing a local `AI_SERVICE_URL` at the server does not work and should not
-be made to work by opening a port. Three honest options, cheapest first.
+This section briefly claimed the opposite, on 2026-07-31, and the mistake is
+worth recording because it wasted a day. A developer machine appeared to be
+talking to the server with `AI_SERVICE_URL` set to that address. It was not: that
+machine had a local forecast server running, and the app falls back to starting
+and using a local one, so the configured URL looked like it worked while
+something else answered. The test that settles it is `curl` against the address
+from a machine with no local server, and that is the first thing to do rather
+than the last.
 
-**1. Use the deployed app.** For anyone who wants to read a forecast rather than
-change one, `app.shipcore.com` already has it, and no local setup is involved at
-all. This is the right answer far more often than it is taken.
+Three ways to work, cheapest first.
 
-**2. Tunnel to it.** For running the Next.js app locally against real, current
-data without a Python environment or a copy of the database:
+**1. Run the service locally.** `setup.cmd` on Windows, `python3
+scripts/setup_local.py` elsewhere, then set `AI_SERVICE_URL=http://localhost:8000`.
+Serves the committed fixture, needs no database and no network access to the
+server. This is the right answer for anyone working on the planning pages.
+
+**2. Tunnel, when current data is wanted.**
 
 ```bash
-ssh -L 8000:127.0.0.1:8000 <user>@<server>
+ssh -L 8000:127.0.0.1:8000 coverland@144.24.40.252
 ```
 
-Leave that open, set `AI_SERVICE_URL=http://localhost:8000` and
-`FORECAST_API_TOKEN` to the deployed value, and the local app talks to the
-deployed service over the tunnel. Nothing is exposed publicly: the forwarding
-lives inside an SSH session that ends when the terminal closes. Note the app
-will still consider `localhost` a server it may start, which is harmless while
-the tunnel is up, since it only spawns uvicorn when nothing answers.
+Leave it open, keep `AI_SERVICE_URL=http://localhost:8000`, and set
+`FORECAST_API_TOKEN` to the server's value. The local app then reads live data
+through the SSH session, with nothing exposed publicly. Note that the app still
+considers `localhost` a server it may start, which is harmless while the tunnel
+is up since it only spawns uvicorn when nothing answers, and confusing when the
+tunnel drops, since it will then quietly serve local data instead. If in doubt,
+check `trained_through` on the Action List.
 
-**3. Run the service locally**, below. Needed only when the Python side itself
-is being changed.
+**3. Open port 8000**, if direct access is genuinely wanted. That is a decision
+rather than a fix, and it needs both the Oracle security list ingress rule and
+whatever iptables the instance runs. Before doing it: the service reads
+credentials for both databases and its only protection is the shared
+`FORECAST_API_TOKEN`, with `/health` outside that check. On the open internet
+that token is the entire perimeter. The tunnel above gets the same result with
+no exposure.
+
+**Which file to set `AI_SERVICE_URL` in.** `Commerce_Integration` has both `.env`
+and `.env.local`, Next.js loads `.env.local` at higher precedence, and both are
+gitignored so two machines can disagree indefinitely. Check with
+`findstr /C:"AI_SERVICE_URL" .env .env.local` before editing, and restart
+`npm run dev` afterwards, because env is read at startup.
 
 ## Running it locally
 
@@ -281,9 +303,41 @@ On the server, as the `coverland` user:
 0 10 * * 1 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
 ```
 
-It runs the forecast, then asks the service whether it can still serve and exits
-non-zero if not, so cron mails a failure on the Monday it breaks rather than
-leaving a colleague to find a stale page on Thursday.
+It runs **two** pipelines, then asks the service whether it can still serve and
+exits non-zero if not, so cron mails a failure on the Monday it breaks rather
+than leaving a colleague to find a stale page on Thursday.
+
+The order is load-bearing:
+
+1. `run_forward_forecast.py`, the legacy statsforecast run. It performs the
+   ingest, pulling fresh order lines and rewriting `sales_clean.parquet`, and
+   writes the `shipcore.fc_*` tables that SKU Planning still reads.
+2. `ml_forward_forecast.py --snapshot live`, which has no ingest of its own. It
+   reads the sales file the first run just refreshed, writes
+   `ml_forward_forecasts`, and appends a row per SKU to `ml_forecast_history`.
+   That table is what the Action List and Forecast Validation serve.
+
+`--snapshot live` is not optional. Without it the script defaults to
+`config.ML_DATA_SNAPSHOT`, the pinned copy that exists so recorded evaluation
+figures cannot drift, and every weekly run would reproduce the same forecast
+while appearing to work.
+
+Until 2026-08-04 this job ran only the first of the two. The consequence was
+invisible for weeks: the legacy tables stayed current, so nothing looked broken,
+while the two live planning screens served whichever ML forecast someone had last
+produced by hand and the history store never gained a real run. The readiness
+check and the history backup in this script were both already written for the ML
+run, which is what made the omission easy to miss.
+
+**This is the only weekly job.** There was previously a second one on a
+developer's Mac running `push_data_to_server.sh`, from when the pipeline ran
+there and the results had to be copied up. `CUTOVER_TASK.md` recorded that as a
+decision to settle rather than keep: either the pipeline moves to the server and
+the Mac cron is retired, or the Run Forecast button goes. The pipeline moved, so
+the Mac cron is retired. Retire it with `crontab -e` on that machine and delete
+the `push_data_to_server.sh` line; the script stays in the repo for a one-off
+manual push, but nothing schedules it. Two machines writing the same files was
+the failure that decision existed to prevent.
 
 10:00 UTC was 3am Pacific when this was set up. The server stays on UTC, so the
 Pacific wall-clock time moves by an hour at each DST transition; adjust the line

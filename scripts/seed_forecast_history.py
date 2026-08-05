@@ -74,7 +74,32 @@ def seed(n_runs: int, seed_value: int) -> None:
     if forecasts.empty:
         raise SystemExit("No forward forecast found; run the pipeline first.")
 
-    profiles = D.load_profiles()[["unique_id", "bucket", "history_length"]]
+    # Segmentation as the forecast recorded it, not as it stands today.
+    #
+    # The history store is a record of what was predicted and under what
+    # classification at the time, so a row must not mix the two moments: a yhat
+    # from the run and a label from whenever the fixture was generated. Taking
+    # these from `load_profiles()` did exactly that. Fifteen SKUs were smooth
+    # when the 2026-07-20 forecast ran and had been demoted to intermittent by
+    # the time this script was first used ten days later, so the seeded runs
+    # showed the model scoring intermittent SKUs, which it never forecasts.
+    #
+    # This is the same error corrected in the demand-versus-forecast endpoint on
+    # 2026-07-30, where segment labels were being read off today's profile and
+    # applied to old rows. Written the same day, this script repeated it.
+    #
+    # The forward forecast carries its own bucket and history_length per SKU,
+    # which is the classification the run actually used, so it is the source.
+    label_cols = [c for c in ("bucket", "history_length") if c in forecasts.columns]
+    if len(label_cols) == 2:
+        profiles = forecasts[["unique_id", *label_cols]].drop_duplicates("unique_id")
+    else:
+        # An older forecast file without those columns. Fall back to the profile
+        # rather than failing, and say so, because the result is then the mixture
+        # this comment exists to describe.
+        print("  WARNING: forecast file carries no bucket/history_length; "
+              "falling back to current profiles, so seeded labels are as-of today.")
+        profiles = D.load_profiles()[["unique_id", "bucket", "history_length"]]
     skus = sorted(set(forecasts["unique_id"]))
     version = _sample_version()
 

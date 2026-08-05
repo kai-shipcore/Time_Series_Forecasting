@@ -116,6 +116,15 @@ that run produced:
 
 Do not replace the existing forecast cron entry. Add to it.
 
+> **Superseded, 2026-08-04. Do not add this cron line.** It belonged to the
+> arrangement where the pipeline ran on a developer's Mac and the results were
+> copied up. The pipeline now runs on the server itself
+> (`scripts/run_forecast_cron.sh`, see `DEPLOYMENT.md`), so there is nothing to
+> push and two machines writing the same files is the failure `CUTOVER_TASK.md`
+> asked someone to decide against rather than discover. If this line is still in
+> a crontab anywhere, remove it. `push_data_to_server.sh` remains in the repo for
+> a one-off manual push and is deliberately not scheduled.
+
 ### 5. Merge and deploy
 
 Merge `feat/planning-api` to `main` in `Time_Series_Forecasting`, watch the

@@ -1915,6 +1915,95 @@ def run_forecast(horizon: int = Query(default=13, ge=1, le=104)):
     return {"job_id": job_id}
 
 
+@app.post("/planning/run-forecast")
+def planning_run_forecast(horizon: int = Query(default=13, ge=13, le=104)):
+    """Refresh the data and produce a new ML forward forecast, on demand.
+
+    Runs scripts/ml_prepare_data.py --force: velocity sync, ingest, clean,
+    profile, forward forecast. The same script the empty-machine path uses,
+    with --force because here the files exist and rebuilding them is the point.
+
+    Deliberately not the weekly cron. That runs the legacy statsforecast
+    pipeline first, which cross-validates a model menu per SKU and writes the
+    shipcore.fc_* tables SKU Planning reads. None of that reaches the Action
+    List or Forecast Validation, and it is most of the runtime, so a button
+    that ran it would be minutes slower for no visible change. The consequence
+    is worth stating where a reader will meet it: after this run, SKU Planning
+    still shows the forecast from the last weekly cron. The panel says so.
+
+    Profiling is in the pipeline rather than skipped alongside the model
+    selection it sits next to. It writes sku_profiles.csv, which the planning
+    table reads to decide which SKUs belong on the worklist; refreshing sales
+    without it leaves segmentation describing last week while the forecast
+    describes this week, which is the drift `demoted_since_forecast` counts.
+
+    Async, returning a job_id to poll. Shares the "forecast" job type with the
+    legacy run and with prepare-data, so create_job refuses when any of the
+    three is already going: they write the same files, and two at once is a
+    corrupted parquet rather than a slow afternoon.
+
+    Horizon floors at 13 in the signature rather than in the script. Each run
+    REPLACES the stored forecast for its training week, so a shorter one would
+    clobber a full snapshot.
+    """
+    job_id = create_job("forecast")
+    if job_id is None:
+        raise HTTPException(status_code=409, detail="A forecast job is already in progress")
+
+    def _run():
+        logger = JobLogger(job_id)
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(ROOT / "scripts" / "ml_prepare_data.py"),
+                 "--force", "--horizon", str(horizon)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                cwd=str(ROOT), start_new_session=True,   # own group → killable with children
+            )
+            try:
+                set_job_pgid(job_id, os.getpgid(proc.pid))
+            except Exception:
+                pass
+
+            stop_watch = threading.Event()
+
+            def _watch():
+                while not stop_watch.wait(2.0):
+                    try:
+                        touch_job(job_id)
+                        if job_cancel_requested(job_id):
+                            try:
+                                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                            except (ProcessLookupError, PermissionError):
+                                pass
+                            return
+                    except Exception:
+                        pass
+            threading.Thread(target=_watch, daemon=True).start()
+
+            for line in proc.stdout:
+                logger.append(line.rstrip())
+            proc.wait()
+            stop_watch.set()
+            logger.flush()
+
+            if job_cancel_requested(job_id):
+                finish_job(job_id, "cancelled", exit_code=proc.returncode)
+            elif proc.returncode == 0:
+                finish_job(job_id, "done", exit_code=0)
+            else:
+                finish_job(job_id, "failed", exit_code=proc.returncode)
+        except Exception as exc:  # noqa: BLE001 — a crashed thread must still close the job
+            logger.append(f"Error: {exc}")
+            logger.flush()
+            finish_job(job_id, "failed", exit_code=-1)
+
+    threading.Thread(target=_run, daemon=True).start()
+    # Polled through the existing generic /forecast-status/{job_id} and
+    # cancelled through /cancel-forecast/{job_id}; both read the jobs table by
+    # id and know nothing about which pipeline produced the job.
+    return {"job_id": job_id}
+
+
 @app.post("/planning/prepare-data")
 def planning_prepare_data(horizon: int = Query(default=13, ge=1, le=104)):
     """Build the ML data files from the database, for a machine that has none.
@@ -2161,6 +2250,18 @@ def planning_action_list(
             # rather than finding the totals quietly short.
             "demoted_since_forecast": int(plan.attrs.get("demoted_since_forecast", 0)),
             "trained_through": snapshot.date().isoformat() if snapshot is not None else None,
+            # Which model produced the forecast, and how far it reaches. The
+            # header said when it was trained and nothing else, so a reader could
+            # not tell which version they were looking at or where the horizon
+            # ends, both of which the forecast file already carries.
+            "model_version": (
+                str(fc["model_version"].iloc[0])
+                if not (fc := _plan_data.load_forecasts()).empty
+                and "model_version" in fc.columns else None
+            ),
+            "horizon_end": (
+                fc["ds"].max().date().isoformat() if not fc.empty else None
+            ),
             "inventory_is_sample": bool(_plan_data.inventory_is_sample()),
         },
     })
@@ -2189,27 +2290,98 @@ def planning_sku_detail(
     plan = _plan_calc.build_planning_table(params)
     match = plan[plan["unique_id"] == sku_id]
     if match.empty:
-        # Distinguish "not forecastable" from "unknown", because the first is a
-        # normal outcome the page should explain rather than an error.
-        known = sku_id in set(_plan_data.load_forecasts()["unique_id"])
-        raise HTTPException(
-            status_code=404,
-            detail=("SKU is in the forecast run but the current segmentation classes it "
-                    "intermittent, so it has no planning row"
-                    if known else "Unknown SKU"),
-        )
+        # Three cases, not two. A SKU can be absent from this table because it
+        # was in the forecast run and has since been demoted, or because it was
+        # never forecast at all, or because it does not exist. The first two are
+        # normal outcomes the page explains and draws history for; only the third
+        # is an error. The previous wording called the middle case "Unknown SKU",
+        # which is what every row on the non-forecast list is, so following a link
+        # from there reported a failure instead of the page it was meant to reach.
+        in_run = sku_id in set(_plan_data.load_forecasts()["unique_id"])
+        profiles = _plan_data.load_profiles()
+        profiled = sku_id in set(profiles["unique_id"])
+        if in_run:
+            detail = ("SKU is in the forecast run but the current segmentation classes it "
+                      "intermittent, so it has no planning row")
+        elif profiled:
+            detail = ("SKU sells too irregularly to forecast weekly, so it has no planning "
+                      "row. Its sales history is available")
+        else:
+            detail = "Unknown SKU"
+        raise HTTPException(status_code=404, detail=detail)
 
     row = match.iloc[0]
     breakdown = _plan_calc.order_quantity_breakdown(row, params)
-    low, high = _plan_calc.order_quantity_range(row)
+    # order_quantity_range removed with the band; see the note on "order" below.
 
-    hist = _plan_data.sku_sales_history(sku_id).tail(history_weeks)[["ds", "y"]]
+    hist_all = _plan_data.sku_sales_history(sku_id)
     fc = _plan_data.sku_forecast(sku_id)
     windows = _plan_data.load_ml_accuracy_by_sku()
     version = _plan_data.load_forecasts()["model_version"].iloc[0] if not fc.empty else None
-    windows = windows[windows["unique_id"] == sku_id]
+    all_versions = windows[windows["unique_id"] == sku_id]
+    windows = all_versions
     if version is not None and "model_version" in windows.columns:
         windows = windows[windows["model_version"] == version]
+
+    # This SKU's model against the spreadsheet, on the windows both were scored
+    # on. The page draws both forecasts and lists both per week, and until now
+    # said nothing about which had been closer FOR THIS SKU, which is the
+    # question a purchaser deciding whether to trust the number is actually
+    # asking. The portfolio answer is on the validation page and does not
+    # transfer: V1's error is season-dependent, so a SKU can run opposite to it.
+    #
+    # Both errors are divided by the same actual, the one from the model's own
+    # row, so the two WAPEs are like for like rather than each measured against
+    # its own denominator. Same convention as the validation outlier lists.
+    def _score(v: str) -> dict | None:
+        rows = all_versions[all_versions["model_version"] == v]
+        rows = rows[rows["y_total"] > 0]
+        if rows.empty:
+            return None
+        actual = float(rows["y_total"].sum())
+        return {
+            "version": v,
+            "wape": float(rows["ae"].sum() / actual),
+            # Percentage points, positive meaning it forecast more than sold,
+            # matching src/ml/evaluate.py and the validation grid.
+            "bias_pct": float(100.0 * rows["bias"].sum() / actual),
+            "ae_units": float(rows["ae"].sum()),
+            "actual_units": actual,
+            "n_windows": int(rows["window"].nunique()),
+        }
+
+    # History long enough to cover every backtest window drawn over it.
+    #
+    # `history_weeks` sizes the demand chart, and at its default of 26 it starts
+    # in late January while the earliest backtest cutoff is the previous October.
+    # Both charts read this one array, so the backtest chart was shading windows
+    # and drawing predicted lines across sixteen weeks with no actuals beneath
+    # them: the comparison the chart exists to make, missing exactly where the
+    # oldest window sits. The four extra weeks put some observed demand to the
+    # left of the earliest cutoff line, which is what that line divides.
+    weeks_needed = history_weeks
+    if not windows.empty and not hist_all.empty:
+        earliest = pd.to_datetime(windows["cutoff"]).min()
+        last_week = hist_all["ds"].max()
+        if pd.notna(earliest) and pd.notna(last_week):
+            weeks_needed = max(weeks_needed, int((last_week - earliest).days / 7) + 4)
+    hist = hist_all.tail(weeks_needed)[["ds", "y"]]
+
+    model_score = _score(version) if version else None
+    baseline_score = _score("v1")
+    comparison = None
+    if model_score and baseline_score:
+        shared = sorted(
+            set(all_versions[all_versions["model_version"] == version]["window"])
+            & set(all_versions[all_versions["model_version"] == "v1"]["window"])
+        )
+        comparison = {
+            "model": model_score,
+            "baseline": baseline_score,
+            # Named rather than counted: a reader comparing two figures needs to
+            # know they cover the same weeks, and "2 windows" does not say that.
+            "windows": shared,
+        }
 
     # The ordered SKU list, so the page can offer a selector and move between
     # SKUs without a round trip through the list. It is the planning table's own
@@ -2241,18 +2413,64 @@ def planning_sku_detail(
                 if (snapshot := _plan_data.forecast_snapshot_date()) is not None
                 else None
             ),
+            # How many trailing weeks the demand chart should draw. `history` is
+            # longer than this whenever a backtest window reaches further back,
+            # so the client trims rather than the two charts disagreeing about
+            # which weeks exist.
+            "history_weeks": history_weeks,
         },
+        # No plausible band. It flexed coverage demand by the SKU's error, which
+        # is the same quantity safety stock adds, so at the default service level
+        # its upper edge WAS the recommendation: the same figure presented twice,
+        # once as a decision and once as a range that appeared to contain it.
+        # Uncertainty is carried by the reliability card, which is measured.
         "order": {
             "total": int(row["recommended_order_qty"]),
-            "band": {"low": int(low), "high": int(high)},
             "breakdown": _jsonable(breakdown),
         },
         "history": _jsonable(hist),
         "forecast": _jsonable(fc),
+        "comparison": comparison,
         "backtest": {
             "windows": _jsonable(windows.sort_values("cutoff")),
             "weekly": _jsonable(_plan_data.sku_backtest_weekly(sku_id, version)),
         },
+    })
+
+
+@app.get("/planning/sku/{sku_id}/history")
+def planning_sku_history(
+    sku_id: str,
+    history_weeks: int = Query(default=104, ge=4, le=260),
+):
+    """Weekly actual demand for any SKU, forecastable or not.
+
+    Separate from /planning/sku/{id} because that endpoint answers a planning
+    question and correctly 404s for a SKU the model does not forecast: there is
+    no order quantity, no coverage demand and no reliability without a forecast.
+    Sales history exists regardless, and is the only thing the detail page can
+    honestly show for an intermittent SKU.
+
+    Reads the same weekly series the planning layer uses, so the line drawn here
+    and the actuals drawn on a forecastable SKU's chart are the same measurement.
+    """
+    sales = _plan_data.load_sales()
+    hist = sales[sales["unique_id"] == sku_id]
+    if hist.empty:
+        raise HTTPException(status_code=404, detail=f"No sales history for {sku_id}")
+
+    hist = hist.sort_values("ds").tail(history_weeks)
+    profiles = _plan_data.load_profiles()
+    prof = profiles[profiles["unique_id"] == sku_id]
+    return JSONResponse({
+        "unique_id": sku_id,
+        # Carried so the page can say why there is no forecast rather than only
+        # that there is none.
+        "bucket": (str(prof["bucket"].iloc[0]) if len(prof) and pd.notna(prof["bucket"].iloc[0])
+                   else None),
+        "weeks": int(len(hist)),
+        "total_units": float(hist["y"].sum()),
+        "history": _jsonable(hist[["ds", "y"]]),
     })
 
 
@@ -2370,7 +2588,45 @@ def planning_demand_trend(req: DemandTrendRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 
 from config import ML_FINAL_TEST_CUTOFF as _ML_FINAL_TEST_CUTOFF  # noqa: E402
+from config import ML_DATA_SNAPSHOT as _ML_DATA_SNAPSHOT  # noqa: E402
 from src.ml.serving import history as _hist  # noqa: E402
+
+
+def _model_card(version: str | None) -> dict | None:
+    """What a registered model version is, for the page that reports on it.
+
+    Read from the registry rather than restated in the web app, so a version
+    this endpoint is not serving cannot be described as though it were. Returns
+    None for a version with no registered class, which is the case for the V1
+    spreadsheet baseline: it is a formula rather than a fitted model and is
+    described where it is compared.
+
+    `features` are the names the model is fitted on, per segment. They are
+    deliberately raw rather than prettified: they are what appears in the design
+    doc and the experiment scripts, and a reader following one to the other
+    should find the same word.
+    """
+    try:
+        from src.ml.serving.models import REGISTRY
+        from src.ml.model import FEATURES_V1, FEATURES_V11_LONG
+    except Exception:
+        return None
+
+    cls = REGISTRY.get(version or "")
+    if cls is None:
+        return None
+
+    card = {
+        "version": getattr(cls, "version", version),
+        "description": getattr(cls, "description", None),
+        # Only meaningful for the hybrid, which fits a different feature set per
+        # segment. Guarded so a future single-model version reports nothing here
+        # rather than a feature list it does not use.
+        "features": None,
+    }
+    if getattr(cls, "version", None) in {"v11", "v14"}:
+        card["features"] = {"short": list(FEATURES_V1), "long": list(FEATURES_V11_LONG)}
+    return card
 
 
 def _pooled(g: pd.DataFrame, err="ae", act="y_total") -> float:
@@ -2540,6 +2796,40 @@ def planning_validation(
             "performance": _jsonable(perf) if len(perf) else [],
             "last_complete_week": str(_hist.last_complete_week().date()),
         },
+        # Where these figures came from and when.
+        #
+        # The page had none of this, which is the wrong way round: it is the
+        # screen whose whole purpose is evidence, and it was the only one not
+        # dating its own. The Action List says "Trained through" in its header,
+        # and the absence here is how a forecast three weeks stale went
+        # unnoticed while this page reported on it.
+        #
+        # Two dates, deliberately, because they answer different questions. The
+        # snapshot is pinned so the accuracy figures cannot drift week to week;
+        # a reader seeing the same numbers on two visits should know that is by
+        # design rather than a broken refresh. `trained_through` is the served
+        # forecast's own training week, which does move, and comparing the two
+        # is how you see whether the model being validated is the one being
+        # served.
+        "meta": {
+            # What "v11" actually is, served rather than written into the web
+            # app. The description lives on the registered model class beside
+            # the code that implements it, and the feature lists are the ones
+            # the model is fitted on, so the page cannot describe a version it
+            # is not serving. A short string on a screen is where a reader first
+            # meets the model, and it was the one thing on the technical page
+            # that assumed you already knew.
+            "model": _model_card(comparison.get("current")),
+            "snapshot": _ML_DATA_SNAPSHOT,
+            "accuracy_computed": (
+                pd.Timestamp(acc_path.stat().st_mtime, unit="s").date().isoformat()
+                if acc_path.exists() else None
+            ),
+            "trained_through": (
+                snap.date().isoformat()
+                if (snap := _plan_data.forecast_snapshot_date()) is not None else None
+            ),
+        },
         "final_test": {
             # Pinned, quarantined, and not yet run. Reported so the page can say
             # what is coming rather than leaving a blank panel unexplained.
@@ -2656,6 +2946,26 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
         hist = df.get("history_length", pd.Series("?", index=df.index)).fillna("?")
         return bucket + "/" + hist.replace({"medium": "long", "full": "long"})
 
+    def smooth_only(df: pd.DataFrame) -> pd.DataFrame:
+        """Drop any row whose segment is not smooth.
+
+        The model forecasts smooth SKUs and nothing else: serving/forecast.py
+        filters to `bucket == "smooth"` and writes that literal, so a real run
+        cannot produce another bucket. A row here saying otherwise is bad data,
+        and charting it would show the model apparently predicting SKUs it
+        declines to predict.
+
+        Where it came from: seed_forecast_history.py stamped today's profile onto
+        fabricated historical runs, so the 15 SKUs that were smooth on 2026-07-20
+        and demoted since arrived labelled intermittent. That script is fixed and
+        real runs supersede the fixture, but the guard stays, because the right
+        response to a non-smooth row is to leave it out of a chart about the
+        model rather than to trust whatever wrote it.
+        """
+        if df.empty or "segment" not in df.columns:
+            return df
+        return df[df["segment"].str.startswith("smooth/")]
+
     def by_segment(df: pd.DataFrame, aggs: dict, extra_keys: list | None = None) -> pd.DataFrame:
         keys = ["ds"] + (extra_keys or [])
         frames = []
@@ -2670,6 +2980,14 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
 
     # Forward horizon: the latest run only, which is what "the current forecast"
     # means and what the old chart drew beyond the marker.
+    # Segment per SKU as the runs recorded it, not as the profile stands today.
+    #
+    # The actuals series used to take these from load_profiles(), which labels a
+    # historical row with a current classification. That is the same error
+    # corrected in the seed script and in the reliability sort: a SKU demoted
+    # since the forecast ran arrived here labelled intermittent, so a chart about
+    # what the model predicted showed segments the model does not predict.
+    seg_by_sku: dict[str, str] = {}
     forward = pd.DataFrame(columns=["ds", "yhat", "v1", "n_skus", "segment"])
     forward_run_date = None
     fwd_skus: set = set()
@@ -2677,8 +2995,12 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
         latest = fc["forecast_date"].max()
         fc = fc[fc["forecast_date"] == latest].copy()
         forward_run_date = latest.date().isoformat()
-        fwd_skus = set(fc["unique_id"])
         fc["segment"] = seg_of(fc)
+        fc = smooth_only(fc)
+        # After the filter, so the SKU count the chart reports matches the SKUs
+        # it actually draws.
+        fwd_skus = set(fc["unique_id"])
+        seg_by_sku.update(fc.drop_duplicates("unique_id").set_index("unique_id")["segment"])
         v1 = _plan_data.load_v1_forward()
         if not v1.empty:
             fc = fc.merge(v1[["unique_id", "ds", "v1_yhat"]], on=["unique_id", "ds"], how="left")
@@ -2712,6 +3034,13 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
             )
         scored = scored[scored["model_version"] == history_version].copy()
         scored["segment"] = seg_of(scored)
+        scored = smooth_only(scored)
+        # Only where the forward run did not already say. The forward forecast is
+        # the newer statement of a SKU's segment, so it wins.
+        for uid, seg in (
+            scored.drop_duplicates("unique_id").set_index("unique_id")["segment"].items()
+        ):
+            seg_by_sku.setdefault(uid, seg)
         predicted = by_segment(
             scored,
             {
@@ -2731,9 +3060,12 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
     hist_sales = hist_sales[(hist_sales["ds"] >= start) & (hist_sales["ds"] <= last_complete)]
     actuals = pd.DataFrame(columns=["ds", "y", "n_skus", "segment"])
     if not hist_sales.empty:
-        prof = _plan_data.load_profiles()[["unique_id", "bucket", "history_length"]]
-        hist_sales = hist_sales.merge(prof, on="unique_id", how="left")
-        hist_sales["segment"] = seg_of(hist_sales)
+        hist_sales["segment"] = hist_sales["unique_id"].map(seg_by_sku)
+        # A SKU with sales but in neither the forward run nor the scored history
+        # has no segment this chart can honestly assign, so it is left out rather
+        # than given today's label.
+        hist_sales = hist_sales[hist_sales["segment"].notna()]
+        hist_sales = smooth_only(hist_sales)
         actuals = by_segment(hist_sales, {
             "y": ("y", "sum"),
             "n_skus": ("unique_id", "nunique"),
