@@ -2769,7 +2769,22 @@ def planning_validation(
             j["wape_cur"] = j["ae_cur"] / j["y_total_cur"]
             j["wape_base"] = j["ae_base"] / j["y_total_cur"]
             j["delta"] = j["wape_cur"] - j["wape_base"]
-            cols = ["unique_id", "window", "y_total_cur", "wape_cur", "wape_base", "delta"]
+            # Segment, in the same vocabulary every other section reports in:
+            # medium and full collapse to long, matching src/ml/evaluate.py and
+            # design Section 4.4. Carried per row so the page can ask whether a
+            # regression is systematic (one segment losing) or scattered, which
+            # is the difference between a model problem and a handful of odd
+            # products. Taken from the current version's row, since the two
+            # versions are scored on the same SKU-window and the label belongs
+            # to the SKU rather than to whoever forecast it.
+            j["segment"] = (
+                j["bucket_cur"].fillna("?") + "/"
+                + j["history_length_cur"].fillna("?").replace(
+                    {"medium": "long", "full": "long"}
+                )
+            )
+            cols = ["unique_id", "window", "segment", "y_total_cur",
+                    "wape_cur", "wape_base", "delta"]
             # Both WAPEs use the actual from the current version's row, so the two
             # are divided by the same denominator and their difference is a like
             # for like comparison rather than an artefact of two different bases.
@@ -2878,12 +2893,36 @@ def planning_demand_patterns(weeks: int = Query(default=52, ge=13, le=260)):
     per_sku = recent.groupby("unique_id")["y"].sum().sort_values(ascending=False)
     total = per_sku.sum()
     conc = []
+    pareto = []
     if total > 0:
         cum = per_sku.cumsum() / total
         for pct in (0.05, 0.10, 0.20, 0.50):
             n = max(1, int(len(per_sku) * pct))
             conc.append({"sku_share": pct, "n_skus": n,
                          "demand_share": float(cum.iloc[n - 1])})
+
+        # The same fact as `conc`, as a curve rather than four breakpoints.
+        # Concentration is a distribution, and four rows make a reader add them
+        # up mentally to see the shape; the curve states it directly.
+        #
+        # Downsampled to ~200 points. The catalogue is a few thousand SKUs and
+        # the curve is smooth, so every point is bandwidth spent on detail no
+        # screen can resolve. Sampled evenly by rank rather than by demand, so
+        # the flat tail does not collapse to a couple of points.
+        #
+        # Both ends are pinned: the first point is (0, 0), which no SKU
+        # produces, and the last is the final SKU, which even sampling can miss
+        # and whose absence would leave the curve stopping short of 100%.
+        n_sku = len(per_sku)
+        cum_values = cum.to_numpy()
+        step = max(1, n_sku // 200)
+        idx = list(range(0, n_sku, step))
+        if idx[-1] != n_sku - 1:
+            idx.append(n_sku - 1)
+        pareto = [{"sku_pct": 0.0, "demand_pct": 0.0}] + [
+            {"sku_pct": (i + 1) / n_sku, "demand_pct": float(cum_values[i])}
+            for i in idx
+        ]
 
     prof = _plan_data.load_profiles()
     seg = []
@@ -2899,6 +2938,13 @@ def planning_demand_patterns(weeks: int = Query(default=52, ge=13, le=260)):
     return JSONResponse({
         "weekly": _jsonable(weekly),
         "concentration": conc,
+        # The cumulative curve. `concentration` stays on the response: the chart
+        # annotates one breakpoint and the interpretation line names it, and
+        # both read it from here rather than recomputing it off the sampled
+        # curve, which would put the stated figure a sample-interval away from
+        # the true one.
+        "pareto": pareto,
+        "n_skus": int(len(per_sku)),
         "segments": seg,
         "weeks": weeks,
     })

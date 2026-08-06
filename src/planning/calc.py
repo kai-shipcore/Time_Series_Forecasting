@@ -52,7 +52,15 @@ DEFAULT_PARAMS = {
     # z = 1.0 is roughly an 84% service level on a normal error distribution;
     # 1.65 is roughly 95%.
     "service_z": 1.0,
-    "best_seller_top_pct": 0.20,   # top X% of SKUs by recent units = best seller
+    # Best seller = the smallest set of SKUs that together carry this share of
+    # recent demand. Was `best_seller_top_pct: 0.20`, a percentile, which is a
+    # fact about the length of the list rather than about the business: it named
+    # a fifth of the SKUs whatever demand did, and the count moved whenever SKUs
+    # entered or left the forecastable set for reasons unrelated to selling
+    # well. A demand share says something that survives the list changing size,
+    # and adjusts the right way -- concentration shrinks the set, dispersion
+    # grows it.
+    "best_seller_demand_share": 0.50,
     "stockout_horizon_days": 30,   # window for "at risk" flags
 }
 
@@ -364,22 +372,54 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
         for d in days_cover
     ]
 
-    # Best seller = top X% by recent units among forecasted SKUs.
-    top_pct = float(p["best_seller_top_pct"])
-    if len(df) and df["recent_units"].max() > 0:
-        threshold = df["recent_units"].quantile(1 - top_pct)
-        df["best_seller"] = df["recent_units"] >= max(threshold, 1e-9)
+    # Best seller = the smallest set of SKUs carrying `best_seller_demand_share`
+    # of recent units. Rank by recent demand, accumulate, and stop once the
+    # share is reached.
+    #
+    # The comparison is against the cumulative total BEFORE each SKU, so the one
+    # that crosses the line is inside the set rather than the first one out.
+    # Otherwise "the SKUs that make up half of demand" would name a group that
+    # adds to slightly less than half, which is not what the phrase means.
+    #
+    # Sorted with unique_id as a tiebreaker so SKUs on identical recent units
+    # resolve the same way every run. Without it the boundary of the set could
+    # flicker between runs on tied rows, and a star that appears and disappears
+    # without the data changing is worse than no star.
+    share = float(p["best_seller_demand_share"])
+    total_recent = float(df["recent_units"].sum()) if len(df) else 0.0
+    if total_recent > 0:
+        order = df.sort_values(
+            ["recent_units", "unique_id"], ascending=[False, True], kind="mergesort"
+        )
+        cum_before = order["recent_units"].cumsum().shift(fill_value=0.0) / total_recent
+        df["best_seller"] = df["unique_id"].isin(
+            order.loc[cum_before < share, "unique_id"]
+        )
     else:
         df["best_seller"] = False
 
     # Priority: 1 Preorder, 2 No Stock, 3 Best Seller (lowest number wins).
+    # Supply state only. Preorder, No Stock and Routine are three values of one
+    # variable -- what the stock situation is -- which is what makes a
+    # first-match ladder the right shape for them.
+    #
+    # "Best Seller" used to sit at rank 3 and was a category error (BACKLOG.md
+    # item 14). It answers a different question, how much the SKU matters, and
+    # every SKU has a supply state and an importance simultaneously. One slot
+    # could only hold one of them, so the label discarded whichever it did not
+    # win, and it lost to Preorder and No Stock -- precisely the states a top
+    # seller is most likely to be in. The badge thinned out exactly where
+    # importance was most worth knowing, and what survived meant "top 20% by
+    # demand and nothing more pressing about it", which is not a concept anyone
+    # asked for.
+    #
+    # `best_seller` remains as a column, so importance is now readable on every
+    # row regardless of queue, and it is a sort key below.
     def _priority(row):
         if row["preorder_backlog"] > 0:
             return 1, "Preorder"
         if row["available_inventory"] <= 0:
             return 2, "No Stock"
-        if row["best_seller"]:
-            return 3, "Best Seller"
         return 99, "Routine"
 
     pr = df.apply(_priority, axis=1, result_type="expand")
@@ -388,7 +428,6 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
 
     horizon = float(p["stockout_horizon_days"])
     df["stockout_soon"] = df["days_to_stockout"] <= horizon
-    df["best_seller_at_risk"] = df["best_seller"] & df["stockout_soon"]
 
     # ----- Stock running out before the replacement lands ---------------------
     # Two columns on this table are computed on assumptions that contradict each
@@ -420,11 +459,19 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
         df["has_supply_gap"] & (df["days_to_inbound"] > lead_days)
     )
 
-    # kind="mergesort": stable, so SKUs tied on both keys (common -- most
+    # Priority, then best seller, then quantity. The middle key is what item 14
+    # bought: importance no longer decides which queue a SKU is in, but it does
+    # decide where it sits inside one, so a best seller with a preorder backlog
+    # now outranks a tail SKU with the same backlog instead of being badged
+    # identically to it.
+    #
+    # kind="mergesort": stable, so SKUs tied on all three keys (common -- most
     # Routine/Preorder SKUs currently share recommended_order_qty=0) keep a
     # fixed relative order instead of shuffling under quicksort's tie-breaking.
     out = df.sort_values(
-        ["priority", "recommended_order_qty"], ascending=[True, False], kind="mergesort"
+        ["priority", "best_seller", "recommended_order_qty"],
+        ascending=[True, False, False],
+        kind="mergesort",
     )
     # Set last: pandas drops `attrs` across most merges and assignments, so a
     # value attached earlier in this function would silently arrive as None.
@@ -440,7 +487,6 @@ def overview_metrics(plan: pd.DataFrame, params: dict | None = None) -> dict:
         "forecasted_skus": int(len(plan)),
         "preorder_priority": int((plan["priority"] == 1).sum()),
         "out_of_stock": int((plan["available_inventory"] <= 0).sum()),
-        "best_sellers_at_risk": int(plan["best_seller_at_risk"].sum()),
         "total_recommended_order_qty": int(plan["recommended_order_qty"].sum()),
         "stockout_within_horizon": int((plan["days_to_stockout"] <= horizon).sum()),
         # SKUs that run dry before their booked container lands, and the demand

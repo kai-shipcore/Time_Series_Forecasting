@@ -54,20 +54,37 @@ def ml_is_holiday(ds: pd.Series) -> pd.Series:
     """True for weeks inside the ML track's holiday window.
 
     Membership is decided on the DAYS a week covers, not on its label. Under
-    W-MON a label of 2025-12-22 covers Dec 15-21, so testing the label puts the
+    W-MON a label of 2025-12-22 covers Dec 16-22, so testing the label puts the
     effective boundary a week late and, worse, moves it year to year: a fixed
     (11,20)-(12,15) label test covered Nov 18 to Dec 08 in 2024 but Nov 17 to
     Dec 14 in 2025. A window pinned to real promotional dates cannot drift like
     that. A week counts when a majority of its seven days fall inside the range.
 
-    The prototype (src/deseasonalize.py) still uses the label test. That is why
+    The span is `[ds - 6, ds]`. It was written as `[ds - 7, ds - 1]` until
+    2026-08-06, which is the Monday-to-Sunday span and not the one this project
+    uses: the week labelled L runs Tuesday (L-6) through Monday L, so the label
+    is the week's LAST day and belongs inside the range. The docstring described
+    the intent correctly and the arithmetic was one day out.
+
+    That error changed no result, which is why it survived. Checked over every
+    W-MON label from 2024-06-17 to 2026-07-20: both spans flag exactly 8 weeks
+    and disagree on none, because membership needs 4 of 7 days inside a window
+    running Nov 20 to Dec 15 and a one-day shift never crosses that threshold.
+    It is fixed anyway because it is only harmless for this window and this date
+    range; moving ML_HOLIDAY_END or adding a year of data would have been enough
+    to make it bite, and it would have surfaced as an unexplained accuracy
+    change in whichever experiment happened to be running. See BACKLOG 19.
+
+    Matches src/ml/serving/v1.py, which already used `ds - 6` to `ds`, and
+    src/db.py, whose fetch window is also `ds - 6`. The prototype
+    (src/deseasonalize.py) still uses the label test. That is why
     matches_prototype() will report False once ML_HOLIDAY_END is moved: the two
     are then deliberately different, which is the point of the split.
     """
     m0, d0 = ML_HOLIDAY_START
     m1, d1 = ML_HOLIDAY_END
-    start = ds - pd.Timedelta(days=7)
-    end = ds - pd.Timedelta(days=1)
+    start = ds - pd.Timedelta(days=6)
+    end = ds
     yr = end.dt.year.where(end.dt.month >= m0, end.dt.year - 1)
     p0 = pd.to_datetime(dict(year=yr, month=m0, day=d0))
     p1 = pd.to_datetime(dict(year=yr, month=m1, day=d1))

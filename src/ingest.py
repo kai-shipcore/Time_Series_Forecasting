@@ -5,7 +5,10 @@ from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True: the user's shell carries stale DB_* exports (one of them a
+# truncated password) that otherwise shadow .env and produce an auth failure
+# that looks like a database outage. Documented in CLAUDE.md.
+load_dotenv(override=True)
 
 _QUERY = """
     SELECT

@@ -2322,3 +2322,474 @@ detail lives in the design document and codebase guide, not here.
 - Also fixed a latent bug in that call: its success message formatted a missing row count with a
   thousands separator, which raises, gets caught by the surrounding handler, and reports a sync
   that worked as a failure.
+- Backlog 13.4 done: the Action List table now fits. The pinned SKU column's product name was
+  uncapped, so one long name set the width for every row; capped with the full text on hover. The
+  nine optional columns are individually hideable, grouped by band and remembered per reader,
+  defaulting to all. Band headers compute their span from what is visible and the coloured band
+  rule moves to the first column still showing. Backlog item 13 reconciled at the same time: 13.3
+  recorded as declined with the reasoning, 13.2 marked partly done with the real question still
+  open.
+- Backlog 13.3 done: the demand concentration table on Forecast Validation is now a Pareto curve,
+  with a dotted diagonal showing what even demand would look like and the named breakpoint marked
+  on it. The endpoint gained the cumulative series, downsampled to ~200 points. Recorded as
+  declined earlier the same day and reversed; the interpretation line added instead was worth
+  having but answered a different complaint.
+- Shortened the Action List's widest header: "9w demand" became "Next 9w", with the full
+  definition on hover. The band above it already says DEMAND, so the word repeated its own heading.
+- Backlog 13.1 and 13.2 done, which closes item 13 except 13.5 (still waiting on item 14). The
+  validation page is now ordered as an argument: the claim, its scope, the claim over time, the
+  out-of-sample record, where it is weakest, what is not claimed yet. Demand shape moved from last
+  to second, and per-SKU outliers moved below the aggregate evidence. The contents bar was removed
+  rather than rebuilt; six sections listed one-for-one is what the scrollbar already does, and the
+  numbering it was really providing now lives on the headings.
+- Rebuilt the validation page's per-SKU section, renamed from "Where it breaks down" to
+  "SKU-level breakdown". It was two fixed lists of five, which is an anecdote: five bad rows say
+  nothing about whether the tail behind them is five rows or two hundred, and nothing about the
+  wins. It now answers the question a reviewer actually asks, whether the improvement is broad or
+  a few large wins are carrying the average: win rate counted by SKU-window and by units sold
+  (62% and 67%), a histogram of the per-SKU differences, the same rates split by backtest window
+  and by segment, and every scored row searchable and sortable with links through to the SKU.
+  Two findings it surfaces that the page could not state before: the Oct-Dec window is a loss
+  (0.105 against V1's 0.091, 47% win rate), and the material-regression tail is 50 rows carrying
+  3.1% of demand.
+- Also clarified what "units" means there. The section mixes units sold with percentage points of
+  WAPE, and the difference column printed a bare "+29" that read equally well as either. Every
+  label now says which.
+- Added naive baselines and recorded them as design doc Section 4.29. Every accuracy claim so far
+  was against V1, the incumbent spreadsheet, which answers "should we switch" but not "does this
+  forecast at all"; a naive baseline is what separates skill from a low bar and none was recorded.
+  v11 reduces error 34.5% against a trailing-12-week-mean naive and 52.8% against last-week-flat.
+  Two findings fell out: V1 at 25.91% is slightly worse than that trailing mean at 24.35%, so
+  "beats the spreadsheet" is a lower bar than it sounded; and the seasonal naive is unusable
+  because only 18-20% of SKU-weeks have a value 52 weeks earlier, which independently supports
+  imposing seasonality through multipliers rather than learning it from the calendar.
+- Backlog item 14 done: Best Seller is no longer a priority label. It was a category error, sitting
+  in a ladder of supply states while answering a different question, so it lost to Preorder and No
+  Stock and the badge vanished from exactly the SKUs where importance mattered most. It is now an
+  attribute drawn as a star on every row, a filter, and a tiebreaker within each queue. Measured:
+  54 SKUs now show a star that structurally could not before, the best-seller count on the summary
+  card goes 35 to 89, and total recommended quantity is unchanged at 2,426 units, confirming the
+  order arithmetic never depended on the priority label. This unblocks 13.5.
+- Settled the best-seller threshold and deleted best_seller_at_risk. Best seller is now the
+  smallest set of SKUs carrying half of recent demand rather than a fixed top 20% of the list:
+  46 of 432 SKUs, 50.2% of units, verified minimal and deterministic on ties. A percentile
+  described the length of the list rather than the business and stayed a fifth of it whatever
+  demand did. best_seller_at_risk was an intersection of two filters the screen already offers
+  separately, was never displayed, and is gone from the calculation, the metrics block and the
+  type. Also corrected a claim I had made from the Pareto curve: the top 5% carrying 63% of demand
+  is a figure for the whole catalogue including the intermittent tail; within the forecastable set
+  it is 34%, so the case against the percentile rests on a different argument than I first gave.
+- Found and fixed the trailing-week bug. clean() grouped orders into W-MON buckets and kept
+  everything through the last bucket containing an order, so any run on a day other than Monday
+  trained on a partial final week and stamped it as complete. That week is one of twelve in the
+  trailing mean the model's target is a ratio to, and one of four in ramp_4_12 where it hits
+  hardest, so every SKU read as falling and every forecast came out low. last_complete_week() moved
+  to src/weeks.py so the ingest and the scoring share one rule, and clean() now drops unfinished
+  buckets before building its grid. Verified across every day of the boundary week.
+- Established the cron was not the cause: a Monday run cannot produce the 2026-08-10 bucket, since
+  the earliest order that lands there is dated Tuesday. It was the Run Forecast panel being tested.
+- Removed that panel's Stop button (backlog item 15). ml_prepare_data.py writes sales, profiles and
+  the forecast in sequence with no rollback, so a cancel that worked would leave the three
+  describing different weeks. The Stop that failed was the safe outcome reached by accident.
+- Noted that the Monday cron now trains through a week-old cutoff by design, since the bucket
+  ending Monday is not finished at 10:00. Moving the cron to Tuesday is a one-line change and
+  recovers a week of freshness.
+- Found that weekly buckets are one day out from the documented convention: pandas W-MON defaults
+  bin Tuesday-to-Monday, while the design doc, the screens and my own reasoning all describe
+  Monday-to-Sunday. Recorded as backlog item 16 rather than fixed, because correcting it changes
+  every weekly total in the history and therefore re-baselines every recorded figure, which is the
+  same class of change as advancing the pinned snapshot. Also corrects yesterday's advice: the cron
+  should stay on Monday, since under the intended binning a Monday run is maximally fresh. Moving it
+  to Tuesday would have been a workaround for this bug.
+- Added scripts/ml_purge_history_run.py to remove the mid-week run that was stored under
+  forecast_date 2026-08-10 trained on three days of data. Dry run by default, one run at a time,
+  cleans both the parquet and the shipcore table. The history store is append-only evidence, so
+  deleting from it is deliberately awkward; a run built on known-broken input is evidence of the
+  bug rather than of the model, and the bug is recorded here instead.
+- Backlog 13.5 done, closing item 13 entirely: the Action List now explains its priority labels
+  where they appear, in the same legend row that already defines reliability and demand trend.
+  Item 14 made this easier than it would have been, since the three remaining labels are values of
+  one variable and the star is stated separately as an attribute that can sit on any of them.
+- Recorded backlog item 17: port 8000 is closed to outside connections, so a developer running the
+  frontend locally cannot reach the deployed forecast API and has to clone and run the whole
+  forecasting repo instead. Token authentication already exists, so the firewall is not the only
+  control; the note recommends opening it narrowly by IP or VPN rather than to the internet, and
+  flags that two endpoints reachable with the token rebuild live data.
+
+--- DAILY SUMMARY 2026-08-05 ---
+1. Finished the planned round of improvements to the two forecasting screens. Retired an older
+   duplicate screen that showed different numbers for the same product, made the main table fit on
+   screen with a control for which columns to show, and rebuilt the section on model accuracy so it
+   answers whether the improvement holds across the range rather than showing five examples.
+2. Added a proper reference point for accuracy. The model is now measured against simply carrying
+   recent average sales forward, which it beats by about a third. The same test showed the
+   spreadsheet method in use today is roughly no better than that simple average.
+3. Found and fixed a bug that made forecasts too low. A forecast produced on any day except Monday
+   was trained on a part-finished week of sales, which made products look like they were declining.
+   The forecast currently on the server was produced that way and needs replacing.
+4. Logged three items for later. The largest is that weekly sales totals are grouped one day out
+   from what every document describes; correcting it is right but shifts every accuracy figure
+   recorded so far, so it needs doing deliberately rather than quietly.
+
+--- SUMMARY PRODUCED 2026-08-05 (covering the 2026-08-05 entries above) ---
+- Fixed the week boundaries (backlog item 16). clean() now uses closed="left" so a week runs Monday
+  to Sunday and is labelled by the Monday it ends on, matching every document and screen.
+  last_complete_week needed the matching change and did not get it first time: it subtracted an
+  extra week on Mondays, correct under the old binning and wrong under the new one, and would have
+  discarded the most recent complete week on every cron run. A boundary test caught it.
+  No recorded figure moved, because the pinned snapshot is a frozen copy that clean() does not
+  touch; I had initially called this a re-baseline event and that was wrong. What is now
+  inconsistent is that live data uses the corrected boundaries while the pinned snapshot still
+  carries the old ones, which closes at the next re-snapshot. The cron stays on Monday.
+
+- 2026-08-06. Pre-registered the week-boundary A/B (design doc 4.30) and wrote
+  scripts/ml_26_week_boundary_ab.py to run it. The open question from the binning fix was
+  whether the pinned snapshot has to be rebuilt: every recorded figure was measured on the
+  old Tuesday-to-Monday buckets while production now trains on Monday-to-Sunday. I had been
+  ready to argue the difference is negligible; it is not safe to assert, since Monday is a
+  seventh of a week's volume and shifting that between adjacent buckets can move pooled WAPE
+  in the second decimal, coarser than the third decimal versions are compared at.
+  The experiment holds everything except the boundary fixed: one raw ingest grouped twice,
+  with the SKU set, the week labels and sku_profiles.csv all pinned. Holding the profiles
+  fixed is the control that matters, because re-profiling on shifted bins can move SKUs
+  across the smooth and intermittent boundary and change the population being scored rather
+  than the data under it. Late-order revision since 2026-07-20 is measured and reported as
+  the noise floor, and the script declares itself inconclusive if that floor is as large as
+  the effect.
+  Pass criteria are Section 1.5's existing thresholds, 0.02 per window and 0.01 on the mean,
+  plus a sign-stability check. The first draft of that check tested whether v11 beats its
+  comparators, which is settled elsewhere and is not what an A/B measures; it now compares
+  the sign of the difference on one arm against the sign on the other, so a cell where v11
+  loses on both arms is correctly not a failure. It also excluded nothing, which would have
+  let the smooth/short Oct-Dec cell decide the verdict despite Section 1.5 ruling that cell
+  inadmissible at 14 eligible SKUs. On the synthetic fixture that cell carried the largest
+  difference of any, so the omission would have mattered.
+  Verified end to end on synthetic orders through both the PASS and FAIL branches. The
+  script writes only outputs/reports/, so running it cannot change what production serves or
+  what any recorded number was measured on. Also set override=True on load_dotenv in
+  src/ingest.py, which the experiment depends on; src/db.py, src/v1.py and
+  scripts/compare_v1.py still lack it.
+
+- 2026-08-06. Ran the week-boundary A/B. FAIL on all three pre-registered criteria, so the
+  pinned snapshot has to be rebuilt before the final test. Recorded in design doc 4.30.
+  The precondition held first: the boundary moved 14.0% of units against a late-order
+  revision floor of 3.2%, about four to one, so the difference is attributable. 14.0% is
+  one day in seven to within rounding, which is what the shift predicts and is a check on
+  the grouping code as well as on the data.
+  The result is not that the model got worse. Both comparators are nearly indifferent to the
+  boundary, mean absolute change 0.0030 and 0.0032, while v11 moves 0.0159, about five times
+  more. A bucketing change that were purely a property of the data would move all three
+  alike. Part of v11's measured advantage depends on a convention that came from a pandas
+  default and was wrong.
+  Skill against the trailing mean goes 39.0% to 33.5%, so Section 4.29's "beats a trailing
+  mean by about a third" survives. The margin over the structural baseline roughly halves and
+  reverses in Dec-Feb. That is the claim needing restatement.
+  Degradation concentrates in Dec-Feb and smooth/long, which points at the seasonal
+  machinery, either multipliers aligned to the old boundary or Christmas simply costing more
+  under a one-day shift. Added --no-deseas to the script to separate the two, writing to its
+  own report file so it cannot overwrite the run it is compared against, and labelled
+  v11-nodeseas end to end so its numbers cannot be mistaken for v11's.
+  Also added an automatic per-model sensitivity table. The asymmetry that turned out to be
+  the whole finding was only visible after adding the deltas up by hand, which is a poor
+  place to leave the most informative number in the run.
+  My third criterion was flawed and I have recorded it as such: the sign test had no
+  magnitude guard, so it fired on a difference of 0.0006 flipping to -0.0007, twenty times
+  below the bootstrap standard error. The other flip, spanning 0.03, is real. The magnitude
+  criteria failed independently by a factor of two and a half, so the flaw changes no
+  conclusion.
+
+- 2026-08-06 (later). The user asked whether the model was refit per arm or the old model
+  scored on new data. It was refit, twelve times, but the question exposed a defect in the
+  experiment that I had not caught and had explicitly claimed did not exist.
+  stratified_val_skus derives the early-stopping validation draw from the arm's own weekly
+  values, so the two arms drew 72%, 87% and 95% different validation sets, stopped at
+  different tree counts and fitted different models for reasons unrelated to the boundary.
+  That noise falls only on v11, since neither comparator has a validation set at all, so the
+  headline "v11 moves five times more" compared a stochastically refit model against two
+  deterministic ones. The script's own docstring asserted that only the boundary varied.
+  Fixed by drawing the validation set once per window and sharing it across arms, now the
+  default, with --per-arm-val kept to reproduce the flawed behaviour and measure it. Required
+  re-nesting the loop window-outer, arm-inner; the old nesting is what allowed the draw to
+  follow the arm.
+  The FAIL verdict is very unlikely to move, since the magnitude criteria failed by a factor
+  of two and a half. What is now unquotable until the controlled run is done is the
+  sensitivity figure, the five-times comparison and the claim that v11 is specifically
+  boundary-sensitive, which was the most interesting finding and the least established.
+  Design doc 4.30 marks the affected numbers as superseded rather than deleting them.
+
+- 2026-08-06 (later still). Controlled re-run of the boundary A/B, with the validation draw
+  shared across arms. FAIL again, and almost identically: six of eight judged v11 cells
+  bit-identical, mean sensitivity 0.0159 to 0.0151, ratio against the baseline 5.1x. Every
+  smooth/long cell unchanged, so the long model's draw had already been effectively shared
+  and only the short model was affected. The confound was real and worth fixing and was not
+  what produced the result, which is the strongest thing that could be said for the finding.
+  The failure is one cell. smooth/long moves +0.0536 in Dec-Feb against +0.0021 in each of
+  the other two windows; excluding Dec-Feb the segment mean is a fifth of the threshold.
+  smooth/short is a different pattern, steady and moderate across both judged windows.
+  Added a series-shape table to the script, printed before any fitting: lag-1 autocorrelation
+  and relative week-to-week change per arm, whole series and December-January alone. It tests
+  the alternative explanation, that one bucketing simply produces an easier series, which
+  would flatter a lag-reading model while leaving a trailing mean indifferent. Costs nothing
+  and is the natural companion to the sensitivity table.
+  Recorded in 4.30 that skill against the trailing mean is 39.0% to 33.7% and survives, while
+  the margin over the structural baseline halves and needs restating. Both are unweighted
+  three-window means rather than the unit-weighted pooling used elsewhere, and are flagged as
+  indicative pending recomputation from the report CSV.
+
+- 2026-08-06 (bootstrap). Added bootstrap_arm_delta to the A/B script and ran it. The
+  existing evaluate.bootstrap_delta could not do this job: it compares two models against one
+  split and carries a single denominator, while the two arms have different actuals by
+  design, so each side needs its own numerator and denominator. Pairing on SKU is valid
+  because the population is held identical across arms.
+  It should have been there from the start. Section 1.5 says borderline calls are settled by
+  the bootstrap and puts single-window noise at 0.011 to 0.014, and three of the four
+  magnitude criteria failed by under 0.006. I reported point estimates as measurements for
+  two rounds before putting an error bar on any of them.
+  Result: of the five judged segment cells only two clear two standard errors, and the one
+  carrying the whole long-segment verdict clears it at 2.30 with a 95% interval spanning
+  almost twelve to one. Cell by cell the experiment barely resolves anything. As a pattern it
+  does: all five deltas are positive, none negative, sign test p = 0.031, while both
+  comparators scatter around zero with mixed signs. Direction systematic and specific to v11;
+  magnitude undetermined.
+  Consequence for reporting: the 5.1x sensitivity ratio is not quotable, being an average
+  dominated by the least-known cell. The supportable claim is that v11's error is
+  systematically higher under the corrected bucketing while the comparators are indifferent,
+  by roughly 0.01 with an unpinned upper end.
+  Also withdrew "the new arm is the truthful one" from 4.30. Neither bucketing is truer.
+  The case for the new one is that production computes it and the docs describe it, which is
+  consistency, not correctness. The user caught this by pointing out the week convention was
+  arbitrary and theirs to choose.
+
+- 2026-08-06 (phase sweep). The --no-deseas diagnostic was a dud and the reason is my error.
+  Neither deseas flag reaches the long segment: build_matrix sets seas_long_uids from
+  seg_long_uids unconditionally, deseas_all only extends the treatment to short SKUs, and for
+  a long SKU y_adj and y/factors are the same number. So long SKUs are deseasonalised either
+  way and the long results came back bit-identical, which is the code being honest. I
+  designed the test on an assumption about what the flags did without reading build_matrix.
+  It did answer for the short segment, where removing deseasonalisation flipped the Dec-Feb
+  boundary delta from +0.0097 to -0.0338, though in a much degraded regime.
+  Built scripts/ml_27_week_phase_sweep.py on the user's suggestion of trying all seven week
+  phases. Implemented by shifting the dates and holding the grouper fixed, so all seven emit
+  identical week labels and therefore identical evaluation windows; shifting the grouper's
+  anchor would have moved the labels and broken the comparison. Verified the seven spans
+  before running anything. 42 fits, 23 seconds.
+  Results. v11's mean range across phases is 0.0536 against 0.0167 for the structural
+  baseline, a factor of 3.2, which is the boundary-sensitivity finding properly measured
+  instead of inferred from two points. The swing is large in absolute terms: smooth/long
+  Oct-Dec runs 0.1000 at a Tuesday start to 0.1718 at a Sunday start.
+  The informative part is that Tuesday is v11's minimum in seven of eight cells while the
+  comparators' optima wander by window (baseline Sunday four times, Monday twice). A single
+  phase winning consistently across seasons is the signature of something inside the model
+  calibrated to that phase, the monthly multipliers and the CV-optimised holiday constant
+  being the obvious candidates, since both were fitted on Tuesday-binned data.
+  This also reframes experiment 26. Its "old" arm was phase 1, which is v11's best phase in
+  almost every cell, so "the correction made the model worse" was substantially "we moved off
+  the phase the seasonal calibration was tuned to". The 0.0536 was not a random pair.
+  The curve is smooth rather than spiky, monotonic from Tuesday round to Sunday in the
+  Oct-Dec long cell, which argues against a calendar artifact such as Christmas landing in a
+  different bucket and for something structural.
+
+- 2026-08-06 (mechanism, not found). The user challenged my explanation for the Tuesday
+  optimum, saying the monthly multipliers come from the Google Sheet and the holiday
+  multiplier was carried over from the statsforecast model, neither fitted to this model's
+  data. Checked, and they are right on both counts. SEASONAL_BASE in src/deseasonalize.py is
+  a hand-set dict of round numbers; config sets ML_HOLIDAY_MULTIPLIER = HOLIDAY_MULTIPLIER,
+  carrying 1.26 across unchanged; and ml_13, which moved the window end to mid-December,
+  states in its own docstring that the change rests on business knowledge and explicitly not
+  on fitting the observed Decembers. My "calibrated to Tuesday-binned data" hypothesis had no
+  basis and I should have read this before proposing it.
+  Tested it anyway rather than just withdrawing it. Demand-weighted mismatch between the
+  factor applied to a week and the factor its actual days deserve: Thu 0.0039 best, then Wed,
+  Fri, Tue, Sat, Mon 0.0092, Sun 0.0105. Monday is second worst and Tuesday is fourth, while
+  v11 has Tuesday best and Monday second best. The orderings do not correspond. Hypothesis
+  dead on the evidence, not just on provenance.
+  Second hypothesis also dead. Lag-1 autocorrelation by phase is a shallow U with maxima at
+  Monday 0.2817 and Sunday 0.2847; Sunday is where v11 does worst. Day-of-week demand is
+  nearly flat, 13.6% to 15.1%, so there is no strong weekly rhythm for a boundary to align
+  with either.
+  Found a bug in my own earlier reporting while doing this. report_series_shape ran before
+  prep(), so it measured the zero-filled grid including every SKU's pre-launch zeros, which
+  are perfectly autocorrelated, and reported 0.68 where the real figure is about 0.25. The
+  comparison I drew from it last round was worthless. Moved the call after prep.
+  Remaining candidate, and it is one I introduced: sku_profiles.csv is held fixed across all
+  seven phases as the population control, but it was generated from Tuesday-binned data.
+  train_start, bucket, history_length and the eligibility filter all encode phase 1's bucket
+  edges, so phase 1 gets profiles that match its data and every other phase gets profiles
+  offset by p days. Holding them fixed controls the population and hands Tuesday a matched
+  fit at the same time. Note the shared validation draw is taken from the Monday phase, so
+  Monday holds any home advantage there and Tuesday still wins.
+  Test: regenerate profiles per phase and re-run. If Tuesday's margin shrinks, that is it.
+  Not yet run.
+
+- 2026-08-06 (phase selection, evidence supports Tuesday). Ran the reprofile test: profiles
+  re-derived from each phase's own weekly series, scored on the 409 SKUs classed smooth under
+  all seven phases so the population stays common while train_start and history_length become
+  phase-matched. The hypothesis died. Tuesday still wins and the smooth/long cells came back
+  essentially identical to the pinned-profile run. v11's mean range across phases moved only
+  0.0536 to 0.0558. So the Tuesday advantage is not an artifact of profiles derived under
+  Tuesday, and I am out of hypotheses for it.
+  Then ran the test that actually bears on the decision: leave-one-window-out phase selection.
+  Choose the phase on two development windows, pay for it on the third, unit-weighted pooled
+  on TOTAL.
+    held out Mar-May  chose Tue -> 0.1693   Mon 0.1819
+    held out Dec-Feb  chose Tue -> 0.1782   Mon 0.2056
+    held out Oct-Dec  chose Tue -> 0.1047   Mon 0.1042
+    mean selected 0.1507, Monday 0.1639, hindsight-best 0.1506
+  Honest out-of-sample gain from selecting a phase: +0.0132. In-sample gain: +0.0133.
+  Selection optimism 0.0001, which is negligible, and Tuesday is chosen on every fold.
+  This vindicates the user's position, which I had been resisting on principle for several
+  rounds. The objection I kept raising was that picking the best of seven is a maximum over
+  seven noisy draws; the leave-one-out check measures exactly that and finds it costs nothing
+  here. An argument that can be measured should have been measured earlier instead of
+  repeated.
+  What remains against Tuesday is operational rather than methodological, and one piece of it
+  is concrete: under Tue-Mon the bucket labelled L is not complete until the end of Monday L,
+  so a Monday 9am cron cannot use it and the freshest usable week ends seven days earlier.
+  Adopting Tuesday therefore means moving the cron to Tuesday, reverting clean.py to
+  closed="right", and reverting last_complete_week to subtract the extra week on Mondays.
+  All three are coupled and must move together or the pipeline silently loses a week of
+  recency. Plus the documentation, the UI and the Korean labels, all of which say Mon-Sun.
+  Caveats to carry: three folds only, sharing training data and SKUs, so the optimism
+  estimate has its own uncertainty; and the mechanism is still unknown.
+
+- 2026-08-06 (reverted to Tue-Mon, three coupled changes). Made the change set:
+  src/clean.py back to closed="right" with both arguments written out explicitly, so the
+  convention no longer looks like a pandas default; src/weeks.py last_complete_week restoring
+  its extra Monday step; scripts/run_forecast_cron.sh moving from Monday to Tuesday
+  (0 10 * * 2). Each of the three carries a comment naming the other two, because separating
+  them produces a pipeline that trains on a fragment or discards a good week and neither
+  failure announces itself.
+  Verified. Every run day from 2026-08-07 to 2026-08-19 yields a bucket of exactly seven days
+  that has finished. Freshness at the Tuesday cron is one day against seven at the Monday
+  cron, which is the whole reason the cron moved.
+  Also verified the thing I should have checked on 2026-08-05: clean.py's grouper now agrees
+  with the SQL in api/main.py and src/db.py on all 122 days tested. Those queries use
+  (order_date + ((8 - ISODOW) %% 7) days), which is Tue-Mon and always has been, so the
+  Mon-Sun change had put the Python ingest and the API's own queries into silent disagreement
+  about which week a Monday's orders belong to. That was a second defect introduced by the
+  first fix and nothing would have surfaced it.
+  No re-snapshot. The pinned snapshot was generated under Tue-Mon and is consistent with
+  production again, so the Version Log stands and the re-baselining that 4.30 called for is
+  cancelled. data/processed/sales_clean.parquet is dated 27 July, before the change, so it
+  was never regenerated under Mon-Sun either and needs nothing.
+  Documentation corrected rather than the code: design doc Section 2 now states the span in
+  full (Tuesday through Monday inclusive) alongside the label rule, which was always right.
+  BACKLOG 16 reopened and closed as "documentation was wrong". Section 4.30 rewritten as an
+  adoption with the leave-one-out evidence, keeping the superseded reasoning beneath it.
+  Not changed, and worth a look before the writeup: the Cowork project-context note still
+  describes weeks as Mon-Sun. No frontend source file states a span, so the UI needs nothing.
+
+- 2026-08-06 (audit of the sweep, prompted by the user asking whether pipeline pieces still
+  aligned to Tue-Mon were inflating the other phases). Enumerated and tested every alignment I
+  could find.
+  Ruled out. The evaluation target shifting with phase: if a moving window were making the task
+  easier or harder, all three methods would move together, and they do not. In smooth/long
+  Oct-Dec the baseline improves monotonically from Monday to Sunday (0.1222 to 0.1021) and the
+  trailing mean improves too (0.1989 to 0.1589) while v11 degrades (0.1021 to 0.1666),
+  correlations of -0.97 and -0.95 against v11's curve. Mean across cells -0.17 and -0.04.
+  Also ruled out: profiles (already tested), and the SQL, which is not in this loop at all
+  since the sweep reads raw order lines and does its own bucketing.
+  Found a real edge asymmetry and bounded it. Clipping each phase to the pinned label set means
+  higher phases pull in up to six extra days of post-July-2026 orders, so coverage runs
+  monotonically from 95.59% of units at Monday to 97.08% at Sunday. Those orders land in labels
+  near 2026-07-20, which is after every development window's test period, so they cannot reach
+  the results. Worth recording because the monotonic shape looks alarming until located.
+  Found one genuine defect: ml_is_holiday derives the week's days as [ds-7, ds-1], the Mon-Sun
+  span, when the convention in force is [ds-6, ds]. Zero effect today, verified over every
+  label in the data: both derivations flag 8 weeks and disagree on none, because the window
+  needs 4 of 7 days and a one-day shift never crosses that. Logged as BACKLOG 19 rather than
+  fixed, since it is seasonal-adjustment code and cannot change a number today.
+  Net: every alignment I could find points at Monday or Thursday, not Tuesday. The holiday flag
+  assumes Mon-Sun and the monthly factor mismatch is lowest at Thursday with Monday second
+  worst. Tuesday wins in spite of the seasonal machinery rather than because of it, which
+  strengthens the adoption and leaves the mechanism as unexplained as before.
+  Caveat to carry into the writeup: the spread figure, v11 at 3.6x the baseline's range, is
+  measured across phases whose seasonal machinery is misaligned to varying degrees, so it is
+  plausibly an overstatement of true phase sensitivity. The Monday-versus-Tuesday decision does
+  not depend on it, resting on the leave-one-out result instead.
+
+- 2026-08-06 (alignment sweep of both repos). Searched both codebases for week-span arithmetic
+  rather than fixing only the one already known. Four places derive a week's days from its
+  label. Two were already correct for Tue-Mon and needed nothing: src/db.py fetches from
+  ds - 6, and src/ml/serving/v1.py already computes its seasonal modifier over [ds-6, ds].
+  Two were wrong, and only one of them was harmless.
+  Fixed src/ml/seasonal.py:ml_is_holiday, [ds-7, ds-1] to [ds-6, ds]. Re-verified after the
+  change: still exactly 8 weeks flagged across every label in the data, so nothing moves, as
+  predicted. BACKLOG 19 closed the same day it was opened.
+  Fixed Commerce_Integration src/lib/forecast-metrics/repository.ts:getLastCompletedMonday,
+  which returned the most recent Monday and therefore returned TODAY on Mondays. Since
+  getAccuracyRows sums actuals over (ds - 7, ds] and filters ds <= that value, every Monday the
+  SKU accuracy view scored a forecast against a week that was still accumulating, picking up a
+  part-day of orders. The week always looked under-sold and accuracy always looked worse, once
+  a week, for one day. This is the SQL twin of last_complete_week and now agrees with it on
+  every weekday. Written as ((ISODOW + 5) %% 7) + 1 to keep both modulo operands positive,
+  because Postgres truncates rather than floors and the obvious form returns 0 on a Monday.
+  tsc --noEmit exits 0.
+  Not touched: the frontend lastMonday() in sku-forecasts/demand-forecast/demand-forecast-tab.tsx
+  carries the same off-by-one, but that file is orphaned, confirmed by grep, and is already on
+  the deletion list. Fixing dead code would only make it look maintained.
+  Deliberately NOT changed: the monthly factor is assigned from the label's month
+  (ds.dt.month), and the label is the week's last day, so a week spanning a month boundary
+  takes the later month. Measured mismatch is 0.0058 at Tuesday against 0.0039 at Thursday, so
+  there is room there, but changing it alters deseasonalisation for every week in the data and
+  re-baselines the Version Log. That is a modelling change needing its own pre-registered
+  experiment, not a fix folded into an alignment pass.
+
+- 2026-08-06 (cron move and v15 pre-registration). Updated docs/DEPLOYMENT.md to Tuesday with
+  the reasoning attached, since that file is the source of truth for the crontab line and was
+  still showing day 1. The crontab itself is hand-installed on the server via crontab -e and
+  cannot be changed from here, so wrote out the command sequence instead: back up first, then
+  a targeted sed on the forecast line only so any other job keeps its schedule, then confirm
+  exactly one line on day 2.
+  Put a verification step ahead of it rather than assuming. The server may never have received
+  the 2026-08-05 binning change, in which case it has been on Tue-Mon throughout and the
+  reversal is a no-op there; what it would still be missing is the partial-trailing-week guard
+  in clean.py, which is the fix for the incident that started all of this. Deploy state should
+  be read, not inferred from what is on the laptop.
+  Pre-registered v15, the seasonal blend, in the Version Log. The criterion is deliberately
+  not Section 1.5's. This is a correctness fix and the predicted effect, a factor change of
+  0.02 on a fifth of weeks, is very unlikely to move pooled WAPE by the 0.01 the adoption rule
+  wants. Holding a defect fix to a performance bar would be the wrong instrument: adopting a
+  neutral performance change is wrong, adopting a neutral correctness fix is right, because
+  giving a week that is six-sevenths July an August multiplier is not defensible whatever it
+  scores. So the primary criterion is non-inferiority, adopt unless a window regresses by more
+  than two bootstrap standard errors.
+  The secondary criterion is the one worth having: re-running the phase sweep afterwards should
+  narrow v11's spread, currently 0.0558 against the baseline's 0.0167, because a step-function
+  seasonal treatment is inherently phase-sensitive and a blended one is not. Stated now so it
+  cannot be adjusted afterwards. If the spread does not narrow, Section 4.30 loses a candidate
+  explanation and that gets recorded too.
+  CORRECTION, same day: I claimed v14's result was never written up. That was false. The v14
+  entry is complete, carrying "Status: rejected, at every value tested", the full results
+  table, an assessment against all four pre-registered criteria, and the conclusion that the
+  collapsing tail is objective-constrained rather than capacity-constrained. I checked the
+  numbers in the entry against outputs/reports/v14_min_child_sweep.csv afterwards and all
+  twelve short-segment figures match exactly. I repeated the claim from a summary of earlier
+  work without opening the section, which is the same failure as several others in this run.
+
+- 2026-08-06 (re-verification of the phase selection result, on request). Before re-checking
+  anything I found that ml_27 wrote both the pinned-profile and the --reprofile sweep to one
+  path, so the second run had destroyed the first. That is the identical bug I had fixed in
+  ml_26 with OUT_DIAG earlier the same day, and it reappeared because I fixed it in the file I
+  found it in instead of searching for the shape. Fixed, separate output files, both sweeps
+  re-run so the two exist side by side.
+  Wrote scripts/ml_28_verify_phase_selection.py rather than another inline computation. The
+  original result was one CSV, TOTAL only, one combination rule, and it was carrying a
+  structural change to the pipeline. The script varies all four things that were choices:
+  which sweep, TOTAL against per-segment, unit-weighted against unweighted window combination,
+  and whether the Section 1.5 inadmissible cell participates.
+  It holds across all eight variants. Tuesday is chosen on every fold of every variant, the
+  honest gain over Monday runs +0.0132 to +0.0153, and selection optimism runs 0.0000 to
+  0.0002. The originally reported +0.0132 and 0.0001 were correct.
+  Added the figure the original was missing. "Optimism is 0.0001" is close to vacuous on its
+  own, because with three folds and one phase winning all three, selection cannot be
+  optimistic by construction. What carries the result is the margin over the runner-up on the
+  folds used to choose, which is 0.0094 to 0.0122, about the same size as the gain itself.
+  Also worth recording: Monday is not the runner-up. Ranking the selection folds, Tuesday
+  leads and Wednesday is usually second, with Monday second in one fold of six and fourth in
+  two. So this is not a close call between the two conventions anyone considered; Tuesday
+  leads a field in which Monday is middling.
+  Caveats unchanged and still real: three folds sharing SKUs and overlapping training data, so
+  they are not independent and this design cannot quantify the error on the optimism estimate;
+  and the mechanism remains unknown, so nothing here says the advantage transfers beyond the
+  windows tested.

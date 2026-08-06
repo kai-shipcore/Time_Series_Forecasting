@@ -8,11 +8,23 @@
 # scripts/push_data_to_server.sh is needed when the Mac produces the data.
 #
 # Cron (coverland user, on the server):
-#   0 10 * * 1 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
+#   0 10 * * 2 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
 #
 # 10:00 UTC = 3am Pacific at the time this was set up. The server stays fixed
 # UTC, so the Pacific wall-clock time drifts by an hour across the two DST
 # transitions each year; re-adjust the cron line then if that matters.
+#
+# TUESDAY (day 2), not Monday, and this is load-bearing. A week runs Tuesday to
+# Monday and is labelled by the Monday it ends on (src/weeks.py), so the bucket
+# labelled Monday L is still open for the whole of Monday L. A Monday run can
+# only use the bucket that ended the previous Monday, making every forecast a
+# week staler than it needs to be. A Tuesday run picks up the week that closed
+# hours earlier.
+#
+# This moved from Monday to Tuesday on 2026-08-06, together with clean.py
+# reverting to closed="right" and last_complete_week restoring its extra Monday
+# step. The three are one decision. If the week convention is ever changed
+# again, this line changes with it, or the pipeline silently loses a week.
 
 set -uo pipefail
 

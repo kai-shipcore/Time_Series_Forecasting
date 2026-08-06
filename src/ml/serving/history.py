@@ -31,6 +31,10 @@ from pathlib import Path
 
 import pandas as pd
 
+# Moved to src/weeks so the ingest can apply the same rule. Re-exported here
+# because callers of this module import it by name.
+from src.weeks import last_complete_week  # noqa: F401
+
 from . import store
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -211,26 +215,6 @@ def runs() -> pd.DataFrame:
         .sort_values(["model_version", "forecast_date"])
         .reset_index(drop=True)
     )
-
-
-def last_complete_week(today: pd.Timestamp | None = None) -> pd.Timestamp:
-    """The most recent week that has finished, as its W-MON label.
-
-    Weeks are labelled by the Monday they END on, so the week labelled
-    2026-07-27 ran Mon 21 July to Sun 26 July. The latest such label at or
-    before today is the last complete week; if today is itself a Monday the week
-    it labels only starts today, so the answer is the Monday before.
-
-    Derived from the calendar rather than from `max(ds)` in the sales file. Those
-    usually agree, but not always: an ingest running mid-week can emit a partial
-    week under next Monday's label, and scoring that would read two days of
-    orders as a full week of demand and call the model wildly over-forecast.
-    Trusting the calendar makes the boundary independent of when the pipeline
-    happened to run.
-    """
-    today = pd.Timestamp(today or pd.Timestamp.today().normalize()).normalize()
-    days_since_monday = today.dayofweek  # Monday == 0
-    return today - pd.Timedelta(days=days_since_monday or 7)
 
 
 def score_against_actuals(sales: pd.DataFrame | None = None) -> pd.DataFrame:

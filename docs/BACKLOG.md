@@ -467,35 +467,86 @@ columns, because v11 emits a point forecast only. The legacy track's `_MIGRATE_P
 
 ## 13. UI changes on the planning screens
 
-**Status:** wanted, none blocked. Five items, listed smallest first. They are grouped because
+**Status:** partly done 2026-08-05. Five items, listed smallest first. They are grouped because
 they are all presentation changes on screens that already have their numbers right.
 
-**13.1 Reorder the Forecast Validation page.** The page grew section by section and its order
-reflects when each part was built rather than what a reader needs first. Decide the reading order
-deliberately: what is being validated and against what, then the headline result, then the
-supporting breakdowns, then the per-SKU detail. The provenance block added on 2026-08-04 assumes
-it is met early, so it constrains where the top of the page can go.
+Progress on 2026-08-05: 13.4 done, 13.3 declined, 13.2 partly done. 13.1 and 13.5 unchanged. Each
+is marked below rather than deleted, so the reasoning survives the decision.
 
-**13.2 Change the table of contents on that page.** It follows the current section order, so it
-inherits whatever 13.1 decides and has to be redone with it. Worth settling at the same time
-whether it lists every section or only the top level, since a contents list that mirrors the page
-one-for-one is navigation the scrollbar already provides.
+**13.1 Reorder the Forecast Validation page.** *Done 2026-08-05.* Ordered as an argument rather
+than by build date: the claim (model versus spreadsheet), its scope (how demand is shaped), the
+claim drawn over time (demand vs forecast), the out-of-sample record (forecasts actually served),
+where it is weakest (per-SKU outliers), and what is deliberately not claimed yet (final test).
 
-**13.3 Replace the demand table with a Pareto curve.** The concentration point the table makes is
-a distribution, and a table of rows is a poor way to read one: a reader has to add the top rows
-mentally to see how much of demand sits in how few SKUs. A cumulative curve, SKUs ranked by demand
-on one axis and cumulative share on the other, states it directly. The table is replaced rather
-than supplemented, since keeping both leaves two statements of the same fact to maintain.
-Decide what the axis counts, units or revenue, noting that revenue is not available (item 10), so
-units for now, and label it as such.
+Two sections moved, not one. Demand shape went from last to second, which was the point: it is the
+context for every figure on the page and it arrived after all of them. Outliers went from third to
+fifth, so per-SKU detail follows the aggregate evidence rather than preceding it; "where it
+diverges from the pooled figure" needs the pooled figure to have been stated.
 
-**13.4 Fit the Action List table to the screen.** It currently scrolls horizontally, which breaks
-the row-reads-as-a-sentence property the column order was chosen for and hides whichever columns
-fall off the right edge. Two directions, and the choice matters: narrow the columns that do not
-need their width, or drop columns to a detail view. Neither should be done by shrinking the pinned
-SKU column, which is what makes the scroll survivable today. The draft-inbound sub-line and the
-trend column both landed after the widths were set, so this is partly accumulated rather than
-original.
+Demand shape was considered for first place, as the truest reading of "what is being validated".
+Rejected because a reader opening this page wants to know whether the model is better, and burying
+that under a context section risks them not reaching it.
+
+A second reason was given at the time and was false: that demand patterns is the slowest of the
+three requests, so leading with it would have opened the page on a spinner. It is in fact the
+quickest. The claim came from a comment in validation-content.tsx inferring slowness from the fact
+that it scans full sales history, and was repeated without being checked against the page. The
+decision stands on the first reason alone.
+
+**13.2 Change the table of contents on that page.** *Done 2026-08-05, by removing it.* The
+objection recorded in this item turned out to be right: six sections listed one-for-one is
+navigation the scrollbar already provides. What the bar was actually contributing was the
+numbering, and the numbering belongs to the headings, where it survives.
+
+`VALIDATION_SECTIONS` stays, because it is what assigns those numbers and keeping the order in one
+place is what stops a heading claiming to be section three while sitting fourth. Verified that the
+list and the render order agree.
+
+Reopen only if this page starts being presented rather than read; a jump list earns its place when
+someone needs to say "section three" and go there in front of an audience.
+
+**13.3 Replace the demand table with a Pareto curve.** *Done 2026-08-05.* The table is gone and
+the curve is in its place: SKUs ranked by demand on the x axis, cumulative share of demand on the
+y, with a dotted diagonal for what perfectly even demand would look like. Without that reference a
+cumulative curve looks steep whatever the distribution, since every one of them starts at zero and
+ends at 100%.
+
+`/planning/demand-patterns` gained `pareto`, the cumulative series downsampled to ~200 points,
+sampled evenly by rank so the flat tail does not collapse, with both ends pinned. `concentration`
+stays on the response and is what the annotation and the sentence below the chart read, because
+the curve is downsampled and a figure taken off it could sit a sample interval from the truth.
+
+Units, not revenue, and the axis says so; revenue is still item 10.
+
+Recorded briefly on this date as declined, in favour of adding an interpretation line to the
+table. That was wrong on the substance: the interpretation was worth adding and did not address
+the complaint this item makes, which is that a distribution read from four rows has to be summed
+in the reader's head. Both are in now. On the current 26-week window the top 5% of SKUs carry 63%
+of demand, which is the kind of shape a curve shows at a glance and a table does not.
+
+**13.4 Fit the Action List table to the screen.** *Done 2026-08-05.* Neither of the two directions
+on its own, in the end.
+
+The pinned SKU column turned out to be the largest single cost, which the note above got backwards:
+it warned against shrinking that column, but the product name in it was uncapped, so one long name
+set the width for every row. Capped at 15rem with the full text on hover; the SKU itself is never
+truncated, so the anchor the horizontal scroll depends on is intact.
+
+Dropping columns was rejected for the reason the item implies: every one of the nine was added for
+a reason, and which three matter depends on the task. Someone checking coverage wants demand and
+trend, someone placing an order wants position and quantity, and the screen cannot know which. So
+the nine optional columns are individually hideable, grouped by band, remembered per reader in
+localStorage, defaulting to all of them. SKU and Priority are not offered: one is the row's
+identity and the scroll anchor, the other is the order the worklist is built on.
+
+The band headers compute their `colSpan` from what is visible and disappear when their last column
+goes, and the coloured rule that separates bands moves to the first column still showing rather
+than vanishing with the one it was drawn on. Verified across five hiding patterns that the band row
+and the column-name row always agree on width.
+
+Not done: widening the page past the app layout's `container` cap. With the picker in place it is
+no longer needed to make the table usable, and escaping the container affects how this page aligns
+with every other screen. Worth doing only if the table still overflows in practice.
 
 **13.5 Explain the priorities on the screen.** The Action List shows a priority label per row and
 a set of summary counts, and nothing on the page says what earns each label. The Streamlit
@@ -509,7 +560,181 @@ not the same kind of thing as the others.
 
 ---
 
+## 16. Weekly buckets were one day out from the documented convention
+
+**Status:** CLOSED 2026-08-06, by changing the documentation rather than the code. The change
+described below was made on 2026-08-05 and reverted the next day on evidence. Read the reversal
+note at the end before the rest of this entry, which is left in its original wording.
+
+**Reversal, 2026-08-06.** Tuesday-to-Monday was reinstated. Two reasons, in order of weight:
+
+1. Experiment 27 swept all seven possible week phases. v11 scores best on Tue-Mon in seven of
+   eight cells, consistently across three seasons, while both comparators' optima wander by
+   window. Leave-one-window-out selection chooses Tuesday on every fold, for an honest
+   out-of-sample gain of 0.0132 pooled WAPE against Monday, with selection optimism measured at
+   0.0001. Design doc Section 4.30.
+2. The SQL half of this stack has always been Tue-Mon. `api/main.py` (three queries) and
+   `src/db.py` bucket with `(order_date + ((8 - ISODOW) % 7) days)`, which maps Monday to itself
+   and Tuesday through Sunday forward to the next Monday. The Mon-Sun change put the Python
+   ingest and the API's own queries into disagreement about which week a Monday's orders belong
+   to, and nothing would have reported that. Verified after the reversal: the two agree on every
+   one of 122 days tested.
+
+So the code was right and the documentation was wrong, which is the opposite of what this entry
+originally concluded. The docs have been corrected instead.
+
+Three things encode the convention and are only correct together: `clean.py` closed="right",
+`last_complete_week` stepping back an extra week on Mondays, and the cron running Tuesday. The
+cron moved from Monday to Tuesday in the same change, because bucket L stays open for the whole
+of Monday L and a Monday run would forecast from data seven days older than necessary.
+
+**No recorded figure moved, in either direction.** The pinned snapshot was generated under
+Tue-Mon and is once again consistent with production, so the Version Log stands and no
+re-snapshot is needed. The re-snapshot that Section 4.30 called for is cancelled by the
+reversal.
+
+---
+
+Original entry follows.
+
+**The defect.** `src/clean.py` aggregated with `pd.Grouper(key="order_date", freq="W-MON")`, whose
+defaults are `closed="right", label="right"`. That bins **Tuesday through Monday**. Everything
+written about this project describes weeks as **Monday through Sunday**, labelled by the Monday they
+end on.
+
+    was      bucket 2026-08-10  <-  Tue 04 Aug .. Mon 10 Aug
+    now      bucket 2026-08-10  <-  Mon 03 Aug .. Sun 09 Aug
+
+**The fix.** `closed="left", label="right"` on the Grouper. One parameter.
+
+`last_complete_week` in src/weeks.py needed the matching change and did not get it in the first
+pass: it subtracted an extra seven days on Mondays, which was right under the old binning (bucket L
+was still open on Monday L) and wrong under the new one (bucket L closed at midnight Sunday). Left
+alone it would have discarded the most recent complete week on every cron run. Caught by a boundary
+test rather than by reading, which is the argument for writing the test.
+
+**No recorded figure moved.** The pinned snapshot at `data/snapshots/2026-07-20/` is a frozen copy,
+and its manifest says so: "Immutable: the weekly cron refreshes data/processed/ only." Only live
+data is regenerated by `clean()`, so the Version Log and Decision Log stand exactly as measured.
+This was initially assessed as a re-baseline event; that was wrong, and the distinction is between
+changing the data and changing the *pinned* data.
+
+**What is now inconsistent, and is the reason this entry stays open in spirit.** Live data is binned
+Monday-to-Sunday; the pinned snapshot still carries Tuesday-to-Monday. So the recorded accuracy
+figures describe the method measured on one boundary while the served forecast trains on the other.
+The mismatch is one day of bucket contents and does not invalidate the relative results, but it is
+real and should be stated wherever those figures are quoted.
+
+It closes at the next re-snapshot, which IS a re-baseline and should be treated as one (design
+Section 4.21): a deliberate decision, a re-run of the recorded versions, and the old figures kept
+for comparison. Worth pairing with backlog item 2, which forces a re-baseline anyway.
+
+**Consequence for the cron: it stays on Monday.** Under the corrected binning a Monday run trains
+through the week that ended the previous night, which is as fresh as weekly data can be. An earlier
+recommendation to move it to Tuesday was a workaround for this bug and is withdrawn.
+
+---
+
+## 15. The on-demand pipeline is not safely interruptible
+
+**Status:** identified 2026-08-05, from a live incident. Small, and it blocks giving the Run
+Forecast panel a working Stop button.
+
+**What happened.** The panel's Run button was pressed mid-week to test it. It looked stuck during
+the velocity sync, Stop was pressed, and the run continued to completion regardless. That outcome
+was correct by accident, and the reason is worth recording.
+
+**Why stopping is unsafe.** `scripts/ml_prepare_data.py` writes three artifacts in sequence with no
+transaction and no rollback:
+
+    sales_clean.parquet  ->  sku_profiles.csv  ->  ml_forward_forecasts.parquet
+
+Cancel between the first and second and the sales data describes this week while segmentation
+describes last. Cancel between the second and third and both describe this week while the served
+forecast describes last, which is precisely the drift `demoted_since_forecast` exists to detect,
+manufactured deliberately by pressing a button. There is no path that restores the previous state.
+
+**Interim.** The Stop button was removed 2026-08-05 and replaced with a "cannot be interrupted"
+indicator. The panel no longer calls `/cancel-forecast`, though that endpoint still exists and is
+still reachable from the legacy screen, so the cancelled branch is still handled and now warns that
+the artifacts may be mid-sequence.
+
+**The fix.** Write all three to temporary paths and move them into place together at the end. Moves
+within a filesystem are atomic, so a cancelled or crashed run leaves the previous set untouched and
+the next run starts clean. After that the Stop button can come back and mean what it says. Worth
+pairing with the same treatment for the database writes, which have the same shape.
+
+**Also unresolved, and separate.** Even with atomic writes, the velocity sync cannot be cancelled:
+it is an HTTP request already delivered to the app, which completes it whether or not anything is
+listening. That is a property of the remote call rather than of this pipeline, and the panel says so.
+
+---
+
 ## 14. Best Seller is not a supply state and should leave the priority ladder
+
+**Status:** DONE 2026-08-05. Kept in full below because it is the reasoning behind a visible
+change in what the screen's counts mean, and because 13.5 has to explain the result.
+
+**What shipped.** `_priority` in `src/planning/calc.py` keeps Preorder, No Stock and Routine.
+`best_seller` stays as a column and became the middle sort key: priority, then best seller, then
+recommended quantity. On the Action List the star is drawn beside the priority badge on every row
+that earns it, and the summary card filters the attribute rather than the label.
+
+**Measured against the predictions in this item.** The label counts moved exactly as expected and
+nothing else did:
+
+| | before | after |
+|---|---|---|
+| Preorder | 192 | 192 |
+| No Stock | 16 | 16 |
+| Best Seller | 35 | — |
+| Routine | 189 | 224 |
+| best-seller card | 35 (label) | 89 (attribute) |
+
+54 SKUs now show a star that structurally could not before: 50 in Preorder and 4 in No Stock. That
+is the cost the item described, measured. Total recommended quantity is unchanged at 2,426 units,
+confirming nothing in the order arithmetic depended on `priority`.
+
+The item predicted 86 for the attribute count and 27 for the label; the data has moved since it was
+written and the figures are 89 and 35. The proportion is the same: fewer than 40% of top sellers
+could carry the badge.
+
+**`best_seller_at_risk` revisited, as this item asked.** It is still served and still not displayed,
+but the reason changed. It was previously undisplayable because it cut across the priority labels;
+that conflict is gone. What remains is that it is an intersection of two conditions the screen
+already offers separately, and a card per intersection does not scale. The two filters compose,
+which is the general answer. Recorded on the type.
+
+**The threshold, settled 2026-08-05.** `best_seller_top_pct: 0.20` is replaced by
+`best_seller_demand_share: 0.50`: best seller is now the smallest set of SKUs that together carry
+half of recent units, rather than a fixed slice of the list.
+
+A percentile describes the list, not the business. It named a fifth of the SKUs whatever demand
+did, and its count moved whenever SKUs entered or left the forecastable set for reasons unrelated
+to selling well. A demand share says something that survives the list changing size, and adjusts
+in the right direction: concentration shrinks the set, dispersion grows it.
+
+On the current data that is 46 of 432 SKUs, 10.6% of the list, carrying 50.2% of units. The set is
+minimal by construction, and verified: drop its smallest member and the remaining 45 carry 49.66%.
+The boundary is clean, 88 units in against 87 out. Ties resolve on `unique_id` so the membership is
+deterministic across runs, since a star that appears and disappears without the data changing is
+worse than no star.
+
+One correction to the reasoning that prompted this. The Pareto curve was cited as evidence that a
+flat 20% is arbitrary, on the grounds that the top 5% of SKUs carry 63% of demand. That figure is
+for the WHOLE catalogue including the intermittent tail, which is mostly near-zero and makes
+concentration look extreme. Within the forecastable set the distribution is far flatter: the top
+5% carry 34%. The case against the percentile stands, but on the "describes the list, not the
+business" argument rather than on the concentration figure.
+
+Alternatives measured and not taken: an absolute cut (>= 50 units per 4 weeks gives 85 SKUs and
+64.7% of demand) is the most stable and the easiest to explain, but a fixed unit count silently
+becomes wrong as the business grows. Revisit if the demand-share set proves volatile week to week,
+which has not been tested over time yet.
+
+---
+
+### Original entry
 
 **Status:** decided 2026-08-04, unblocked. Small change, and it moves counts on a screen people
 are already reading, so it wants announcing rather than slipping in.
@@ -559,3 +784,64 @@ recommended numbers do not move.
 means the set stays a fifth of the list whatever demand does. A Pareto view (13.3) may be the
 better statement of the same fact, in which case the star is a shortcut for reading it and should
 be labelled as one.
+
+---
+
+## 18. LightGBM 4.7 deprecates the argument every model fit uses
+
+`src/ml/model.py:fit` calls `self.model.fit(..., eval_set=[...])`. LightGBM 4.7.0 emits
+`LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y'
+instead` on every fit, so a run prints one warning per model and a full experiment prints
+a dozen.
+
+**Not urgent, and deliberately not done yet.** 4.7.0 is what `requirements.txt` pins and
+what is installed, so behaviour is unchanged and results are reproducible. The warning is
+about a future release, not this one.
+
+**Why it is worth writing down.** Two reasons. The version pin exists because results are
+compared at the third decimal, which means the pin cannot be bumped casually, which in turn
+means this will sit unnoticed until someone rebuilds the environment and the fit call stops
+working rather than warning. And the noise is not free: twelve warnings on a run make real
+warnings easy to miss, including the `per_sku_totals()` warning about eligible SKUs with no
+predictions, which is a genuine bug signal.
+
+**The change.** Switch to `eval_X` / `eval_y` and confirm on the development windows that
+the numbers are bit-identical before and after. If they are not, the change is not
+cosmetic and needs its own entry rather than being folded into a cleanup.
+
+**Do it between model versions, not during one.** Touching the fit call while an experiment
+is open makes any difference in that experiment ambiguous.
+
+---
+
+## 19. ml_is_holiday computes the week's days from the wrong span
+
+**Status: FIXED 2026-08-06, same day it was logged.** `start = ds - 6`, `end = ds`. Verified
+afterwards: still exactly 8 weeks flagged over every label in the data, so no recorded figure
+moves, which is what the analysis below predicted. A second instance of the same off-by-one was
+found and fixed in the Commerce app at the same time, in
+`src/lib/forecast-metrics/repository.ts:getLastCompletedMonday`, where it was not harmless.
+Original entry follows.
+
+`src/ml/seasonal.py:ml_is_holiday` decides holiday membership from the days a week covers,
+which is right, and then derives those days as `[ds - 7, ds - 1]`. That is the Monday-to-Sunday
+span. The convention actually in force is Tuesday-to-Monday, so the correct derivation is
+`[ds - 6, ds]`. The docstring states the intent correctly and the arithmetic is one day out.
+
+**Currently harmless, and measured rather than assumed.** Over every W-MON label from 2024-06-17
+to 2026-07-20, both derivations flag exactly 8 weeks and disagree on none. The window runs
+Nov 20 to Dec 15 and membership needs 4 of 7 days inside it, so a one-day shift never crosses
+the threshold for any week in the data.
+
+**Why fix it anyway.** It is only harmless for this window and this date range. Moving
+`ML_HOLIDAY_END`, extending the data by a year, or narrowing the window would each be enough to
+make weeks start disagreeing, and the failure would appear as a small unexplained accuracy
+change in whichever experiment happened to be running. The seasonal code is also exactly where
+the phase sensitivity in Section 4.30 concentrates, so a known one-day error sitting there is
+worth removing before anyone investigates that again.
+
+**The change.** `start = ds - 6 days`, `end = ds`. Then confirm the flagged-week count is still 8
+and that no development-window figure moves, which is the expected result given the above.
+
+**Do it between model versions.** It cannot change a number today, but it is seasonal-adjustment
+code, and touching that mid-experiment makes any difference ambiguous.

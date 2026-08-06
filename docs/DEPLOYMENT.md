@@ -300,11 +300,23 @@ servers. Unset, the app reports the outage and points at `systemctl` instead.
 On the server, as the `coverland` user:
 
 ```
-0 10 * * 1 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
+0 10 * * 2 cd /opt/coverland-forecast-api && scripts/run_forecast_cron.sh >> logs/forecast_cron.log 2>&1
 ```
 
+**Tuesday (day 2), and this is not cosmetic.** A week runs Tuesday through
+Monday and is labelled by the Monday it ends on, so the bucket labelled Monday L
+is still open for the whole of Monday L. A Monday run can only use the week that
+ended the *previous* Monday, which makes every forecast seven days staler than
+it needs to be. A Tuesday run picks up the week that closed hours earlier.
+
+This moved from Monday to Tuesday on 2026-08-06, together with `clean.py`
+returning to `closed="right"` and `last_complete_week` restoring its extra
+Monday step. The three are one decision and must be deployed together; see
+`src/weeks.py`. If you are reading this because the forecast looks a week out of
+date, check all three before changing any of them.
+
 It runs **two** pipelines, then asks the service whether it can still serve and
-exits non-zero if not, so cron mails a failure on the Monday it breaks rather
+exits non-zero if not, so cron mails a failure on the Tuesday it breaks rather
 than leaving a colleague to find a stale page on Thursday.
 
 The order is load-bearing:
