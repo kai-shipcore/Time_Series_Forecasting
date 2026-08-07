@@ -1,0 +1,124 @@
+name: Server diagnostics
+
+# Read-only look at the forecast server, run from Actions using the same SSH key
+# the deploy already uses. Nothing here changes the server.
+#
+# Why this exists. Diagnosing the port-8000 problem on 2026-08-07 took a dozen
+# ssh calls, each prompting for a password, which is slow enough that people
+# stop checking. The deploy key is already in secrets and already reaches this
+# box, so the checks can run without anyone typing anything.
+#
+# workflow_dispatch ONLY. Never on push: this is something you ask for, not
+# something that happens to you, and it should not add minutes to every deploy.
+#
+# Deliberately no sudo. Every command below works as the deploy user, so the
+# workflow cannot be turned into a way to change production by editing a YAML
+# file. If a check ever needs root, it does not belong here.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    name: Inspect the forecast server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Who owns port 8000
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          echo "### listening sockets on 8000"
+          # Without sudo this still shows the pid when the process runs as this
+          # user, which uvicorn does. If a pid is missing, something else owns it.
+          ss -lntp | grep 8000 || echo "  NOTHING LISTENING ON 8000"
+
+          echo
+          echo "### is the address loopback or all interfaces?"
+          if ss -lnt | grep -q '0.0.0.0:8000'; then
+            echo "  0.0.0.0:8000 - reachable from outside"
+          elif ss -lnt | grep -q '127.0.0.1:8000'; then
+            echo "  127.0.0.1:8000 - LOOPBACK ONLY, not reachable from outside."
+            echo "  This is the squatter symptom: an unmanaged uvicorn holding"
+            echo "  the port while the systemd unit crash-loops. See BACKLOG 21."
+          fi
+          EOF
+
+      - name: Is the systemd unit healthy or crash-looping
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          state=$(systemctl is-active coverland-forecast-api || true)
+          echo "### unit state: $state"
+          case "$state" in
+            active)     echo "  running" ;;
+            activating) echo "  ACTIVATING - almost certainly restart-looping."
+                        echo "  systemctl restart still exits 0 in this state, which"
+                        echo "  is why a deploy can report green while the unit is"
+                        echo "  failing to bind." ;;
+            *)          echo "  NOT RUNNING" ;;
+          esac
+          echo
+          echo "### recent journal, bind errors are the thing to look for"
+          journalctl -u coverland-forecast-api -n 25 --no-pager 2>/dev/null \
+            | grep -Ei "error|address already in use|started server" | tail -12 \
+            || echo "  (no matching lines)"
+          EOF
+
+      - name: Every uvicorn process, and when it started
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          echo "### uvicorn processes"
+          # More than one is the race. A relative venv path or a missing
+          # --workers 1 means it was not started by systemd, whose ExecStart
+          # uses an absolute path and passes --workers 1.
+          ps -eo pid,ppid,lstart,cmd | grep -E "uvicorn|api.main" | grep -v grep \
+            || echo "  none"
+          EOF
+
+      - name: Does the API answer, and is auth enforced
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          echo "### /health from the box itself"
+          curl -s --max-time 5 http://127.0.0.1:8000/health \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print("  ready:", d.get("ready"), " repo_root:", d.get("repo_root"))' \
+            2>/dev/null || echo "  no answer"
+
+          echo
+          echo "### /segmentation with no token, 401 means the token is enforced"
+          echo -n "  status: "
+          curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 \
+               http://127.0.0.1:8000/segmentation
+          EOF
+
+      - name: What the cron will do next
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          echo "### crontab, forecast line only"
+          # Expect day 2 (Tuesday). A week runs Tuesday to Monday and is labelled
+          # by the Monday it ends on, so a Monday run trains on data seven days
+          # older than it needs to.
+          crontab -l 2>/dev/null | grep run_forecast_cron || echo "  NO FORECAST CRON LINE"
+
+          echo
+          echo "### freshness of the served data"
+          ls -l --time-style=long-iso \
+            /opt/coverland-forecast-api/data/processed/sales_clean.parquet \
+            /opt/coverland-forecast-api/data/processed/ml_forward_forecasts.parquet \
+            2>/dev/null | awk '{print "  " $6, $7, $8}'
+          EOF
