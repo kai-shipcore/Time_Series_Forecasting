@@ -104,6 +104,28 @@ jobs:
                http://127.0.0.1:8000/segmentation
           EOF
 
+      - name: What pm2 is running, and does it hold FORECAST_SERVER_DIR
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" <<'EOF'
+          # The prime suspect for the unmanaged uvicorn. The Next.js app starts
+          # a forecast server on demand when AI_SERVICE_URL is localhost and
+          # port 8000 does not answer, which is exactly the state during a deploy
+          # restart. pm2 holds env per process, so it need not appear in any .env
+          # file, which is why searching /opt for one found nothing.
+          echo "### pm2 processes"
+          pm2 list 2>/dev/null || echo "  pm2 not on PATH for this user"
+
+          echo
+          echo "### only the two variables that decide whether it self-starts"
+          echo "### (never the whole env: it holds database URLs and the token)"
+          pm2 jlist 2>/dev/null | python3 -c "import json,sys; apps=json.load(sys.stdin); [print('  ', a.get('name'), '|', k, '=', (a.get('pm2_env') or {}).get(k, '<unset>')) for a in apps for k in ('AI_SERVICE_URL','FORECAST_SERVER_DIR')]" 2>/dev/null || echo "  could not read pm2 env"
+
+          echo
+          echo "### if both are set with a localhost URL, that app is the cause"
+          EOF
+
       - name: What the cron will do next
         run: |
           ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \

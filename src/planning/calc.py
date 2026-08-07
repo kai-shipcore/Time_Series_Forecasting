@@ -609,7 +609,7 @@ NOT_FORECAST_WEEKS = 13
 def build_not_forecast_table(params: dict | None = None) -> pd.DataFrame:
     """One row per SKU the model does not forecast.
 
-    Returns unique_id, product_name, product_category, recent demand over
+    Returns unique_id, product_category, recent demand over
     NOT_FORECAST_WEEKS weeks and the weekly and daily rates implied by it, the
     stock position, days of cover at that rate, the week of the last sale, and
     a reorder flag.
@@ -679,7 +679,7 @@ def build_not_forecast_table(params: dict | None = None) -> pd.DataFrame:
     df["product_category"] = [D.product_category(u) for u in df["unique_id"]]
     df["last_sale_week"] = pd.to_datetime(df["last_sale_week"], errors="coerce")
 
-    cols = ["unique_id", "product_name", "product_category", "bucket",
+    cols = ["unique_id", "product_category", "bucket",
             "recent_units", "weekly_rate", "daily_rate", "last_sale_week",
             "available_inventory", "preorder_backlog", "confirmed_inbound",
             "inbound_eta", "days_of_cover", "reorder_signal", "active_weeks",

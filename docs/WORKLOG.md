@@ -2902,3 +2902,44 @@ detail lives in the design document and codebase guide, not here.
   check proves the answering process runs from the deploy directory, which a squatter started
   from that same directory also satisfies. It cannot distinguish "the deployed unit is serving"
   from "something is serving". I read that check as stronger than it is, twice.
+
+- 2026-08-07 (the squatter recurred, pattern confirmed). Killed pid 3152116 in the afternoon
+  and systemd bound 0.0.0.0:8000 as 3263790. By 21:58 the port was back on 127.0.0.1, held by
+  a new process, 3269753, started 21:53:24 with the same signature: relative venv path, no
+  --workers 1, PPID 1. Killed it; systemd bound within four seconds as 3282574 and the unit
+  reports active.
+  Two occurrences now, both within seconds of a deploy restarting the service: 00:01:11 (five
+  seconds after the rsync) and 21:53:24 (shortly after the diagnostics workflow was pushed).
+  For a new process to take 127.0.0.1:8000 the systemd process must first have released
+  0.0.0.0:8000, which is what a restart does. So the mechanism is settled even though the
+  culprit is not: every deploy opens a gap and something wins the race for the port.
+  Consequence that matters more than the lost remote access: while the squatter holds the
+  port the unit crash-loops, so the next deploy ships code that never runs and still reports
+  green. Today's guard survived only because the squatter started five seconds AFTER the
+  rsync. The reverse ordering would have been silent.
+  Built two things. scripts/_kill_squatter.sh finds the loopback listener by pid rather than
+  taking one as an argument, since the pid changes every time, and matches nothing when the
+  unit is correctly bound so it cannot kill a healthy service. And
+  .github/workflows/server-diagnostics.yml, workflow_dispatch only, no sudo anywhere, running
+  the checks over the deploy key so nobody has to type a password twelve times to answer
+  "what is on port 8000".
+  Where I had been looking wrongly: I searched /opt for .env files holding
+  FORECAST_SERVER_DIR and found none, and concluded the variable was probably unset. But
+  DEPLOYMENT.md says Next.js runs under pm2, and pm2 carries environment per process, so it
+  need never appear in a file at all. Added a pm2 step to the workflow that prints only
+  AI_SERVICE_URL and FORECAST_SERVER_DIR per app, never the whole env, since that holds both
+  database URLs and the forecast token.
+
+- 2026-08-07. Removed the product name feature from the Action List and SKU Detail screens in
+  both repos, on request: the sc_products lookup it depended on was a display convenience, not
+  something purchasing decisions need, and the SKU identifier alone is sufficient. Dropped the
+  query and every product_name column from the Time_Series_Forecasting planning backend
+  (inventory.py, data.py, calc.py, quality.py) and the corresponding fields, search filters and
+  subtitle lines from Commerce_Integration's action-list components, leaving product_category
+  in place since it is derived from the SKU prefix rather than sc_products. Left the separate
+  SKU Master and SKU Forecasts features untouched, since the name there serves a different,
+  broader product-catalog purpose.
+  Also simplified product_category itself to three buckets: Car cover, Seat cover, and Other.
+  Previously an unrecognised prefix (CA-CL and others) was shown as its own raw, uninterpreted
+  category; now anything not confirmed as one of the two named families reads as Other, which
+  is honest without being a filter list nobody can read.

@@ -15,8 +15,7 @@ Two databases, because the figures live in two places:
 - ``ecommerce_data.coverland_inventory_by_warehouse`` on the Commerce/Supabase
   connection holds on-hand, allocated, available and backorder per warehouse.
 - ``shipcore.fc_container_items`` joined to ``fc_containers`` on the primary
-  connection holds confirmed inbound and its ETA, and ``sc_products`` holds the
-  product name.
+  connection holds confirmed inbound and its ETA.
 
 Availability is not assumed. Every entry point returns None rather than raising
 when the connections are absent or the query fails, so a dashboard run without
@@ -180,16 +179,6 @@ def _sql():
               AND ci.master_sku IN :skus
             GROUP BY ci.master_sku
         """),
-        # fc_products.product_name is an unpopulated placeholder equal to
-        # master_sku on every row, so sc_products is used despite matching a few
-        # fewer SKUs. Rows where it merely echoes the SKU are treated as no name.
-        "names": q("""
-            SELECT master_sku, product_name
-            FROM shipcore.sc_products
-            WHERE product_name IS NOT NULL
-              AND product_name <> master_sku
-              AND master_sku IN :skus
-        """),
         # Carried, not used. See docs: it may double-count confirmed inbound and
         # nobody has been able to say what it counts. Currently zero everywhere.
         "transit": q("""
@@ -236,13 +225,12 @@ def fetch(skus: list[str], diagnostics: bool = False) -> pd.DataFrame | None:
         with primary.connect() as conn:
             inbound = pd.read_sql(sql["inbound"], conn, params={"skus": skus})
             draft = pd.read_sql(sql["draft"], conn, params={"skus": skus})
-            names = pd.read_sql(sql["names"], conn, params={"skus": skus})
             transit = pd.read_sql(sql["transit"], conn, params={"skus": skus})
     except Exception:
         return None
 
     out = pd.DataFrame({"unique_id": list(skus)})
-    for frame in (names, stock, inbound, draft, transit):
+    for frame in (stock, inbound, draft, transit):
         out = out.merge(frame, left_on="unique_id", right_on="master_sku",
                         how="left").drop(columns=["master_sku"], errors="ignore")
 
@@ -275,7 +263,7 @@ def fetch(skus: list[str], diagnostics: bool = False) -> pd.DataFrame | None:
         out[col] = pd.to_datetime(out[col], errors="coerce").dt.strftime("%Y-%m-%d")
         out[col] = out[col].where(out[col].notna(), "")
 
-    keep = ["unique_id", "product_name", "available_inventory", "preorder_backlog",
+    keep = ["unique_id", "available_inventory", "preorder_backlog",
             "confirmed_inbound", "inbound_eta", "draft_inbound", "draft_eta",
             "transit_stock"]
     if diagnostics:

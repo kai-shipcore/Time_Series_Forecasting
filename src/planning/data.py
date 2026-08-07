@@ -447,7 +447,6 @@ def inventory_columns() -> list[str]:
     """
     return [
         "unique_id",
-        "product_name",
         "available_inventory",
         "preorder_backlog",
         "confirmed_inbound",
@@ -459,34 +458,28 @@ def inventory_columns() -> list[str]:
 
 
 # Product category, read from the SKU prefix. This is real: the prefix is part of
-# the identifier, so the category is derived rather than invented.
+# the identifier, so Car cover and Seat cover are derived rather than invented.
 #
-# Only prefixes with a confirmed meaning are named. Anything else shows its raw
-# prefix, which is honest and still groups correctly, rather than being given a
-# plausible-sounding label that nobody verified.
+# Three buckets only. Anything not confirmed as one of the two named families is
+# "Other" rather than shown as its raw, uninterpreted prefix (CA-CL and the like).
 FAMILY_CATEGORIES = {"CC": "Car cover"}          # every CC-* SKU is a car cover
-PRODUCT_CATEGORIES = {"CA-SC": "Seat cover", "CA-FM": "Floor mat"}
+PRODUCT_CATEGORIES = {"CA-SC": "Seat cover"}
+OTHER_CATEGORY = "Other"
 
 
 def product_category(unique_id: str) -> str:
-    """Category for a SKU, read from its identifier.
+    """Category for a SKU, read from its identifier: Car cover, Seat cover, or Other.
 
     The first token gives the family where that is enough to decide (every CC-*
     SKU is a car cover, whatever the second token). Otherwise the first two
-    tokens are looked up. An unrecognised prefix is returned as-is rather than
-    given a guessed label: it still groups and filters correctly, and asserts
-    nothing that has not been confirmed.
+    tokens are looked up against the one other confirmed prefix. Anything else
+    is Other.
     """
     parts = str(unique_id).split("-")
     if parts and parts[0] in FAMILY_CATEGORIES:
         return FAMILY_CATEGORIES[parts[0]]
     prefix = "-".join(parts[:2]) if len(parts) >= 2 else str(unique_id)
-    return PRODUCT_CATEGORIES.get(prefix, prefix)
-
-
-# The sample generator simulates QUANTITIES only. It does not invent product
-# name: that is master data, and a fabricated value reads as a statement of fact
-# about the product with nothing on screen marking it false.
+    return PRODUCT_CATEGORIES.get(prefix, OTHER_CATEGORY)
 
 
 def _build_sample_inventory() -> pd.DataFrame:
@@ -533,8 +526,6 @@ def _build_sample_inventory() -> pd.DataFrame:
     df = pd.DataFrame(
         {
             "unique_id": ids,
-            # Master data, left blank rather than invented (see note above).
-            "product_name": ["" for _ in ids],
             "available_inventory": available,
             "preorder_backlog": preorder,
             "confirmed_inbound": inbound,

@@ -11,7 +11,6 @@ import pandas as pd
 
 _COLS = [
     "unique_id",
-    "product_name",
     "product_category",
     "history_group",
     "available_inventory",
