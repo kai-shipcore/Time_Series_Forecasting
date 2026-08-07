@@ -2393,8 +2393,9 @@ change to the metric's own definition of importance and should not be made casua
 
 ### v15 (August 2026) — seasonal factor blended across the days a week covers
 
-**Status: pre-registered 2026-08-06. Not yet run.** Criteria are stated here first, and the
-criterion is deliberately not the usual one. Read the pass criteria before the numbers.
+**Status: run 2026-08-07. PASSES the pre-registered criterion, with one observation the
+criterion does not capture. Not yet adopted in config; see the end of this entry.** Criteria
+were stated before the run and are left in their original wording.
 
 **The change.** `ml_factors(ds)` currently returns a single monthly multiplier looked up from
 `ds.dt.month`, overridden by `ML_HOLIDAY_MULTIPLIER` when `ml_is_holiday(ds)` is true. Both
@@ -2456,3 +2457,144 @@ previous factor definition, per the treatment in Section 4.21.
 **Do not run this concurrently with anything else.** It is seasonal-adjustment code, and it is
 the same code Section 4.30's unexplained phase sensitivity lives in. A second change in flight
 would make both ambiguous.
+
+#### v15 result (2026-08-07)
+
+`scripts/ml_29_v15_seasonal_blend.py`. Both arms on the pinned snapshot, the same splits, the
+same early-stopping validation draw, so `evaluate.bootstrap_delta` applies directly. Delta is
+v15 minus v11, so positive is a regression.
+
+| Segment | Window | v11 | v15 | Delta | SE | Verdict |
+|---|---|---|---|---|---|---|
+| smooth/long | Mar-May | 0.1355 | 0.1414 | +0.0059 | 0.0054 | tie |
+| smooth/long | Dec-Feb | 0.1380 | 0.1470 | +0.0090 | 0.0064 | tie |
+| smooth/long | Oct-Dec | 0.1000 | 0.1027 | +0.0027 | 0.0030 | tie |
+| smooth/short | Mar-May | 0.1961 | 0.1945 | −0.0016 | 0.0035 | tie |
+| smooth/short | Dec-Feb | 0.2000 | 0.1889 | −0.0110 | 0.0053 | improves |
+| smooth/short | Oct-Dec | 0.1783 | 0.2030 | +0.0247 | 0.0082 | excluded, Section 1.5 |
+| TOTAL | Mar-May | 0.1744 | 0.1755 | +0.0011 | 0.0031 | tie |
+| TOTAL | Dec-Feb | 0.1767 | 0.1732 | −0.0035 | 0.0043 | tie |
+| TOTAL | Oct-Dec | 0.1048 | 0.1088 | +0.0040 | 0.0029 | tie |
+
+**The criterion passes.** No judged cell regresses by more than two bootstrap standard errors.
+One cell improves beyond noise, smooth/short in Dec-Feb at −0.0110 with an interval excluding
+zero. Everything else is a tie. Under the pre-registered rule this adopts.
+
+**The observation the criterion does not capture, recorded because it matters more than the
+verdict.** smooth/long regresses in all three windows: +0.0059, +0.0090, +0.0027, mean
++0.0059. No single cell clears noise, and a per-cell non-inferiority test is blind to sign
+consistency by construction. Three of three in one direction is a sign test at p = 0.125,
+which is weak on its own, but it is the same shape as the finding in Section 4.30, where five
+of five judged cells pointed one way while individually inconclusive. The honest reading is
+that the blend helps short SKUs and mildly hurts long ones, and that the pooled result is a
+cancellation rather than a wash.
+
+**The criterion is not being revised after the fact.** It was pre-registered, it passes, and
+rewriting it now on the strength of a pattern that only became visible afterwards is the exact
+failure pre-registration exists to prevent. The verdict stands as adopt; the caveat is recorded
+alongside it, and the next person to touch the long segment should read both.
+
+**Why adopting anyway is still right.** The justification was never the score. A week running
+Tuesday 28 July through Monday 3 August taking August's multiplier, with six of its seven days
+in July, is indefensible on its own terms. The measurement was there to show the fix costs
+nothing material, and it does not: the largest judged regression is +0.0090 against a standard
+error of 0.0064.
+
+**Not yet adopted in `config.py`.** `ML_SEASONAL_BLEND` remains False. Turning it on
+re-baselines this document, so it is left as a deliberate act rather than a side effect of the
+experiment passing. Sequence when taken: set the flag, re-run v11, the structural baseline and
+the Section 4.29 naive baselines, then re-run `scripts/ml_27_week_phase_sweep.py` for the
+secondary criterion, which predicts v11's spread across the seven week phases should narrow
+from a mean range of 0.0558.
+
+---
+
+### v16 (August 2026) — the holiday half of v15, without the monthly half
+
+**Status: pre-registered 2026-08-07, before running. Origin is exploratory and that is
+recorded here rather than glossed.**
+
+**Where the hypothesis came from, stated plainly.** v15 blended two things at once and came
+out a pooled wash. `scripts/ml_30_v15_which_half.py` ran a third arm with only the monthly
+index blended and found it reproduces 115%, 164% and 144% of v15's smooth/long regression
+across the three windows, mean +0.0085 against v15's +0.0059. So the monthly half hurts and
+the holiday half helps, and v15's headline was the two cancelling. This entry proposes keeping
+the half that helps. That hypothesis was formed by looking at development-window results, which
+is legitimate as a source and disqualifying as evidence, hence the criterion below and hence
+this paragraph.
+
+**The change.** The monthly index stays exactly as it is, read off the label's month. Only the
+holiday window becomes proportional: a week's factor is
+`(n_holiday_days * 1.26 + (7 - n_holiday_days) * monthly) / 7`, where `n_holiday_days` counts
+days of `[ds-6, ds]` inside Nov 20 to Dec 15. `ML_SEASONAL_BLEND` becomes a mode, `"off"`,
+`"holiday"` or `"full"`, so v11, v16 and v15 are all reachable and none is the default.
+
+**The independent justification, which does not depend on any score.** `ml_is_holiday` is a
+4-of-7 majority vote. A week with three holiday days gets nothing and a week with four gets the
+entire 1.26, so one day can move a week's factor by 0.26. That was written into the v15
+pre-registration before any of these numbers existed. It is a defect on its own terms, and it
+is the reason this is worth adopting even if it scores as a tie.
+
+**What the monthly half's failure suggests, untested.** The monthly multipliers describe months
+as wholes, having come from the spreadsheet's monthly view. Blending them across a boundary
+treats them as a daily rate, which asserts that every day in January carries 0.75. Nothing
+establishes that. Assigning one month's multiplier to one whole week is at least consistent with
+how the numbers were derived. This is a hypothesis for why the monthly blend regressed and it is
+not tested here.
+
+**Pass criteria, stated before running.** Same non-inferiority basis as v15, for the same
+reason: this is a correctness fix and holding it to an improvement bar would be the wrong
+instrument.
+
+1. **Primary.** Adopt unless a judged development window and segment regresses by more than
+   two bootstrap standard errors.
+2. **Secondary, falsifiable, recorded either way.** If the two halves of v15 are additive, v16
+   should IMPROVE smooth/long by roughly 0.003, being v15's +0.0059 minus the monthly half's
+   +0.0085. A result near zero, or a regression, means the halves interact through the refit
+   and the decomposition in `ml_30` is not a clean attribution.
+3. **Guard.** Three of the nine cells scored here have now informed a decision, so a tie is
+   reported as a tie and not dressed as a win. Anything adopted on this basis is stated in the
+   writeup as tuned on the development windows.
+
+#### v16 result (2026-08-07). REJECTED, and it overturns v15's attribution
+
+| Segment | Window | v11 | v16 | Delta | SE | Verdict |
+|---|---|---|---|---|---|---|
+| smooth/long | Mar-May | 0.1355 | 0.1437 | +0.0082 | 0.0041 | tie |
+| smooth/long | Dec-Feb | 0.1380 | 0.1436 | +0.0056 | 0.0084 | tie |
+| smooth/long | Oct-Dec | 0.1000 | 0.1024 | +0.0024 | 0.0031 | tie |
+| smooth/short | Mar-May | 0.1961 | 0.1989 | +0.0029 | 0.0014 | **regression** |
+| smooth/short | Dec-Feb | 0.2000 | 0.1883 | −0.0117 | 0.0041 | improves |
+| TOTAL | Mar-May | 0.1744 | 0.1792 | +0.0048 | 0.0017 | **regression** |
+
+**Criterion 1 fails.** TOTAL in Mar-May regresses +0.0048 against a threshold of 0.0034, and
+smooth/short in the same window regresses +0.0029 against 0.0028. Rejected.
+
+**Criterion 2 fails, and it is the more important failure.** The pre-registration predicted
+that if v15's two halves were additive, v16 would improve smooth/long by roughly 0.003, being
+v15's +0.0059 minus the monthly half's +0.0085. Instead v16 regresses smooth/long by +0.0054.
+The halves are not additive and `scripts/ml_30_v15_which_half.py` did not attribute anything.
+
+**What the three results together actually say.** Mean smooth/long delta against v11: monthly
+blend alone +0.0085, holiday blend alone +0.0054, both together +0.0059. Every perturbation of
+the seasonal factors costs the long segment roughly half a point, and combining two of them
+costs no more than either alone. That is not the signature of one change being wrong in a
+particular direction. It is the signature of a segment sensitive to the seasonal specification
+itself.
+
+**Which connects to Section 4.30 and is now the more interesting finding.** That section
+recorded v11 as roughly three times more sensitive than its comparators to an arbitrary shift
+of the week boundary, mechanism unexplained. Here the same segment degrades under three
+different, small, well-motivated changes to the seasonal factors, in every case by a similar
+amount and regardless of direction. The common element is that the long model reads a
+deseasonalised series and a dedicated `elev_long` feature, so its inputs move whenever the
+factors move. Stated as a hypothesis rather than a conclusion: the long model's dependence on
+the seasonal treatment is a robustness weakness, and it is what both sections have been
+measuring from different angles.
+
+**Consequence for the seasonal work.** Neither v15 nor v16 is adopted. `ML_SEASONAL_BLEND`
+stays `"off"`. v15 passed its criterion and is not being taken, because v16 has since shown
+that its pass was a cancellation of two effects rather than a demonstration that the fix is
+free; adopting on that basis would be reading a number without its explanation. The underlying
+defects are real and remain documented: the label-month assignment in v15's opening paragraphs,
+and the 4-of-7 holiday cliff. Both are BACKLOG material for whoever has more than a week.

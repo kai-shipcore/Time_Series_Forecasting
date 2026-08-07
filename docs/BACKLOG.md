@@ -787,6 +787,37 @@ be labelled as one.
 
 ---
 
+## 17. Open port 8000 so the API is reachable without cloning this repo
+
+**Status: DONE 2026-08-07.**
+
+**The want.** A colleague working on the planning pages had to clone this repo and run the
+service locally to see real data. Reaching the deployed API directly removes that.
+
+**Result.** `http://144.24.40.252:8000` is reachable with `FORECAST_API_TOKEN` in the
+`x-forecast-token` header. Set that plus `AI_SERVICE_URL=http://144.24.40.252:8000` and the
+Planning pages work with no local Python at all.
+
+**The blocker was never a firewall, which is the part worth remembering.** The systemd unit
+ran uvicorn with `--host 127.0.0.1`, so nothing listened on the public interface and the
+kernel answered arriving packets with a RST. That surfaces as "connection refused", which was
+read as a closed port and written into DEPLOYMENT.md as "a per-port firewall rule". A firewall
+DROP gives a timeout; a refusal means the packet arrived and no socket wanted it. Changing the
+unit to `--host 0.0.0.0` was the entire fix. The host turned out not to filter at all
+(`iptables` INPUT policy ACCEPT, no REJECT, firewalld and ufw inactive) and the Oracle VCN
+already permitted 8000, so no firewall rule was added.
+
+**Two things this leaves.** The host has no packet filtering, so the VCN security list is the
+only network control and `FORECAST_API_TOKEN` is the entire application perimeter; it is
+enforced on every path except `/health`, and only while the variable is set. And the work
+uncovered a live incident, recorded as BACKLOG 21: the unit had been crash-looping since
+00:01:11 UTC because an unmanaged uvicorn held the port, while every deploy reported green.
+
+**Note on this entry.** It was referred to as "backlog 17" throughout the work before anyone
+checked, and no such item existed; the file went 16, 18. Written afterwards, into the gap.
+
+---
+
 ## 18. LightGBM 4.7 deprecates the argument every model fit uses
 
 `src/ml/model.py:fit` calls `self.model.fit(..., eval_set=[...])`. LightGBM 4.7.0 emits
@@ -845,3 +876,72 @@ and that no development-window figure moves, which is the expected result given 
 
 **Do it between model versions.** It cannot change a number today, but it is seasonal-adjustment
 code, and touching that mid-experiment makes any difference ambiguous.
+
+---
+
+## 20. A push that fails to deploy is indistinguishable from one that deployed
+
+**Status: observed 2026-08-06, cause unknown.**
+
+Commit `e7a6665` was pushed to `main` at 15:02. `git ls-remote` confirms the remote branch
+moved. No workflow run was created. The trigger is a plain `on: push: branches: [main]` with
+no path filters, and the deploy job's only condition is `github.ref == 'refs/heads/main'`, so
+nothing in `.github/workflows/ci-cd.yml` explains the miss. Two manual `workflow_dispatch`
+runs on the same commit then succeeded, deploy job included, so the workflow itself is sound.
+
+**Why this matters more than the one incident.** From the developer's side a push that
+deploys and a push that does not look identical: the terminal reports success either way. The
+consequence here was that the fix for a live bug, the partial-trailing-week guard, sat
+undeployed for a day while work continued on top of it, and nobody noticed because nobody had
+a reason to look. The next occurrence will be found the same way, by someone eventually
+wondering why a change has no effect.
+
+**Candidate causes, none confirmed.** A GitHub Actions incident at that moment; Actions
+disabled or restricted at the repository or organisation level; a spending or concurrency
+limit. The signed-in Actions tab shows a banner in the second and third cases, and that is
+the first thing to read.
+
+**The change.** Something that makes the absence visible rather than silent. Options, cheapest
+first: check the Actions tab as a habit after pushing, which is free and unreliable; a branch
+protection rule requiring the CI check to pass, which makes a missing run block rather than
+pass quietly; or a scheduled job that compares the deployed commit against the tip of `main`
+and reports a mismatch. The third is the only one that catches this without a human
+remembering.
+
+**Related.** `/health` already returns `repo_root`, and the deploy checks it. Adding the
+deployed commit SHA to that response would make the comparison in option three a one-line
+check rather than a new mechanism.
+
+---
+
+## 21. The deploy cannot tell whether the unit it restarted is the one serving
+
+**Status: observed 2026-08-07, cause of the squatter not yet identified.**
+
+On 2026-08-07 the systemd unit was found crash-looping with `[Errno 98] address already in
+use`, having been in that state since 00:01:11 UTC. An unmanaged uvicorn process held port
+8000, started five seconds after the deploy rsync, with a relative venv path and no
+`--workers 1`, so not by systemd. Every CI run in between reported green.
+
+**Why the existing check does not catch it.** The workflow polls `/health` and compares
+`repo_root` against `DEPLOY_PATH`, which proves the answering process was started from the
+deploy directory. A stale process started from that same directory satisfies it exactly. The
+check distinguishes "some other service on this box" from "our directory", and does not
+distinguish "the unit systemd just restarted" from "a process that has been there for hours".
+
+**Two changes, both small.**
+
+1. Return the deployed commit SHA from `/health`, written by the deploy into a file the app
+   reads at startup, and have the workflow compare it to `github.sha`. That closes this and
+   BACKLOG 20 with one mechanism: a push that never deployed and a deploy that never took the
+   port both show up as a SHA mismatch.
+2. Have the workflow assert `systemctl is-active coverland-forecast-api` after the restart.
+   One line, and it would have caught this specific failure immediately, since the unit
+   reports `activating (auto-restart)` rather than `active` while crash-looping.
+
+**The cause is still open.** The likely source is the Next.js app's on-demand start, which
+fires when `AI_SERVICE_URL` is localhost and port 8000 does not answer, exactly as it would
+not during a restart. `DEPLOYMENT.md` already says to leave `FORECAST_SERVER_DIR` unset in
+production for this reason. The search for it was inconclusive: the candidate paths do not
+exist and the `sudo grep` ran without a TTY. Finding where that app is deployed and checking
+its environment is the next step, and until it is done this recurs at every deploy.

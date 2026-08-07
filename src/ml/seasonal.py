@@ -30,6 +30,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -38,6 +39,7 @@ if str(ROOT) not in sys.path:
 
 from config import (  # noqa: E402
     ML_HOLIDAY_END,
+    ML_SEASONAL_BLEND,
     ML_HOLIDAY_MULTIPLIER,
     ML_HOLIDAY_START,
     ML_USE_HOLIDAY_FLAG,
@@ -94,11 +96,118 @@ def ml_is_holiday(ds: pd.Series) -> pd.Series:
     return days_in >= 4
 
 
+def _daily_factors(days: pd.DatetimeIndex) -> np.ndarray:
+    """The factor each individual DAY deserves.
+
+    Same priority as the weekly version: holiday window first, then the monthly
+    index. The window does not cross a year boundary, so a plain range test is
+    enough, matching src/deseasonalize.py:_is_holiday.
+    """
+    f = pd.Series(days.month).map(ML_SEASONAL).astype(float).to_numpy()
+    if ML_USE_HOLIDAY_FLAG:
+        m0, d0 = ML_HOLIDAY_START
+        m1, d1 = ML_HOLIDAY_END
+        hol = (
+            ((days.month == m0) & (days.day >= d0))
+            | ((days.month > m0) & (days.month < m1))
+            | ((days.month == m1) & (days.day <= d1))
+        )
+        f = np.where(hol, ML_HOLIDAY_MULTIPLIER, f)
+    return f
+
+
+def ml_factors_blended(ds: pd.Series) -> pd.Series:
+    """v15: the mean factor across the seven days the week actually covers.
+
+    The week labelled L runs [L-6, L], so this averages the daily factors at
+    offsets 0 through 6. Design doc Section 6, v15.
+
+    What it fixes. The unblended version reads one factor off the LABEL, and the
+    label is the week's last day, so a week running Tuesday 28 July through
+    Monday 3 August is labelled 3 August and takes August's multiplier with six
+    of its seven days in July. On the pinned snapshot that affects 22 of 110
+    weeks, by a mean of 0.0208 and a maximum of 0.0714.
+
+    It also removes a cliff. `ml_is_holiday` is a majority vote: four of seven
+    days inside the window and the entire week jumps from 1.00 to 1.26. Under
+    the blend a week with three holiday days gets three sevenths of the lift,
+    and no single day can move a week's factor by 0.26. The blend supersedes the
+    majority test rather than using it.
+
+    Day-weighted, not demand-weighted. Day-of-week demand share on this
+    catalogue runs 13.6% to 15.1%, so the two agree to within about a percent,
+    and demand weighting would need a day-of-week profile to score future weeks,
+    which is a second estimated quantity introduced to refine a small correction.
+    """
+    ds_dt = pd.to_datetime(ds)
+    acc = np.zeros(len(ds_dt), dtype=float)
+    for k in range(7):
+        acc += _daily_factors(pd.DatetimeIndex(ds_dt - pd.Timedelta(days=k)))
+    return pd.Series(acc / 7.0, index=ds.index)
+
+
+def _holiday_day_count(ds: pd.Series) -> np.ndarray:
+    """How many of a week's seven days fall inside the holiday window."""
+    ds_dt = pd.to_datetime(ds)
+    n = np.zeros(len(ds_dt), dtype=float)
+    m0, d0 = ML_HOLIDAY_START
+    m1, d1 = ML_HOLIDAY_END
+    for k in range(7):
+        d = pd.DatetimeIndex(ds_dt - pd.Timedelta(days=k))
+        n += (
+            ((d.month == m0) & (d.day >= d0))
+            | ((d.month > m0) & (d.month < m1))
+            | ((d.month == m1) & (d.day <= d1))
+        ).astype(float)
+    return n
+
+
+def ml_factors_holiday_blend(ds: pd.Series) -> pd.Series:
+    """v16: proportional holiday lift, monthly index untouched.
+
+    The monthly multiplier is still read off the LABEL's month, exactly as v11
+    does, and applied to all seven days. Only the holiday window is made
+    proportional, so a week with three holiday days gets three sevenths of the
+    lift instead of nothing.
+
+    This is the half of v15 that helped. Blending the monthly index as well,
+    which v15 also did, reproduced 115-164% of v15's smooth/long regression on
+    its own (scripts/ml_30_v15_which_half.py), so it is deliberately not done
+    here. Design doc Section 6, v16, including the note that this split was
+    suggested by development-window results and is pre-registered accordingly.
+
+    Why the cliff is worth removing on its own terms: ml_is_holiday is a 4-of-7
+    majority vote, so a single day can move a week's factor by 0.26.
+    """
+    monthly = ds.dt.month.map(ML_SEASONAL).astype(float).to_numpy()
+    if not ML_USE_HOLIDAY_FLAG:
+        return pd.Series(monthly, index=ds.index)
+    n_hol = _holiday_day_count(ds)
+    blended = (n_hol * ML_HOLIDAY_MULTIPLIER + (7.0 - n_hol) * monthly) / 7.0
+    return pd.Series(blended, index=ds.index)
+
+
 def ml_factors(ds: pd.Series) -> pd.Series:
     """Seasonal factor per date for the ML track.
 
     Priority matches the prototype: holiday window first, then monthly index.
+
+    `ML_SEASONAL_BLEND` selects v15's day-blended factor. It defaults to False,
+    so this file changes no result until the flag is turned on deliberately.
+    Every consumer goes through this one function (src/ml/model.py imports it as
+    `_factors` and calls it for the training series, the trajectory features and
+    the target factor), so the flag reaches all of them or none.
     """
+    if ML_SEASONAL_BLEND == "full":
+        return ml_factors_blended(ds)
+    if ML_SEASONAL_BLEND == "holiday":
+        return ml_factors_holiday_blend(ds)
+    if ML_SEASONAL_BLEND != "off":
+        raise ValueError(
+            f"ML_SEASONAL_BLEND must be 'off', 'holiday' or 'full'; "
+            f"got {ML_SEASONAL_BLEND!r}. A typo here would silently fall "
+            f"through to the unblended path and look like a null result."
+        )
     monthly = ds.dt.month.map(ML_SEASONAL)
     if ML_USE_HOLIDAY_FLAG:
         monthly = monthly.where(~ml_is_holiday(ds), ML_HOLIDAY_MULTIPLIER)

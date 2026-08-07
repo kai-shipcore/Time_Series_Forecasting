@@ -111,6 +111,13 @@ ML_USE_HOLIDAY_FLAG   = USE_HOLIDAY_FLAG
 ML_HOLIDAY_START      = HOLIDAY_START
 ML_HOLIDAY_END        = (12, 15)   # v9: promotions run late Nov to mid Dec; see Section 6
 ML_HOLIDAY_MULTIPLIER = HOLIDAY_MULTIPLIER
+# v15, pre-registered in design doc Section 6. False keeps the factor read off
+# the week LABEL, which is what every recorded figure was measured under. True
+# averages the factor over the seven days the week actually covers, which fixes
+# a week that is six-sevenths July taking August's multiplier, and removes the
+# 4-of-7 majority cliff in the holiday window. Default False: turning this on
+# re-baselines the Version Log, so it is a deliberate act, not a default.
+ML_SEASONAL_BLEND     = "off"      # "off" (v11) | "holiday" (v16) | "full" (v15)
 
 # Metric thresholds (used in select.py)
 WAPE_ACCEPTABLE = 0.25          # flag SKUs above this in reports

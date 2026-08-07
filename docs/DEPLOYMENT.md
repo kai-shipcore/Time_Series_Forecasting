@@ -11,9 +11,11 @@ from the browser, so there is no CORS to configure and no colleague needing
 Python, a virtualenv or a copy of the data: they open the deployed app and the
 forecast is already behind it.
 
-It also means no public port for the API, which is checked and true: 8000 is
-firewalled from the internet. See "Reaching the deployed service from a laptop"
-below for what that means for local development.
+It also meant no public port for the API. That changed on 2026-08-07: 8000 is
+now reachable directly, protected by `FORECAST_API_TOKEN` rather than by being
+unreachable. See "Reaching the deployed service from a laptop" below. The
+co-location still earns its place for the reasons above, and the proxy remains
+the normal path; direct access is for local development against real data.
 
 The alternative, everyone running the service locally, is what produced the
 original problem: a fresh clone has the code and none of the data, so the
@@ -57,20 +59,38 @@ fixture safe.
 
 ## Reaching the deployed service from a laptop
 
-You cannot, directly. Port 8000 is not open to the internet: the deployed Next.js
-app reaches the service because it runs on the same box, where
-`144.24.40.252:8000` resolves to a local interface. From anywhere else the
-connection is refused. Port 3000 is open, which is the site, so this is a
-per-port firewall rule rather than the host being unreachable.
+**Since 2026-08-07: directly.** `http://144.24.40.252:8000` is reachable, with
+`FORECAST_API_TOKEN` in the `x-forecast-token` header. Set that and
+`AI_SERVICE_URL=http://144.24.40.252:8000` and the Planning pages work against
+real data with no local Python, no virtualenv and no copy of this repo.
 
-This section briefly claimed the opposite, on 2026-07-31, and the mistake is
-worth recording because it wasted a day. A developer machine appeared to be
-talking to the server with `AI_SERVICE_URL` set to that address. It was not: that
-machine had a local forecast server running, and the app falls back to starting
-and using a local one, so the configured URL looked like it worked while
-something else answered. The test that settles it is `curl` against the address
-from a machine with no local server, and that is the first thing to do rather
-than the last.
+**Why it did not work before, which was never a firewall rule.** The systemd
+unit ran uvicorn with `--host 127.0.0.1`, so the process only accepted
+connections originating on the box. Nothing was listening on the public
+interface, so the kernel answered with a RST and the caller saw "connection
+refused". That was read as a closed port and written down here as "a per-port
+firewall rule". It was not. A firewall DROP produces a timeout; a refusal means
+the packet arrived and no socket wanted it. The distinction is the whole
+diagnosis and it was inverted here for months.
+
+Checked on 2026-08-07, after changing the unit to `--host 0.0.0.0`: the host is
+not filtering at all (`iptables` INPUT policy ACCEPT, one redundant rule for
+port 3000, no REJECT; firewalld and ufw both inactive), and the Oracle VCN
+security list already permitted 8000. No firewall change was made or needed.
+
+**Consequence worth knowing.** The host has no packet filtering, so the VCN
+security list is the only network control this server has. `FORECAST_API_TOKEN`
+is what protects the API, and it is load-bearing: `api/main.py` enforces it on
+every path except `/health`, and only when the variable is set. If it is ever
+unset, `POST /chat` and `POST /run-forecast` are open to the internet.
+
+The earlier mistake in this section is left recorded below, because the lesson
+still holds. On 2026-07-31 a developer machine appeared to be talking to the
+server with `AI_SERVICE_URL` set to that address. It was not: that machine had a
+local forecast server running, and the app falls back to starting and using a
+local one, so the configured URL looked like it worked while something else
+answered. The test that settles it is `curl` against the address from a machine
+with no local server, and that is the first thing to do rather than the last.
 
 Three ways to work, cheapest first.
 
@@ -93,13 +113,19 @@ is up since it only spawns uvicorn when nothing answers, and confusing when the
 tunnel drops, since it will then quietly serve local data instead. If in doubt,
 check `trained_through` on the Action List.
 
-**3. Open port 8000**, if direct access is genuinely wanted. That is a decision
-rather than a fix, and it needs both the Oracle security list ingress rule and
-whatever iptables the instance runs. Before doing it: the service reads
-credentials for both databases and its only protection is the shared
-`FORECAST_API_TOKEN`, with `/health` outside that check. On the open internet
-that token is the entire perimeter. The tunnel above gets the same result with
-no exposure.
+**3. Point straight at the server.** Done on 2026-08-07, so this is now the
+cheapest option for reading live data:
+
+```
+AI_SERVICE_URL=http://144.24.40.252:8000
+FORECAST_API_TOKEN=<the server's value>
+```
+
+No tunnel, no local service, no copy of this repo. The trade is that
+`FORECAST_API_TOKEN` is now the entire perimeter: the service holds credentials
+for both databases, `/health` sits outside the token check, and the host does no
+packet filtering. Option 2's tunnel still exposes nothing and remains the right
+choice if you already have SSH open.
 
 **Which file to set `AI_SERVICE_URL` in.** `Commerce_Integration` has both `.env`
 and `.env.local`, Next.js loads `.env.local` at higher precedence, and both are
@@ -260,7 +286,7 @@ After=network.target
 User=coverland
 WorkingDirectory=/opt/coverland-forecast-api
 EnvironmentFile=/opt/coverland-forecast-api/.env
-ExecStart=/opt/coverland-forecast-api/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=/opt/coverland-forecast-api/.venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 

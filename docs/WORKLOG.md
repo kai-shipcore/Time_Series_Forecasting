@@ -2793,3 +2793,112 @@ detail lives in the design document and codebase guide, not here.
   they are not independent and this design cannot quantify the error on the optimism estimate;
   and the mechanism remains unknown, so nothing here says the advantage transfers beyond the
   windows tested.
+
+- 2026-08-06 (deploy landed). Run #46, triggered manually, deployed successfully: all eight
+  steps green including "Report data readiness", which is the step that exits non-zero when
+  the service answering port 8000 is not the one just deployed. So e7a6665 is live on the
+  server and the partial-trailing-week guard is in production for the first time since it was
+  written on 2026-08-05.
+  The automatic push trigger still did not fire and the cause is unknown. Nothing in the
+  workflow file accounts for it: plain push trigger on main, no path filters, and the deploy
+  job's only condition is the branch. The same commit deployed fine under workflow_dispatch,
+  so the workflow is sound and the trigger is the open question. Logged as BACKLOG 20, framed
+  around the real problem rather than the incident: a push that fails to deploy looks exactly
+  like one that succeeds from the developer's side, which is how a fix for a live bug sat
+  undeployed for a day while work continued on top of it.
+  My own failure here was not checking. The deploy is automatic, so I assumed it had happened
+  and said so, twice, without opening the Actions tab. Checking would have cost one fetch.
+
+--- DAILY SUMMARY 2026-08-06 ---
+1. Settled which seven days count as a sales week. Yesterday's change to match our written
+   documentation was quietly making forecasts worse, so I tested all seven options, put it
+   back, and corrected the documentation instead.
+2. Got yesterday's bug fix onto the live server. It had been written but never actually
+   arrived: an automatic step failed without reporting it, leaving the live forecast without
+   the fix for a day.
+3. Fixed two smaller date errors found elsewhere in the system. One was making the accuracy
+   screen look worse than reality every Monday.
+4. Moved the weekly forecast to Tuesday, so it uses last week's sales rather than data that
+   is already a week old.
+
+--- SUMMARY PRODUCED 2026-08-07 (covering the 2026-08-06 entries above) ---
+
+- 2026-08-07. Moved the server crontab from Monday to Tuesday, the last manual step of the
+  week-convention change and the only part the deploy could not carry, since the schedule
+  lives in the coverland user's crontab rather than in the repo. Confirmed by the line it
+  printed back: a single entry, 0 10 * * 2, script path unchanged. The sed was tested against
+  a realistic multi-job crontab first, checking that it moved only the forecast line and left
+  MAILTO, a daily backup and an unrelated Monday job alone.
+  All three parts of the convention are now consistent in production for the first time:
+  clean.py binning closed="right", last_complete_week stepping back an extra week on Mondays,
+  and the cron on Tuesday. First run under the new schedule is Tuesday 11 August, 10:00 UTC,
+  training through the week ending Monday 10 August.
+
+- 2026-08-07. Implemented and ran v15, the seasonal blend. Put it behind ML_SEASONAL_BLEND in
+  config, defaulting False, and verified the flag is inert when off: with it False the factors
+  are bit-identical to the recorded ones across every label in the data. With it on, 43 of 110
+  weeks move, mean 0.0055, max 0.0743, and the count of weeks receiving the full holiday
+  multiplier drops from 8 to 5 as three partial weeks now get a fractional lift instead of an
+  all-or-nothing one. Every consumer goes through ml_factors, so the flag reaches all of them
+  or none.
+  Result: passes the pre-registered non-inferiority criterion. No judged cell regresses by more
+  than two bootstrap standard errors; one improves beyond noise, smooth/short in Dec-Feb at
+  -0.0110; the rest are ties.
+  Recorded a caveat the criterion cannot see. smooth/long regresses in all three windows,
+  +0.0059, +0.0090, +0.0027, none individually beyond noise but all one direction. A per-cell
+  non-inferiority test is blind to sign consistency by construction. Same shape as Section
+  4.30's finding. The blend appears to help short SKUs and mildly hurt long ones, and the
+  pooled result is a cancellation rather than a wash.
+  Did not revise the criterion after seeing this. It was pre-registered, it passes, and
+  rewriting it on a pattern that only appeared afterwards is what pre-registration exists to
+  stop. Verdict stands as adopt, caveat recorded beside it.
+  Left ML_SEASONAL_BLEND = False. Turning it on re-baselines the Version Log, so that is the
+  user's call rather than a side effect of the experiment passing.
+
+- 2026-08-07 (v16, rejected, and it overturned yesterday's attribution). Pre-registered v16,
+  the holiday half of v15 without the monthly half, recording openly that the hypothesis came
+  from looking at development results and is therefore exploratory in origin. Made
+  ML_SEASONAL_BLEND a mode, "off" / "holiday" / "full", so all three versions are reachable
+  and none is the default, with an explicit error on a typo since a misspelt mode would
+  otherwise fall through to the unblended path and look like a null result.
+  v16 fails criterion 1: TOTAL in Mar-May regresses +0.0048 against a 0.0034 threshold.
+  It also fails criterion 2, which matters more. The prediction was that v16 would improve
+  smooth/long by about 0.003 if v15's halves were additive. It regresses it by +0.0054
+  instead, so the halves are not additive and ml_30 attributed nothing. I told the user
+  twenty minutes earlier that the monthly half was responsible; that was wrong, and the
+  pre-registered secondary criterion is what caught it rather than my noticing.
+  What the three runs say together: mean smooth/long delta is +0.0085 for the monthly blend
+  alone, +0.0054 for the holiday blend alone, +0.0059 for both. Every perturbation of the
+  seasonal factors costs the long segment about half a point, and two together cost no more
+  than one. That is a segment sensitive to the seasonal specification itself rather than to
+  any particular change being wrong, and it is very likely the same thing Section 4.30 has
+  been measuring as week-boundary sensitivity.
+  Neither version adopted. ML_SEASONAL_BLEND stays "off". v15 passed its own criterion and is
+  still not being taken, because its pass is now understood as two effects cancelling rather
+  than the fix being free.
+
+- 2026-08-07 (port 8000, and a production incident found while opening it). Backlog 17. The
+  service was bound to 127.0.0.1, so no firewall change could have reached it; that had to be
+  changed first and is the step the request assumed away. Changed the systemd unit to
+  --host 0.0.0.0, which keeps loopback and so leaves the Next.js app's
+  AI_SERVICE_URL=http://localhost:8000 working unchanged.
+  The restart then exposed something worse. The unit was crash-looping with [Errno 98] address
+  already in use, every eight seconds, because an unmanaged process held port 8000. It had
+  been started at 00:01:11 UTC with a relative venv path and no --workers 1, so not by
+  systemd, five seconds after the deploy rsync wrote its files at 00:01:06. The deploy race
+  DEPLOYMENT.md warns about, caught in the act: something started a second uvicorn during the
+  restart window and won the port.
+  Consequence, measured rather than assumed: the file mtimes predate the process start by five
+  seconds, so it had loaded the deployed code and nothing was stale. I had told the user
+  deploys "may not have been taking effect" and that the training guard might not be live.
+  That was the right thing to check and wrong as a conclusion, and I said it before running the
+  check that settles it.
+  Killed the squatter; systemd bound within two seconds and now holds 0.0.0.0:8000, active,
+  /health ready. The bind change is in effect.
+  Not resolved: what started it. None of the four candidate env paths exist, so the Next.js app
+  is elsewhere, and the sudo grep in that step had no TTY and may not have run at all. Recorded
+  as inconclusive rather than negative. Until it is found this recurs at the next deploy.
+  Also worth stating plainly: the deploy reported green throughout. The workflow's repo_root
+  check proves the answering process runs from the deploy directory, which a squatter started
+  from that same directory also satisfies. It cannot distinguish "the deployed unit is serving"
+  from "something is serving". I read that check as stronger than it is, twice.
