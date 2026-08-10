@@ -1,0 +1,79 @@
+name: API reachable
+
+# Is http://144.24.40.252:8000 answering from OUTSIDE the server?
+#
+# The deploy asserts the unit is healthy at deploy time. Nothing checked the
+# hours in between, which is how the port sat broken from Friday 5pm to Monday
+# afternoon in August 2026 with nobody aware. This closes that window.
+#
+# Runs on a GitHub runner, which is off the network entirely, so it exercises
+# the same path a laptop or a colleague's machine uses. Checking from the server
+# itself would pass even when the service is bound to loopback, which is exactly
+# the failure this is meant to catch.
+#
+# Fails loudly on purpose: a red scheduled run emails whoever owns the repo.
+#
+# NOTE: GitHub disables scheduled workflows after 60 days without repo activity.
+# If this stops running, that is why, and the Actions tab offers a re-enable
+# button.
+
+on:
+  schedule:
+    - cron: '17 * * * *'   # hourly at :17, off the hour to avoid the busy minute
+  workflow_dispatch:
+
+jobs:
+  reachable:
+    name: Can an outside machine reach the forecast API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: /health answers from outside
+        run: |
+          set -uo pipefail
+          API="http://144.24.40.252:8000"
+
+          # --max-time, not --connect-timeout: a cloud firewall DROPS rather than
+          # refuses, so a blocked port hangs instead of erroring, and only a
+          # total timeout catches that.
+          code=$(curl -s -o /tmp/health.json -w '%{http_code}' --max-time 15 "$API/health" || echo 000)
+
+          if [ "$code" != "200" ]; then
+            echo "::error::/health returned '$code' from outside the server."
+            echo "  000 with a hang    -> packets are being dropped (OCI security list)."
+            echo "  000 fast, refused  -> nothing listening on the public interface;"
+            echo "                        the service is on loopback or is down."
+            echo "  anything else      -> it answered, but not with 200."
+            echo "Run the 'Server diagnostics' workflow for the socket owner and journal."
+            exit 1
+          fi
+
+          ready=$(python3 -c "import json;print(json.load(open('/tmp/health.json')).get('ready'))")
+          echo "reachable, ready=$ready"
+
+          # ready=False means the API is up but has no data to serve, which is a
+          # real outage for the planning pages even though the port is fine.
+          if [ "$ready" != "True" ]; then
+            echo "::error::API is reachable but ready=$ready, so it has no data to serve."
+            exit 1
+          fi
+
+      - name: auth is still enforced
+        run: |
+          set -uo pipefail
+          # 401 is the pass. A 200 here would mean the token stopped being
+          # applied and POST /chat and POST /run-forecast are open to the
+          # internet, which is worse than the port being down.
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+                 http://144.24.40.252:8000/segmentation || echo 000)
+          if [ "$code" = "200" ]; then
+            echo "::error::/segmentation returned 200 with NO token. The API is"
+            echo "unauthenticated on a public port. Check FORECAST_API_TOKEN in"
+            echo "the server's .env and restart the service."
+            exit 1
+          fi
+          if [ "$code" != "401" ]; then
+            echo "::warning::expected 401, got '$code'"
+          else
+            echo "401 as expected, token enforced"
+          fi
