@@ -1625,7 +1625,7 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v14 | `min_child_samples` swept for the collapsing tail | rejected at every value tested | Section 6 |
 | v15 | seasonal factor blended across the days a week covers | passed its criterion, not adopted after v16 | Section 6 |
 | v16 | the holiday half of v15 without the monthly half | rejected, and it overturned v15's attribution | Section 6 |
-| v17 | + trailing 12-week Amazon-FBA share in the long model | pre-registered 2026-08-10 | Section 6 |
+| v17 | + trailing 12-week Amazon-FBA share in the long model | rejected; the feature was used heavily and still regressed | Section 6 |
 
 ### v-base (July 2026)
 
@@ -2836,3 +2836,58 @@ the 5,499 the complete week now shows, because the snapshot was built on a Monda
 `last_complete_week` had its Monday step restored. That week falls outside every development
 window and outside the final test window, which ends at 2026-07-13, so it is inert for every
 number in this log. It is recorded so nobody later reads it as a demand collapse.
+
+#### v17 result (2026-08-10). REJECTED, and the disconfirming criterion does NOT apply
+
+Run on snapshot 2026-08-03. Raw output below; `scripts/ml_32_v17_channel_mix.py`.
+
+| Segment | Window | v11 | v17 | Delta | SE | Verdict |
+|---|---|---|---|---|---|---|
+| smooth/long | Mar-May | 0.1337 | 0.1505 | +0.0168 | 0.0119 | regresses, inside noise |
+| smooth/long | Dec-Feb | 0.1447 | 0.1548 | +0.0101 | 0.0130 | regresses, inside noise |
+| smooth/long | Oct-Dec | 0.1001 | 0.1093 | +0.0091 | 0.0105 | regresses, inside noise |
+| smooth/short | all three | — | — | exactly 0 | — | identical by construction, asserted |
+
+Three-window mean +0.0120, sign consistent across all three. **Criterion 1 fails**: adoption
+needs a consistent improvement of at least 0.01 and this is a consistent regression of
+0.0120. No single window's delta exceeds twice its standard error, so each on its own is
+inside the noise floor; the consistency across three windows is what makes the direction
+credible rather than any one cell. **Criterion 2 holds**: the short arm is the same fitted
+model in both arms and predictions were verified identical, so short and TOTAL carried no
+weight in the verdict. **Criterion 4 applies**: the three-column version is not run.
+
+**Criterion 3, the pre-registered disconfirming check, does not excuse the result, and that
+is what makes this informative.** The criterion said a near-zero LightGBM gain would mean the
+feature was ignored and the null result would say nothing about channel mix. `fba_share_12w`
+carried the highest gain of any feature in Dec-Feb and Oct-Dec, and the second highest in
+Mar-May behind `elev_long`. The model reached for it hard. Doing so made the forecast worse
+in every window, and bias magnitude grew in every window too: long bias went −6.5% to −9.1%,
++4.5% to +8.1%, and +1.0% to +3.6%. Early stopping also halted sooner with the feature present
+(66 to 50 trees, 81 to 49, 59 to 50), which is the signature of a feature that pays on the
+validation slice and then does not generalise.
+
+**Why the precondition test was not enough, recorded because it was mine.** Before running
+this, the trailing share was checked for within-SKU movement on the reasoning that a value
+fixed per SKU is a fingerprint, and a tree handed a fingerprint memorises per-SKU levels
+rather than learning a relationship. It passed: within-SKU standard deviation was 0.190
+against between-SKU 0.193, so roughly 70% of total variation is a SKU moving over time. That
+test was necessary and not sufficient. The remaining 30% is pure cross-sectional identity,
+and across 53 to 56 long SKUs that is apparently enough to serve as a partial SKU
+identifier. The right precondition is not "does it move" but "does the part that moves carry
+signal once the part that does not is removed", which would mean demeaning the share per SKU
+before offering it. That variant is not run here: the guard in criterion 4 exists precisely to
+stop a rejected hypothesis being reshaped until something clears the bar, and with 53 SKUs and
+a ±0.011 to ±0.014 noise floor, a search over encodings would find a winner whether or not one
+exists.
+
+**What this adds to the Section 4.30 and v16 picture.** Channel mix was the first exogenous
+input tried; every feature from v0 to v16 derives from the SKU's own demand history. The long
+segment has now degraded under a seasonal blend (v15, +0.0059), a monthly-only blend (+0.0085),
+a holiday-only blend (v16, +0.0054), an arbitrary shift of the week boundary (Section 4.30),
+and now an added exogenous feature (+0.0120). Five perturbations of different kinds, different
+directions, and different parts of the pipeline, each costing the same half to one point. The
+consistent reading is not that each change was individually wrong but that the long model sits
+at a narrow optimum on a small sample, where nearly any added degree of freedom costs more in
+variance than it returns in signal. For a segment of 53 to 56 SKUs that is the expected
+behaviour rather than a defect, and it is the strongest argument in this document for
+freezing v11 and running the final test.

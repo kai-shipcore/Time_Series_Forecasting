@@ -89,7 +89,20 @@ jobs:
             --exclude "data/" \
             --exclude "outputs/" \
             --exclude "logs/" \
+            --exclude ".deployed_commit" \
             ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      # Record which revision is on disk, before the restart, so the service
+      # reads it at startup and can report it from /health. Excluded from the
+      # rsync above for the usual reason: --delete would remove it every deploy
+      # because it is not in the source tree, leaving a window where the file is
+      # gone and the answer is "unknown" rather than wrong.
+      - name: Stamp the deployed commit
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+              -o StrictHostKeyChecking=accept-new \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+              "printf '%s\n' '${{ github.sha }}' > '${{ secrets.DEPLOY_PATH }}/.deployed_commit'"
 
       - name: Install dependencies and restart service
         run: |
@@ -200,6 +213,21 @@ jobs:
           if [ -n "$root" ] && [ "$root" != "${{ secrets.DEPLOY_PATH }}" ]; then
             echo "::error::Port 8000 is answered by a service running from ${root}, not ${{ secrets.DEPLOY_PATH }}. The unit deployed here is probably failing to bind. Check: systemctl status coverland-forecast-api"
             exit 1
+          fi
+
+          # repo_root proves the answering process started from this directory.
+          # A process left over from an EARLIER deploy satisfies that too, which
+          # is exactly the failure of 2026-08-07: an unmanaged uvicorn held the
+          # port for a day while every run reported green. The commit is what
+          # tells the two apart, because a stale process reports a stale stamp.
+          commit=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit") or "")')
+          if [ -z "$commit" ]; then
+            echo "::warning::/health reports no commit, so the service predates this mechanism. Expected on the first deploy that ships it; a problem on any later one."
+          elif [ "$commit" != "${{ github.sha }}" ]; then
+            echo "::error::Port 8000 is answered by commit ${commit}, but this deploy shipped ${{ github.sha }}. The restart did not replace the running process. Check: systemctl status coverland-forecast-api, and ss -lntp | grep 8000"
+            exit 1
+          else
+            echo "Serving commit ${commit}, which is this deploy."
           fi
 
           ready=$(printf '%s' "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ready"))')

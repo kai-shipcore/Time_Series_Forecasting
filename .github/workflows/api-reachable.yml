@@ -58,6 +58,49 @@ jobs:
             exit 1
           fi
 
+      # Only needed for the tip commit and its timestamp. fetch-depth 1 is
+      # enough: nothing here walks history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: the serving commit is the tip of main
+        run: |
+          set -uo pipefail
+          # BACKLOG 20. On 2026-08-06 a commit was pushed to main, the remote
+          # branch moved, and no workflow run was ever created. Nothing reported
+          # it: from the terminal a push that deploys and a push that does not
+          # look identical, so a bug fix sat undeployed for a day while work
+          # continued on top of it. This is the check that would have said so.
+          deployed=$(python3 -c "import json;print(json.load(open('/tmp/health.json')).get('commit') or '')")
+          tip="${{ github.sha }}"
+
+          if [ -z "$deployed" ]; then
+            echo "::warning::/health reports no commit. Expected until the deploy that ships this mechanism has run once; investigate if it persists."
+            exit 0
+          fi
+          if [ "$deployed" = "$tip" ]; then
+            echo "serving ${deployed}, which is the tip of main"
+            exit 0
+          fi
+
+          # A deploy takes a couple of minutes, so a mismatch straight after a
+          # push is normal rather than a fault. Only complain once the tip has
+          # been sitting there long enough that a deploy would have finished.
+          age=$(( $(date +%s) - $(git show -s --format=%ct HEAD) ))
+          echo "serving ${deployed}, tip of main is ${tip} (pushed ${age}s ago)"
+          if [ "$age" -lt 1800 ]; then
+            echo "::notice::Mismatch, but the tip is under 30 minutes old, so a deploy is probably still running."
+            exit 0
+          fi
+
+          echo "::error::The server has been running a commit that is not the tip of main for over 30 minutes."
+          echo "  serving:     ${deployed}"
+          echo "  tip of main: ${tip}"
+          echo "Most likely no workflow run was created for that push; the Actions tab shows a banner when runs are disabled or limited."
+          echo "Less likely, a deploy ran and the restart did not replace the serving process, but the deploy asserts the commit now and would have failed."
+          exit 1
+
       - name: auth is still enforced
         run: |
           set -uo pipefail

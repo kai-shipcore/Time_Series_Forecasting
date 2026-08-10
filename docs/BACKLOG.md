@@ -4,11 +4,56 @@ Deferred work that has been decided or identified but not yet built. Each item r
 what the change is, why it matters, and what blocks it. Completed work goes in
 `WORKLOG.md`; this file is only for things still ahead of us.
 
+Closed items are kept in place with their reasoning rather than deleted, because half of
+their value is stopping the same question being reopened from scratch. Read the status line
+first: it says whether an item was solved, decided against, or ruled out of scope, and those
+are three different things.
+
+## Index, reviewed 2026-08-10
+
+**Still open and actionable**
+
+| # | Item | Size |
+|---|---|---|
+| 2 | `train_start` does two jobs; 187 of 447 served SKUs can never be scored | medium, forces a re-baseline |
+| 6 | Retire the old Demand Forecast page | waits on `ml_forecast_history` accumulating runs |
+| 8 | Dev machine on Node 24 against a declared 22 | trivial |
+| 15 | On-demand pipeline is not safely interruptible | medium |
+| 18 | LightGBM `eval_set` deprecation warning on every fit | small, do it between model versions |
+| 21 | What starts the unmanaged uvicorn. Detection is built; the cause is not found | unknown |
+
+**Done 2026-08-10**
+
+| # | Outcome |
+|---|---|
+| 5 | Both CSV exports name their columns, with human headers, a UTF-8 BOM and correct escaping |
+| 9 | Closed by decision: the drafted figure reads the same two tables Container Planning does, so there is no second source to compare against |
+| 20 | `/health` returns the deployed commit; the hourly check fails when it is not the tip of main |
+
+**Open, but verify rather than build**
+
+| # | Item |
+|---|---|
+| 11 | Read Tuesday's cron output for the two `rows written to shipcore.ml_*` lines. Push first, or the server runs last week's code |
+
+**Closed**
+
+| # | Outcome |
+|---|---|
+| 1, 4 | Out of scope, and blocked on data that does not exist: inventory history, stockout event dates |
+| 3 | Done. Not-forecast section ships, on a trailing-13-week actual-sales basis |
+| 7, 14, 16, 17, 19 | Done or resolved |
+| 10, 12 | Out of scope / decided against |
+| 13 | All five sub-items closed |
+
 ---
 
 ## 1. Stockout-aware demotion in `src/profile.py`
 
-**Status:** decided, blocked on data.
+**Status:** CLOSED 2026-08-10 as out of scope for this project. Not solved, and not
+solvable here: blocker 2 below needs inventory HISTORY, and only a current snapshot exists.
+Left in full because the analysis is correct and whoever has the inventory history should
+start from it rather than rediscover it. Original entry follows.
 
 **The change.** The recent-activity demotion currently reads:
 
@@ -84,7 +129,20 @@ any other change that forces a re-baseline rather than spending one on its own.
 
 ## 3. A comprehensive action list, including SKUs the model does not forecast
 
-**Status:** wanted, needs its own basis.
+**Status: DONE.** The Action List carries a Not-forecast section
+(`not-forecast-section.tsx`, `not-forecast-table.tsx`) with its own filters, search,
+sorting, pagination and CSV export.
+
+**The basis chosen, which is what this item was actually asking for.** Trailing 13 weeks of
+ACTUAL sales, not a forecast, from the candidates listed below. The screen and the manual
+both say so in those words, and the column is labelled "13w demand … actual sales over the
+trailing 13 weeks, not a forecast". That answers the sequencing note's concern directly:
+the two halves of the screen are not mixing measured numbers with unmeasured ones under
+shared headings, because the non-forecast half never claims a forecast. A dash and a zero
+are also distinguished there, a dash meaning no inventory record and zero meaning the record
+reports none, which is the same refusal to imply precision that is not there.
+
+Original entry follows.
 
 **The change.** The action list currently covers forecastable SKUs only: 432 of roughly 3,300.
 Everything else is intermittent and has no forecast by design. The list should eventually cover
@@ -113,7 +171,11 @@ would pick up, so the two meet here.
 
 ## 4. Censored demand: stockout and pre-order periods misread as low demand
 
-**Status:** identified, lower priority, larger than a screen.
+**Status:** CLOSED 2026-08-10 as out of scope for this project. Not solved. The blocking
+fact is in "Data position" below and has not changed: nothing in this repo records when a
+SKU went out of stock or was restocked, so the correction cannot be estimated, let alone
+applied. Pre-order periods ARE identifiable today, so a partial version is possible for
+whoever picks this up. Original entry follows.
 
 **The problem.** The model trains on `sales_clean`, which is units sold. During a stockout, a
 pre-order conversion, or the recovery period after a restock, units sold is capped by what was
@@ -262,10 +324,21 @@ Pinning CI to 22 with `actions/setup-node` would close it, and is a small separa
 
 ## 9. A SKU already on a draft container still reads as needing an order
 
-**Status:** BUILT 2026-07-31, pending verification against the live database. The assistant's
-sandbox cannot reach Postgres, so the query below has been written and the display exercised
-against simulated draft data, but no one has yet seen it run on real containers. What to check
-is recorded at the end of this item.
+**Status:** BUILT and SHIPPED. Live on the Action List: an "already drafted" filter card, the
+quantity as a sub-line under the recommended order with its ETA, and a tooltip stating that
+draft units are not committed inbound and are not subtracted from the recommendation. The
+design constraint that is the whole of this item is therefore satisfied on screen.
+
+**CLOSED 2026-08-10 without the comparison, by decision.** The reasoning: the drafted figure
+is read from `fc_containers` and `fc_container_items`, the same two tables the Container
+Planning screens read, so there is no second source that could disagree. Comparing a number
+against itself is not a verification.
+
+**What that argument does not cover, recorded rather than left implied.** It establishes the
+tables are shared; it does not establish the FILTER is. `DRAFT_STATUSES` assumes `draft` is
+the only uncommitted status the sheet import ever writes, and the ETA rule is applied here
+independently. If drafted totals ever look wrong, those two are the difference, not the data
+source. The remaining checks at the end of this item stay written down for that reason.
 
 **How this was reached, because the first answer was wrong.** This started as "let the purchaser
 mark a SKU actioned", taken from `dashboard/PLAN.md` §3.4, where the walkthrough has the
@@ -343,7 +416,10 @@ closing it.
 
 ## 10. Nothing on the planning screens carries money
 
-**Status:** identified, deferred by decision (2026-07-31). Recorded so it is not rediscovered.
+**Status:** CLOSED 2026-08-10 as out of scope, confirming the 2026-07-31 deferral rather
+than revisiting it. Not solved. Still needs a decided cost basis (unit versus landed) and a
+source for it before a column would mean anything, which is a data question rather than a
+screen one. Original entry follows.
 
 **The gap.** Every figure on the Action List and SKU Detail is in units. Purchasing does work to
 a budget, so a recommended 1,117 units is a materially different decision at $200 a unit than at
@@ -366,6 +442,34 @@ opening 447 rows.
 **Status:** BUILT 2026-07-31. The table, the dual write, the fallback read, the one-off migration
 and the cron backup all exist. NOT YET RUN against a real database, which the assistant cannot
 reach; see "What has to happen on a machine with credentials" at the end.
+
+**In one sentence, for anyone who has not read the rest.** The weekly cron writes what the
+model predicted before the outcome was known to a single gitignored file on one server disk,
+that file is the only evidence any prediction was made in advance, and re-running the model
+later cannot recreate it because that produces a backtest instead. The dual write to Postgres
+exists to remove the single copy.
+
+**Confirmed 2026-08-10 as the wanted design: live tables on the database, matching the legacy
+track.** Two of them, defined together in `src/ml/serving/store.py` so they cannot drift into
+disagreeing about a column:
+
+| Table | Holds | Legacy counterpart |
+|---|---|---|
+| `shipcore.ml_forward_forecasts` | the current horizon, accumulating one set per `forecast_date` | `shipcore.fc_forward_forecasts` |
+| `shipcore.ml_forecast_history` | every prediction ever served | `shipcore.fc_forecast_history` |
+
+Both are created on first write by `CREATE TABLE IF NOT EXISTS`, so there is no migration
+step. `scripts/ml_forward_forecast.py` writes both and prints whether each landed.
+
+**Nothing needs building. It needs one run with credentials**, which the Tuesday cron does.
+Read that run's output for `rows written to shipcore.ml_forward_forecasts` and `rows also
+written to shipcore.ml_forecast_history`. If either says NOT written, the server's `.env` is
+the place to look, and until then that artifact is still single-copy.
+
+**One ordering constraint, and it is easy to miss.** The server runs whatever code was last
+deployed. The `drop_leading_partial_week` fix and the `/health` commit stamp are both newer
+than the last deploy, so a push has to land before the cron runs or Tuesday's run repeats the
+partial-first-week bug and reports no commit.
 
 **What is at risk.** `data/processed/ml_forecast_history.parquet` gains one entry per weekly run,
 keyed by `model_version, forecast_date, unique_id, ds`. It is the only record of what the model
@@ -442,7 +546,18 @@ and remain readable as the fallback, so nothing is lost by not importing them.
 
 ## 12. Two loose ends from moving the ML artifacts into tables
 
-**Status:** identified 2026-07-31, both small, neither urgent.
+**Status:** CLOSED 2026-08-10. The first was fixed on 2026-07-31; the remaining two are
+decided against rather than deferred, so this item is not waiting on anything.
+
+**V1 history table: decided against.** The reasoning in the entry already pointed this way
+and is now the decision. The backtest grid answers the adoption question, V1 is retained for
+comparison rather than as a candidate, and the Forecast Validation page states the limitation
+in place rather than implying otherwise.
+
+**Prediction interval columns: not applicable while v11 is the model.** v11 emits a point
+forecast only. `_MIGRATE_PI_SQL` in `src/db.py` remains the pattern if that ever changes.
+
+Original entry follows.
 
 **~~`readiness()` still requires the forward-forecast parquet.~~ Fixed 2026-07-31.** The forecast
 requirement is now satisfied by the parquet *or* `shipcore.ml_forward_forecasts`, matching what
@@ -467,11 +582,13 @@ columns, because v11 emits a point forecast only. The legacy track's `_MIGRATE_P
 
 ## 13. UI changes on the planning screens
 
-**Status:** partly done 2026-08-05. Five items, listed smallest first. They are grouped because
-they are all presentation changes on screens that already have their numbers right.
+**Status: CLOSED 2026-08-10.** All five sub-items are resolved. They were grouped because they
+are all presentation changes on screens that already have their numbers right.
 
-Progress on 2026-08-05: 13.4 done, 13.3 declined, 13.2 partly done. 13.1 and 13.5 unchanged. Each
-is marked below rather than deleted, so the reasoning survives the decision.
+13.1 to 13.4 were settled on 2026-08-05. 13.5 was sequenced behind item 14 and closed on
+2026-08-10, resolved by the per-page manual rather than by inline text; the departure from
+what it asked for is recorded in the sub-item rather than smoothed over. Each is marked below
+rather than deleted, so the reasoning survives the decision.
 
 **13.1 Reorder the Forecast Validation page.** *Done 2026-08-05.* Ordered as an argument rather
 than by build date: the claim (model versus spreadsheet), its scope (how demand is shaped), the
@@ -548,15 +665,30 @@ Not done: widening the page past the app layout's `container` cap. With the pick
 no longer needed to make the table usable, and escaping the container affects how this page aligns
 with every other screen. Worth doing only if the table still overflows in practice.
 
-**13.5 Explain the priorities on the screen.** The Action List shows a priority label per row and
-a set of summary counts, and nothing on the page says what earns each label. The Streamlit
-prototype carried a plain-language explanation of every priority and the port dropped it, which is
-the same gap as the planning controls fixed on 2026-08-04. The explanation belongs where the
-labels appear rather than in a legend elsewhere.
+**13.5 Explain the priorities on the screen.** *Done. Resolved by the per-page manual rather
+than by inline text, which is a departure from what this item asked for and is recorded as
+such.*
 
-Sequenced after item 14, which changes what the labels are. Writing the explanation first means
-writing it twice, and the current set is the harder one to explain because one of its members is
-not the same kind of thing as the others.
+`app-layout.tsx` builds a context-sensitive `manualHref` from the matched nav item, so every
+screen has a manual button that opens its own page. The Action List's
+(`content/manual/action-list.{en,ko}.html`) defines each label in plain language: Preorder as
+SKUs carrying preorder backlog, No Stock as available inventory at or below zero, Routine as
+neither, and states that the first match wins when conditions overlap.
+
+It also does the job this item was sequenced after item 14 to make possible, and does it
+explicitly: "The ★ beside it is not another priority; it marks a product in the group
+generating half of four-week demand." That is the distinction item 14 created, written for a
+reader rather than for the changelog. The card list separately warns that the No stock on hand
+card and the No Stock priority differ, since a SKU with both no stock and backlog is badged
+Preorder but belongs to that card, which is exactly the kind of near-miss the original entry
+worried about.
+
+**Where this falls short of what was asked, stated rather than glossed.** The item said the
+explanation belongs where the labels appear, not in a legend elsewhere, and a manual page is a
+legend elsewhere. The mitigation is that it is one click from the screen and opens on the
+right page rather than at a table of contents. Reopen if anyone is seen hovering a badge
+expecting a tooltip; that would be the evidence this resolution is wrong, and it costs little
+to add then.
 
 ---
 
@@ -881,7 +1013,25 @@ code, and touching that mid-experiment makes any difference ambiguous.
 
 ## 20. A push that fails to deploy is indistinguishable from one that deployed
 
-**Status: observed 2026-08-06, cause unknown.**
+**Status: DETECTION BUILT 2026-08-10. The cause of the original incident is still unknown
+and probably always will be.**
+
+**What was built.** `/health` now returns `commit`, read once at startup from
+`.deployed_commit`, which `ci-cd.yml` writes after the rsync and before the restart.
+`api-reachable.yml` compares it hourly against the tip of `main` and fails when the two
+have disagreed for more than thirty minutes. The grace period is there because a deploy
+takes a couple of minutes and a mismatch straight after a push is normal rather than a
+fault.
+
+This does not stop a push failing to deploy. It converts that from silent into a red
+scheduled run within the hour, which is what the entry below asks for: the third and only
+option that does not depend on a human remembering to look.
+
+**Why the commit rather than a heartbeat.** It closes item 21 with the same mechanism. A
+push that never deployed and a deploy that never took the port are both "the serving commit
+is not the expected one", and both were invisible before.
+
+Original entry follows.
 
 Commit `e7a6665` was pushed to `main` at 15:02. `git ls-remote` confirms the remote branch
 moved. No workflow run was created. The trigger is a plain `on: push: branches: [main]` with
@@ -916,7 +1066,31 @@ check rather than a new mechanism.
 
 ## 21. The deploy cannot tell whether the unit it restarted is the one serving
 
-**Status: CAUSE FOUND and FIXED 2026-08-07. The monitoring half remains open.**
+**Status: CAUSE FIXED 2026-08-07. MONITORING BUILT 2026-08-10. One thread still open: what
+starts the unmanaged uvicorn.**
+
+**The monitoring gap is closed, by both changes this entry asked for.** Change 2, the
+`is-active` assertion, went in on 2026-08-07 and was hardened the same day after it passed
+while the unit was crash-looping: `systemctl restart` returns before uvicorn reaches its
+bind error, so the unit reads `active` for a second or two. It now waits 8 seconds, checks
+twice 5 seconds apart, and requires `0.0.0.0:8000` to be bound, which is the condition that
+actually matters and which `is-active` alone cannot see.
+
+Change 1, the commit SHA, went in on 2026-08-10. This is the one that catches the specific
+failure described below. `repo_root` proves the answering process started from the deploy
+directory, and a process left over from an EARLIER deploy satisfies that exactly, which is
+why the check passed throughout the incident. The commit does not: a stale process reports a
+stale stamp, because the file is read once at startup rather than per request. The deploy now
+fails on a mismatch, naming both commits.
+
+**Still open, and it is the cause rather than the detection.** Nothing has yet identified
+what starts the unmanaged uvicorn. The likely source is still the Next.js app's on-demand
+start, which fires when `AI_SERVICE_URL` is localhost and port 8000 does not answer, exactly
+as it would not during a restart. Until that is found this can recur; the difference is that
+it now fails the deploy loudly instead of reporting green, and `scripts/_kill_squatter.sh`
+clears it.
+
+Original entry follows.
 
 **The cause was the deploy itself.** `.github/workflows/ci-cd.yml` chose between systemd and a
 fallback with:

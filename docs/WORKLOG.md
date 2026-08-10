@@ -3053,3 +3053,49 @@ detail lives in the design document and codebase guide, not here.
   Also centralised the reference figures. Seven scripts each carried a private copy of the same
   PROTOTYPE dictionary with no record of which snapshot it came from, which is how a stale number
   gets printed next to a fresh one in the same table with nothing marking the difference.
+
+- 2026-08-10. Ran v17. Rejected: the long segment regresses in all three windows, mean +0.0120,
+  against a bar that needs a 0.0100 improvement. The informative part is that the pre-registered
+  escape hatch does not apply. I had written that near-zero feature gain would mean the model
+  ignored the feature and the null result would say nothing about channel mix. Instead the FBA
+  share ranked first by gain in two windows and second in the third, so the model used it
+  heavily and was made worse by it. Bias magnitude grew in every window and early stopping
+  halted sooner, which is what a feature that pays on the validation slice and not out of sample
+  looks like.
+  My precondition check was necessary and not sufficient, and that is worth remembering. I
+  tested that the share moves within a SKU rather than being fixed at launch, on the reasoning
+  that a fixed value is a SKU fingerprint. It passed at 70% within-SKU variation. The other 30%
+  is cross-sectional identity, and across 53 SKUs that was enough. The right test is whether the
+  moving part carries signal after the fixed part is removed. Not run, deliberately: the
+  pre-registered guard stops a rejected hypothesis being reshaped until something clears the bar.
+  Five perturbations of the long model have now each cost half a point to a point: two seasonal
+  blends, a monthly-only blend, the week-boundary shift, and now an exogenous feature. That
+  pattern is the strongest argument for freezing v11 and running the final test.
+
+- 2026-08-10. Backlog review. Closed 1 and 4 as out of scope and blocked on data that does not
+  exist, 10 and 12 as out of scope or decided against, and 3 and 13.5 as done. Verified the last
+  two in the code rather than taking them on trust: the Not-forecast section ships on a
+  trailing-13-week ACTUAL sales basis and says so, and the priority explanations exist in the
+  per-page manual. Recorded 13.5 as resolved differently from what it asked, since it wanted the
+  explanation beside the labels and a manual page is a legend elsewhere. Added an index at the
+  top of the file with a status line per item, because "closed" was covering three different
+  outcomes and a reader could not tell which.
+
+- 2026-08-10. Rewrote both Action List CSV exports (backlog 5). They built their header from
+  Object.keys(row), so the file carried forty wire-format columns while the screen showed ten.
+  Now nineteen named columns with human headers, plus the three date fields deliberately kept off
+  the table because a screen wants "in 12 days" and a spreadsheet wants the date.
+  Three bugs were in the same function and are fixed with it. Escaping quoted only on commas, so
+  a product name containing a quote or newline broke the row silently. No UTF-8 BOM, so Excel on
+  Windows rendered every Korean heading as mojibake in an app that ships a Korean locale. And
+  numbers went out formatted, which makes them text a spreadsheet cannot sum.
+
+- 2026-08-10. Closed backlog 20 and the monitoring half of 21 with one mechanism: /health now
+  returns the commit it was started from, read once at startup rather than per request, so a
+  stale process reports a stale stamp instead of the current file. The deploy asserts it and the
+  hourly reachability check compares it against the tip of main, failing only after thirty
+  minutes so an in-flight deploy is not reported as a fault.
+  The point is that repo_root could never have caught either failure. It proves the answering
+  process started from the deploy directory, and a process left over from an earlier deploy
+  satisfies that exactly, which is why the check passed for a whole day while the wrong code
+  served traffic. What starts that process is still unknown and stays open.

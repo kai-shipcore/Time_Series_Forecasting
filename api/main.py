@@ -1822,6 +1822,31 @@ def sku_search(q: str = Query(default="", min_length=1)):
     return JSONResponse(results)
 
 
+def _read_deployed_commit() -> str | None:
+    """The git commit this process was started from, or None outside a deploy.
+
+    Written by .github/workflows/ci-cd.yml into DEPLOY_PATH/.deployed_commit
+    after the rsync and BEFORE the service restart, so the value describes the
+    code that is about to run rather than the code that was running.
+
+    Read ONCE, at import, deliberately. Reading per request would report
+    whatever the file says now, which after a rewrite without a restart is a
+    claim about code this process is not running. A stale-but-true answer is
+    worth more than a fresh-but-wrong one, since the entire purpose of the field
+    is to answer "is the thing serving traffic the thing that was deployed".
+
+    Absent on a developer machine and on any clone, which is why it is optional
+    rather than an error: nothing else about this service requires a deploy.
+    """
+    try:
+        return (ROOT / ".deployed_commit").read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+DEPLOYED_COMMIT = _read_deployed_commit()
+
+
 @app.get("/health")
 async def health():
     """Liveness, plus whether the data this service reads is actually present.
@@ -1839,7 +1864,12 @@ async def health():
     try:
         status = _plan_data.readiness()
     except Exception as exc:  # pragma: no cover - readiness must never 500
-        return {"status": "ok", "ready": None, "readiness_error": str(exc)}
+        return {
+            "status": "ok",
+            "ready": None,
+            "readiness_error": str(exc),
+            "commit": DEPLOYED_COMMIT,
+        }
 
     return {
         "status": "ok",
@@ -1848,6 +1878,13 @@ async def health():
         "missing_optional": status["missing_optional"],
         "files": status["files"],
         "repo_root": status["repo_root"],
+        # Which revision is actually serving. repo_root answers "started from
+        # this directory", which a process left over from an earlier deploy also
+        # satisfies; this answers "started from this commit", which it does not.
+        # That difference is what BACKLOG 20 and 21 both turn on: a push that
+        # never deployed and a deploy that never took the port are both a commit
+        # mismatch here, and were both invisible before.
+        "commit": DEPLOYED_COMMIT,
     }
 
 
