@@ -434,3 +434,113 @@ answering that is what a health check is for. `ready` is the separate question.
 The same information appears in the app, in the status indicator on the planning
 pages, so a reader who is not on the server can still tell an outage from a data
 problem.
+
+## Runbook: the forecast API is not responding
+
+Written for whoever picks this up. Everything here was hit for real in August 2026
+and cost a day, so the symptoms are described the way they actually appear rather
+than the way they ought to.
+
+### First: is it actually down?
+
+```bash
+bash scripts/_test_port_8000.sh          # from any machine that is not the server
+```
+
+Expect JSON from `/health` and **401** from `/segmentation`. The 401 is a pass, not
+a failure: it proves the port is reachable and that the token is being enforced.
+
+Run this from a laptop, never from the server. Checking from the box passes even
+when the service is bound to loopback and no one else can reach it, which is the
+most common failure here.
+
+### Reading the failure
+
+The distinction that matters, and the one that was misread for months:
+
+| Symptom | Meaning |
+|---|---|
+| Hangs, then times out | Packets are being dropped. Oracle Cloud VCN security list. |
+| Connection refused, immediately | Packets arrive, nothing is listening on the public interface. The service is down, or bound to `127.0.0.1`. |
+| 200 on `/segmentation` with no token | Worse than an outage. The API is unauthenticated on a public port. Fix `FORECAST_API_TOKEN` before anything else. |
+
+A refusal means the network is fine. Only a hang implicates a firewall.
+
+### Then: what does the server say?
+
+GitHub → Actions → **Server diagnostics** → Run workflow. Read-only, no password,
+about seven seconds. It reports who owns port 8000, whether the unit is healthy or
+restart-looping, every uvicorn process with its start time, and whether the API
+answers.
+
+### The three failure modes seen so far
+
+**1. Something else is holding port 8000.**
+Symptom: diagnostics shows `127.0.0.1:8000`, and the unit state is `activating`
+rather than `active`. The journal says `[Errno 98] address already in use` every
+eight seconds.
+
+```bash
+bash scripts/_kill_squatter.sh
+```
+
+The unit binds within a few seconds. This was caused by the deploy's own fallback
+branch and is fixed at source (see BACKLOG 21), but a person starting a server by
+hand on the box produces the same state.
+
+**2. The service is bound to loopback.**
+Symptom: connection refused from outside, works on the box.
+Check `systemctl show coverland-forecast-api -p ExecStart --value`. It must end
+`--host 0.0.0.0 --port 8000 --workers 1`. If it says `127.0.0.1`, the unit file was
+replaced or the server was rebuilt. The correct unit is version-controlled at
+`deploy/coverland-forecast-api.service`; copy it to
+`/etc/systemd/system/`, `daemon-reload`, restart.
+
+**3. Reachable but useless.**
+Symptom: `/health` returns 200 with `"ready": false`. The process is alive and has
+no data to serve, so every planning page 500s. Usually means the weekly cron has
+not run or failed. Check `crontab -l | grep run_forecast_cron` (expect day 2,
+Tuesday) and the mtimes under `data/processed/`.
+
+### What watches this when nobody is looking
+
+**Hourly:** `.github/workflows/api-reachable.yml` curls the public URL from a
+GitHub runner, which is off the network and therefore tests the same path a laptop
+uses. It fails the run on unreachable, on `ready: false`, and on auth not being
+enforced. A red run emails the person who last touched that workflow file.
+
+**Every deploy:** `ci-cd.yml` asserts after restarting that the unit is `active`
+on two checks five seconds apart AND that `0.0.0.0:8000` is bound. A crash-looping
+unit now fails the build with the socket owner and journal attached. Before this,
+`systemctl restart` exited 0 while the service failed to start, so a deploy could
+report green while shipping code that never ran.
+
+**Two things to know about that monitoring.** GitHub disables scheduled workflows
+after 60 days without repository activity, and the Actions tab then offers a
+re-enable button; a monitor that silently stops is worse than none. And the failure
+email goes to whoever last committed to the workflow file, which after the handoff
+is the wrong person. Change it deliberately.
+
+### Things that are only correct together
+
+The week convention is encoded in three places and breaking one silently corrupts
+the forecast rather than erroring:
+
+- `src/clean.py`, `closed="right"` on the W-MON grouper
+- `src/weeks.py:last_complete_week`, steps back an extra week on Mondays
+- the crontab, day 2 (Tuesday), because bucket L stays open all of Monday L
+
+If the forecast ever looks a week stale, check all three before changing any of
+them. Design doc Section 4.30 has the evidence for why the convention is
+Tuesday-to-Monday rather than the Monday-to-Sunday most of the older
+documentation used to claim.
+
+### Security posture, stated plainly
+
+The host does no packet filtering: `iptables` INPUT policy is ACCEPT with no
+REJECT, and firewalld and ufw are both inactive. The Oracle VCN security list is
+the only network control, and `FORECAST_API_TOKEN` is the only application
+control. `/health` sits outside the token check by design, and eight POST
+endpoints sit behind it, including `/chat` (an LLM call, so somebody else's
+traffic on your bill) and `/run-forecast`. If the token is ever unset, those are
+open to the internet. The hourly check tests for exactly that.
