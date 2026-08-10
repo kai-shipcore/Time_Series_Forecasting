@@ -142,18 +142,32 @@ jobs:
           # is a green build. A unit that is restarting reports
           # "activating (auto-restart)", never "active".
           if command -v systemctl >/dev/null 2>&1 && systemctl cat coverland-forecast-api.service >/dev/null 2>&1; then
-            for i in 1 2 3 4 5 6 7 8 9 10; do
-              state=$(systemctl is-active coverland-forecast-api || true)
-              [ "$state" = "active" ] && break
-              sleep 2
-            done
-            if [ "$state" != "active" ]; then
-              echo "::error::coverland-forecast-api is '$state', not 'active', 20s after restart."
-              echo "Last 20 journal lines:"
-              journalctl -u coverland-forecast-api -n 20 --no-pager || true
+            # Wait BEFORE looking, then check twice. `systemctl restart` returns
+            # as soon as the process starts, and uvicorn needs a second or two to
+            # reach a bind error and exit, so the unit reports "active" during
+            # that window. An earlier version polled immediately and broke on the
+            # first "active", which let a crash-looping unit pass on 2026-08-10.
+            sleep 8
+            state=$(systemctl is-active coverland-forecast-api || true)
+            sleep 5
+            state2=$(systemctl is-active coverland-forecast-api || true)
+
+            # And the port, which is the thing that actually matters. A unit can
+            # be "active" while something else owns 8000; that is the squatter
+            # state, and it is invisible to is-active alone.
+            bound=$(ss -lnt | grep -c '0\.0\.0\.0:8000' || true)
+
+            if [ "$state" != "active" ] || [ "$state2" != "active" ] || [ "$bound" -eq 0 ]; then
+              echo "::error::forecast API unhealthy after restart: state=$state then $state2, 0.0.0.0:8000 listeners=$bound"
+              echo "--- who holds 8000 ---"
+              ss -lntp | grep 8000 || echo "  nothing listening"
+              echo "--- uvicorn processes (a relative venv path means it is not systemd's) ---"
+              ps -eo pid,ppid,lstart,cmd | grep -E 'uvicorn|api.main' | grep -v grep || true
+              echo "--- journal ---"
+              journalctl -u coverland-forecast-api -n 25 --no-pager || true
               exit 1
             fi
-            echo "unit is active"
+            echo "unit active and holding 0.0.0.0:8000"
           fi
           EOF
 
