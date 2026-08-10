@@ -3016,3 +3016,40 @@ detail lives in the design document and codebase guide, not here.
   UTC and they are on PDT: 00:00:06 and 00:01:11 UTC are 5:00pm and 5:01pm PDT on consecutive
   workdays, which is someone finishing for the day. I had been reading UTC timestamps as if
   they were local and inventing a scheduled job to explain the pattern.
+
+- 2026-08-10. Exported per-SKU per-week channel mix (`ml_31`) and pre-registered v17, a single
+  trailing 12-week Amazon-FBA share feature on the long model only. First run of `ml_31` grouped
+  on `src.v1._assign_stream`, which is V1's internal east/west fulfilment routing and not the
+  sales channel at all; it produced a plausible table answering the wrong question. Rewritten to
+  group on `channel` per the business's spec. The two taxonomies partition identical totals,
+  which is what proved the rewrite lost nothing.
+  Segment split decided the feature's scope: FBA is 51.5% of long-segment units but 2.5% of
+  short, and its trailing share barely moves within a short SKU. One column, long only. The user
+  asked whether one-hot encoding would be better; it would not, and the repo already paid for
+  that lesson once as `is_long` in v4.
+
+- 2026-08-10. Found the snapshot's FIRST week was partial, 32 units against neighbours of 280 to
+  415. `drop_incomplete_weeks` only ever trimmed the tail. The head case went unnoticed for a
+  year because a short final week looks wrong while a short first week looks like a launch.
+  Added `drop_leading_partial_week`, which tests the calendar rather than the unit count.
+
+- 2026-08-10. Advanced the pinned snapshot to 2026-08-03 and re-measured every version-log
+  figure. I had argued against this and the user overruled it. The user was right: the whole
+  batch took three minutes, every cell moved less than the noise floor, and comparing recorded
+  figures against a fresh run is what surfaced the real problem.
+  The recorded v-base table had been stale since v9. v-base applies the seasonal round-trip to
+  long SKUs, so when v9 moved ML_HOLIDAY_END from Dec 31 to Dec 15 the baseline moved with it
+  and the table was never re-measured. Setting the window back reproduces all six cells and all
+  three bias percentages exactly, so the cause is proven rather than inferred. Dec-Feb long was
+  recorded as 0.2764 against a true 0.2167, overstating by 0.06 every margin quoted over the
+  baseline in that window since v9. No verdict changes: in-script comparisons recompute the
+  baseline and were never affected, and v11's own criteria already cited the correct 0.2167.
+  `ml_12`, the guard positioned to catch exactly this, had been failing since v9 for a second
+  and unrelated reason: it required the ML and prototype factor sources to agree on every pinned
+  week, which the v9 window split makes impossible on the four weeks covering Dec 16 to 31. So
+  the one check that would have caught the stale numbers was already red for a legitimate
+  reason, and a check that always fails is a check nobody reads. It now asserts the shape of the
+  divergence instead of its absence.
+  Also centralised the reference figures. Seven scripts each carried a private copy of the same
+  PROTOTYPE dictionary with no record of which snapshot it came from, which is how a stale number
+  gets printed next to a fresh one in the same table with nothing marking the difference.

@@ -14,7 +14,11 @@ import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-load_dotenv()
+# load_raw_for_v1 reads the velocity table; without override a stale
+# shell DB_PASSWORD shadows .env and authentication fails. Documented in
+# CLAUDE.md as a truncated-password incident; hit again on 2026-08-10 by
+# scripts/ml_31_export_channel_mix.py, which imports from here.
+load_dotenv(override=True)
 
 # Module-level defaults — used as fallbacks when DB is unreachable.
 SEASONAL = {

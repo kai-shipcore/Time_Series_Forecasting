@@ -19,8 +19,9 @@ from src.ml.model import (FEATURES_V1, FEATURES_SHORT_ACCEL, FEATURES_V11_LONG,
                           FEATURES_V11_LONG_ACCEL, RatioLGBM, long_sku_set,
                           structural_baseline)
 
-PROTOTYPE = {"Mar-May": (0.2014, 0.1411), "Dec-Feb": (0.2863, 0.2737),
-             "Oct-Dec": (0.4251, 0.0911)}
+from src.ml.reference import PROTOTYPE, warn_if_stale  # noqa: E402
+
+warn_if_stale()
 
 
 def main():

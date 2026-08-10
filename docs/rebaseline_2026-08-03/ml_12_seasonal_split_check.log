@@ -1,0 +1,26 @@
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+
+  !! REFERENCE FIGURES ARE STALE
+     printed below: measured on snapshot 2026-07-20
+     running on:    snapshot 2026-08-03
+     They are NOT comparable to this run's numbers. Re-measure them
+     (scripts/ml_10 for PROTOTYPE, ml_03 and ml_08 for ml_12's) and
+     update src/ml/reference.py before reading anything into a gap.
+
+factors agree on all 111 weeks in the pinned data: False
+  (matches_prototype() over all future weeks: False, expected False once the membership rules differ)
+
+window   model       short  expected     long  expected   
+Mar-May  v-base     0.2114    0.2097   0.1313    0.1321   CHANGED
+Mar-May  v3         0.1859    0.1863   0.1431    0.1345   CHANGED
+Dec-Feb  v-base     0.1893    0.1788   0.2175    0.2764   CHANGED
+Dec-Feb  v3         0.2030    0.1943   0.2365    0.3145   CHANGED
+Oct-Dec  v-base     0.4755    0.4861   0.1213    0.1209   CHANGED
+Oct-Dec  v3         0.2376    0.1826   0.0995    0.1011   CHANGED
+
+INCONCLUSIVE: results moved, but so did the data. The expected figures were measured on snapshot 2026-07-20 and this ran on a different one, so a gap here says nothing about the factor sources. Re-measure the expectations on the current snapshot (ml_03 for v-base, ml_08 for v3), update src/ml/reference.py, then run this again to get a real verdict.

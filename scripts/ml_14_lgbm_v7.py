@@ -30,8 +30,9 @@ from src.ml.evaluate import bootstrap_delta, is_significant, score, score_table
 from src.ml.model import FEATURES_V1, FEATURES_V4, RatioLGBM, structural_baseline
 
 BALANCE = 0.5
-PROTOTYPE = {"Mar-May": (0.2014, 0.1411), "Dec-Feb": (0.2863, 0.2737),
-             "Oct-Dec": (0.4251, 0.0911)}
+from src.ml.reference import PROTOTYPE, warn_if_stale  # noqa: E402
+
+warn_if_stale()
 
 
 def main():

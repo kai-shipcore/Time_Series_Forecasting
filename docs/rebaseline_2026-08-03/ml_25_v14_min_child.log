@@ -1,0 +1,132 @@
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+windows: ['Mar-May', 'Dec-Feb', 'Oct-Dec']
+
+==========================================================================
+BASELINE  v11  (min_child_samples=200)
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1337      56         13127
+Mar-May smooth/short       0.1859     210         23266
+Mar-May        TOTAL       0.1671     266         36393
+Dec-Feb  smooth/long       0.1447      53         11392
+Dec-Feb smooth/short       0.2030     198         18729
+Dec-Feb        TOTAL       0.1810     251         30121
+Oct-Dec  smooth/long       0.1001      53         18162
+Oct-Dec smooth/short       0.2376      13          1055
+Oct-Dec        TOTAL       0.1077      66         19217
+
+tail (short, ramp<0.7): pooled WAPE 0.9439 over 22 SKUs
+
+==========================================================================
+CANDIDATE  min_child_samples=100
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1337      56         13127
+Mar-May smooth/short       0.1823     210         23266
+Mar-May        TOTAL       0.1648     266         36393
+Dec-Feb  smooth/long       0.1447      53         11392
+Dec-Feb smooth/short       0.2041     198         18729
+Dec-Feb        TOTAL       0.1816     251         30121
+Oct-Dec  smooth/long       0.1001      53         18162
+Oct-Dec smooth/short       0.2247      13          1055
+Oct-Dec        TOTAL       0.1070      66         19217
+
+tail (short, ramp<0.7): pooled WAPE 0.8935 over 22 SKUs (baseline 0.9439, delta -0.0504)
+long segment identical to baseline (control): True
+
+==========================================================================
+CANDIDATE  min_child_samples=50
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1337      56         13127
+Mar-May smooth/short       0.1817     210         23266
+Mar-May        TOTAL       0.1644     266         36393
+Dec-Feb  smooth/long       0.1447      53         11392
+Dec-Feb smooth/short       0.2032     198         18729
+Dec-Feb        TOTAL       0.1811     251         30121
+Oct-Dec  smooth/long       0.1001      53         18162
+Oct-Dec smooth/short       0.2271      13          1055
+Oct-Dec        TOTAL       0.1071      66         19217
+
+tail (short, ramp<0.7): pooled WAPE 0.9210 over 22 SKUs (baseline 0.9439, delta -0.0229)
+long segment identical to baseline (control): True
+
+==========================================================================
+CANDIDATE  min_child_samples=20
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1337      56         13127
+Mar-May smooth/short       0.1839     210         23266
+Mar-May        TOTAL       0.1658     266         36393
+Dec-Feb  smooth/long       0.1447      53         11392
+Dec-Feb smooth/short       0.2051     198         18729
+Dec-Feb        TOTAL       0.1822     251         30121
+Oct-Dec  smooth/long       0.1001      53         18162
+Oct-Dec smooth/short       0.2303      13          1055
+Oct-Dec        TOTAL       0.1073      66         19217
+
+tail (short, ramp<0.7): pooled WAPE 0.9342 over 22 SKUs (baseline 0.9439, delta -0.0098)
+long segment identical to baseline (control): True
+
+==========================================================================
+SHORT SEGMENT, ALL VALUES  (decision windows: Mar-May, Dec-Feb)
+==========================================================================
+window         v11 (200)       mcs=100        mcs=50        mcs=20
+Mar-May           0.1859   0.1823-0.00   0.1817-0.00   0.1839-0.00
+Dec-Feb           0.2030   0.2041+0.00   0.2032+0.00   0.2051+0.00
+Oct-Dec           0.2376   0.2247-0.01   0.2271-0.01   0.2303-0.00
+
+value        tail WAPE     delta   long identical
+200 (v11)       0.9439    0.0000         baseline
+100             0.8935   -0.0504             True
+50              0.9210   -0.0229             True
+20              0.9342   -0.0098             True
+
+wrote outputs/reports/v14_min_child_sweep.csv

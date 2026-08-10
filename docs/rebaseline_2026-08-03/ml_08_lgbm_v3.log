@@ -1,0 +1,87 @@
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+
+==============================================================
+Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+pooled WAPE (v2 iters=32, v3 iters=53):
+model         baseline      v2      v3
+segment                               
+TOTAL           0.1825  0.1670  0.1705
+smooth/long     0.1313  0.1347  0.1431
+smooth/short    0.2114  0.1852  0.1859
+
+bias% by segment:
+              baseline   v2   v3
+segment                         
+smooth/long       -2.1  1.1  2.5
+smooth/short      -7.6 -1.3  8.0
+TOTAL             -5.6 -0.5  6.0
+bootstrap v3-vs-baseline [short]: {'delta': -0.0255, 'se': 0.0112, 'ci_lo': -0.0471, 'ci_hi': -0.0018}
+bootstrap v3-vs-v2       [short]: {'delta': 0.0008, 'se': 0.0082, 'ci_lo': -0.0147, 'ci_hi': 0.0165}
+bootstrap v3-vs-baseline [long]: {'delta': 0.0118, 'se': 0.0143, 'ci_lo': -0.0166, 'ci_hi': 0.0383}
+bootstrap v3-vs-v2       [long]: {'delta': 0.0084, 'se': 0.0043, 'ci_lo': -0.0011, 'ci_hi': 0.016}
+ramp cohort (n=40):
+    baseline  wape=0.3327 bias=-27.4%
+    v2        wape=0.2869 bias=-13.8%
+    v3        wape=0.2840 bias=+13.6%
+
+==============================================================
+Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+pooled WAPE (v2 iters=56, v3 iters=65):
+model         baseline      v2      v3
+segment                               
+TOTAL           0.1999  0.3698  0.2157
+smooth/long     0.2175  0.2682  0.2365
+smooth/short    0.1893  0.4315  0.2030
+
+bias% by segment:
+              baseline    v2    v3
+segment                           
+smooth/long       16.7  23.6  20.0
+smooth/short       1.8  40.7  -0.3
+TOTAL              7.4  34.2   7.4
+bootstrap v3-vs-baseline [short]: {'delta': 0.0137, 'se': 0.0102, 'ci_lo': -0.0057, 'ci_hi': 0.0342}
+bootstrap v3-vs-v2       [short]: {'delta': -0.2286, 'se': 0.0244, 'ci_lo': -0.2729, 'ci_hi': -0.1798}
+bootstrap v3-vs-baseline [long]: {'delta': 0.019, 'se': 0.009, 'ci_lo': 0.0021, 'ci_hi': 0.0368}
+bootstrap v3-vs-v2       [long]: {'delta': -0.0317, 'se': 0.0043, 'ci_lo': -0.0389, 'ci_hi': -0.0228}
+ramp cohort (n=173):
+    baseline  wape=0.1706 bias=+0.4%
+    v2        wape=0.4227 bias=+40.7%
+    v3        wape=0.1927 bias=+0.1%
+
+==============================================================
+Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+pooled WAPE (v2 iters=40, v3 iters=44):
+model         baseline      v2      v3
+segment                               
+TOTAL           0.1408  0.1069  0.1071
+smooth/long     0.1213  0.0989  0.0995
+smooth/short    0.4755  0.2445  0.2376
+
+bias% by segment:
+              baseline    v2   v3
+segment                          
+smooth/long       -8.2   1.4  1.4
+smooth/short     -47.6 -10.1  1.0
+TOTAL            -10.4   0.7  1.4
+bootstrap v3-vs-baseline [short]: {'delta': -0.2379, 'se': 0.0886, 'ci_lo': -0.362, 'ci_hi': -0.0234}
+bootstrap v3-vs-v2       [short]: {'delta': -0.0069, 'se': 0.0381, 'ci_lo': -0.0604, 'ci_hi': 0.0833}
+bootstrap v3-vs-baseline [long]: {'delta': -0.0218, 'se': 0.0184, 'ci_lo': -0.0569, 'ci_hi': 0.017}
+bootstrap v3-vs-v2       [long]: {'delta': 0.0007, 'se': 0.0023, 'ci_lo': -0.0034, 'ci_hi': 0.0057}
+ramp cohort (n=18):
+    baseline  wape=0.3413 bias=-30.4%
+    v2        wape=0.2052 bias=-5.7%
+    v3        wape=0.2052 bias=-0.8%

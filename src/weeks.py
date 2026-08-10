@@ -85,3 +85,35 @@ def drop_incomplete_weeks(
         return weekly
     cutoff = last_complete_week(today)
     return weekly[pd.to_datetime(weekly[ds_col]) <= cutoff]
+
+
+def drop_leading_partial_week(
+    weekly: pd.DataFrame,
+    first_order_date: pd.Timestamp,
+    ds_col: str = "ds",
+) -> pd.DataFrame:
+    """Remove the FIRST bucket when the data starts partway through it.
+
+    The mirror of drop_incomplete_weeks, and it went unwritten for a year. The
+    tail was noticed because a Wednesday run produced an obviously short final
+    week; the head is silent, because the first bucket of a series looks exactly
+    like a slow launch. In the 2026-07-20 snapshot it held 32 units against
+    neighbours of 280 to 415, roughly a tenth of a week, and nothing flagged it.
+
+    Bucket L spans Tuesday (L-6) through Monday L. So the first bucket is
+    complete only if the earliest order in the data falls on or before L-6.
+    That is an exact test against the calendar rather than a guess from the
+    unit count, which would misfire on a genuinely quiet opening week.
+
+    `first_order_date` is the minimum order date of the RAW rows, not of the
+    weekly frame. Taking it from the weekly frame would be circular: every
+    bucket's label is by definition inside itself.
+    """
+    if weekly.empty:
+        return weekly
+    labels = pd.to_datetime(weekly[ds_col])
+    first_label = labels.min()
+    first_bucket_start = first_label - pd.Timedelta(days=6)
+    if pd.Timestamp(first_order_date).normalize() > first_bucket_start:
+        return weekly[labels > first_label]
+    return weekly

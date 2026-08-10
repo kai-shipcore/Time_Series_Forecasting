@@ -61,6 +61,110 @@ FEATURES_SHORT_AGE = FEATURES_V1 + ["sku_age"]
 # mirror of what elevation did for the post-holiday decline.
 FEATURES_SHORT_ACCEL = FEATURES_V1 + ["accel"]
 FEATURES_V11_LONG_ACCEL = FEATURES_V11_LONG + ["accel"]
+# v17 long-model candidate: trailing 12-week Amazon-FBA share of units. The
+# first EXOGENOUS feature tried -- everything above is derived from the SKU's
+# own demand history, so the model has been rearranging one information source
+# since v0. Long only: in the short segment FBA is 2.5% of units and its
+# trailing share barely moves within a SKU (within-SKU sd 0.025), so the column
+# would be a near-constant there. See the Section 6 v17 entry.
+FEATURES_V17_LONG = FEATURES_V11_LONG + ["fba_share_12w"]
+
+
+# --- channel mix (v17) -------------------------------------------------------
+# Groups as specified by the business, produced by scripts/ml_31_export_channel_mix.py.
+CHANNEL_GROUPS = ["amazon_fba", "amazon_fbm", "walmart", "coverland", "parts", "other"]
+CHANNEL_SHARE_WINDOW = 12   # weeks, matching the level window
+
+_CHANNEL_MIX: pd.DataFrame | None = None
+
+
+def _channel_mix() -> pd.DataFrame:
+    """channel_mix.parquet for the pinned snapshot, read once per process.
+
+    Deliberately NOT loaded at import time, and only touched when a feature
+    set actually asks for a channel column. Every model version before v17
+    must keep working on a checkout where this file was never exported, and
+    an import-time read would break all of them.
+    """
+    global _CHANNEL_MIX
+    if _CHANNEL_MIX is None:
+        from src.ml.dataset import data_dir
+
+        path = data_dir() / "channel_mix.parquet"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{path} is missing, and a feature set asked for a channel column. "
+                f"Export it with scripts/ml_31_export_channel_mix.py on a machine "
+                f"with DB_* credentials. It must sit beside the sales_clean.parquet "
+                f"it will be joined to, so the two describe the same weeks."
+            )
+        mix = pd.read_parquet(path)
+        mix["ds"] = pd.to_datetime(mix["ds"])
+        if mix.duplicated(["unique_id", "ds"]).any():
+            raise ValueError(
+                f"{path} has duplicate (unique_id, ds) keys. The left join below "
+                f"would multiply training rows rather than annotate them."
+            )
+        _CHANNEL_MIX = mix
+    return _CHANNEL_MIX
+
+
+def add_channel_share(df: pd.DataFrame) -> pd.DataFrame:
+    """Add fba_share_12w: FBA's share of the SKU's trailing 12 weeks of units.
+
+    As-of by construction. `df` is built from the split's train frame, which is
+    already truncated at the cutoff, and a trailing rolling sum only ever looks
+    backwards, so no row can see a week the model would not have had.
+
+    Undefined weeks. A SKU that sold nothing at all in the trailing 12 weeks has
+    no mix, and 0.0 would be a lie: it reads as "no FBA" when the truth is "no
+    sales". Those rows carry the SKU's last known share forward instead, and the
+    leading rows before a SKU has ever sold fall back to 0.0. That fallback is
+    close to immaterial because the same emptiness makes `level` zero, and rows
+    are weighted by level, so they contribute almost nothing to the loss and
+    predict almost nothing at serving time. It is written this way so the
+    feature never invents a mix that was not observed.
+
+    Caveat worth knowing, recorded rather than hidden: channel_mix.parquet was
+    queried later than sales_clean.parquet, from a source table that is still
+    being restated, so the two disagree on 4,492 of 379,390 SKU-weeks (0.4% of
+    units). This is the ordinary point-in-time-data caveat that already applies
+    to the whole backtest, and it lands in both the numerator and denominator of
+    a ratio, which is where it does least harm. It is NOT a lookahead: the
+    disagreement is about how past weeks were later restated, not about future
+    weeks becoming visible.
+    """
+    mix = _channel_mix()
+    cols = [f"units_{g}" for g in CHANNEL_GROUPS]
+
+    # how="left" on a unique right key preserves the left frame's row order,
+    # which the rolling below depends on.
+    m = df[["unique_id", "ds"]].merge(mix, on=["unique_id", "ds"], how="left")
+    if len(m) != len(df):
+        raise ValueError("channel join changed the row count")
+    unmatched = int(m[cols].isna().all(axis=1).sum())
+    if unmatched:
+        raise ValueError(
+            f"{unmatched} of {len(m)} SKU-weeks have no channel row. The export "
+            f"is built on a different SKU/week grid than the sales data, so the "
+            f"feature would be silently zero for those rows."
+        )
+
+    roll = (
+        m.groupby("unique_id")[cols]
+        .rolling(CHANNEL_SHARE_WINDOW, min_periods=1).sum()
+        .reset_index(level=0, drop=True)
+    )
+    total = roll[cols].sum(axis=1)
+    share = pd.Series(
+        np.where(total > 0, roll["units_amazon_fba"] / total.clip(lower=EPS), np.nan),
+        index=m.index,
+    )
+    share = share.groupby(m["unique_id"].to_numpy()).ffill().fillna(0.0)
+
+    out = df.copy()
+    out["fba_share_12w"] = share.to_numpy(dtype="float32")
+    return out
 
 
 def long_sku_set(profiles: pd.DataFrame, cutoff) -> set[str]:
@@ -92,6 +196,7 @@ def build_matrix(
     for_training: bool,
     deseas_features: bool = True,
     deseas_all: bool = False,
+    channel_share: bool = False,
 ) -> pd.DataFrame:
     """One row per (unique_id, anchor week, lead).
 
@@ -184,6 +289,12 @@ def build_matrix(
         df[col] = df[col].clip(upper=5.0).where(is_long_row, 1.0).fillna(1.0)
     # ramp neutralised for long SKUs only (for the replace variant)
     df["ramp_short_only"] = np.where(is_long_row, 1.0, df["ramp_4_12"])
+
+    # v17 channel mix, off by default. Gated on the flag rather than computed
+    # always, so a checkout without channel_mix.parquet still reproduces every
+    # version up to v16 byte for byte.
+    if channel_share:
+        df = add_channel_share(df)
 
     if for_training:
         anchors = df[df["weeks_live"] >= MIN_ANCHOR_AGE_WEEKS]
@@ -280,6 +391,12 @@ class RatioLGBM:
         # Default None reproduces PARAMS exactly, so existing versions are
         # unaffected.
         self.params = {**self.PARAMS, **(params or {})}
+        # Derived from the feature list, never passed in. If it were a separate
+        # argument, an experiment could ask for the feature and forget the flag,
+        # and LightGBM would raise on a missing column at fit time but only
+        # AFTER the matrix was built -- or worse, a future refactor with a
+        # fillna would train on a column of zeros and report a clean null result.
+        self.channel_share = any(f.endswith("_share_12w") for f in self.features)
         self.model = None
         self.clip_hi = None
 
@@ -293,7 +410,8 @@ class RatioLGBM:
         import lightgbm as lgb
 
         mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=True,
-                           deseas_features=self.deseas_features, deseas_all=self.deseas_all)
+                           deseas_features=self.deseas_features, deseas_all=self.deseas_all,
+                           channel_share=self.channel_share)
         if self.uids is not None:
             mat = mat[mat["unique_id"].isin(self.uids)]
             # The stratified validation draw spans both segments, so a
@@ -347,7 +465,8 @@ class RatioLGBM:
         self, train: pd.DataFrame, profiles: pd.DataFrame, cutoff
     ) -> pd.DataFrame:
         mat = build_matrix(train, self.horizon, cutoff, profiles, for_training=False,
-                           deseas_features=self.deseas_features, deseas_all=self.deseas_all)
+                           deseas_features=self.deseas_features, deseas_all=self.deseas_all,
+                           channel_share=self.channel_share)
         if self.uids is not None:
             mat = mat[mat["unique_id"].isin(self.uids)]
         r_hat = np.clip(self.model.predict(mat[self.features]), 0.0, self.clip_hi)

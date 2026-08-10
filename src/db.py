@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 
 from config import ROUTE_SHORT_SMOOTH_TO_V1
 
-load_dotenv()
+# Same stale-shell-export trap as src/v1.py and src/ingest.py. See CLAUDE.md.
+load_dotenv(override=True)
 
 # Method shown for smooth/short SKUs — follows the actual routing in selector.py
 _SHORT_METHOD = "V1" if ROUTE_SHORT_SMOOTH_TO_V1 else "WindowAverage"

@@ -41,7 +41,12 @@ ML_FINAL_TEST_CUTOFF = "2026-05-04"
 # data/processed/ and is unaffected by this setting. Advancing the snapshot is
 # a deliberate act that requires re-baselining recorded results; create a new
 # one with scripts/ml_snapshot_data.py.
-ML_DATA_SNAPSHOT = "2026-07-20"
+#
+# Advanced 2026-08-10, from "2026-07-20". Both snapshots are on disk and the
+# older one is untouched, so every figure recorded before this date remains
+# reproducible by setting this back. Reasons and consequences: design doc
+# Section 4.31.
+ML_DATA_SNAPSHOT = "2026-08-03"
 DATA_SNAPSHOTS = ROOT / "data" / "snapshots"
 
 # Conformal prediction interval levels.

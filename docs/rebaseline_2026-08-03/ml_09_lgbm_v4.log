@@ -1,0 +1,111 @@
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/.venv/lib/python3.13/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+  eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+
+==============================================================
+Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+pooled WAPE (v3 iters=53, v4 iters=119):
+model         baseline      v3      v4
+segment                               
+TOTAL           0.1825  0.1705  0.2218
+smooth/long     0.1313  0.1431  0.1440
+smooth/short    0.2114  0.1859  0.2657
+
+bias% by segment:
+              baseline   v3    v4
+segment                          
+smooth/long       -2.1  2.5  -0.4
+smooth/short      -7.6  8.0  22.2
+TOTAL             -5.6  6.0  14.1
+bootstrap v4-vs-baseline [short]: {'delta': 0.0543, 'se': 0.0204, 'ci_lo': 0.0152, 'ci_hi': 0.0971}  significant=True
+bootstrap v4-vs-v3       [short]: {'delta': 0.0798, 'se': 0.0154, 'ci_lo': 0.0496, 'ci_hi': 0.1096}  significant=True
+bootstrap v4-vs-baseline [long]: {'delta': 0.0127, 'se': 0.0173, 'ci_lo': -0.0227, 'ci_hi': 0.0454}  significant=False
+bootstrap v4-vs-v3       [long]: {'delta': 0.0009, 'se': 0.009, 'ci_lo': -0.0158, 'ci_hi': 0.0193}  significant=False
+ramp cohort (n=40):
+    baseline  wape=0.3327 bias=-27.4%
+    v3        wape=0.2840 bias=+13.6%
+    v4        wape=0.2726 bias=+11.5%
+v4 feature importance (gain):
+  feature          gain
+ramp_4_12 907092.727993
+ y_last_r 448669.084072
+  lag_1_r 302645.571730
+     lead 201520.677258
+  is_long 187199.901299
+  is_long share of total gain: 9.14%
+
+==============================================================
+Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+pooled WAPE (v3 iters=65, v4 iters=56):
+model         baseline      v3      v4
+segment                               
+TOTAL           0.1999  0.2157  0.1965
+smooth/long     0.2175  0.2365  0.1983
+smooth/short    0.1893  0.2030  0.1954
+
+bias% by segment:
+              baseline    v3    v4
+segment                           
+smooth/long       16.7  20.0  15.7
+smooth/short       1.8  -0.3   5.5
+TOTAL              7.4   7.4   9.4
+bootstrap v4-vs-baseline [short]: {'delta': 0.0061, 'se': 0.0079, 'ci_lo': -0.0076, 'ci_hi': 0.0223}  significant=False
+bootstrap v4-vs-v3       [short]: {'delta': -0.0076, 'se': 0.0072, 'ci_lo': -0.0212, 'ci_hi': 0.0072}  significant=False
+bootstrap v4-vs-baseline [long]: {'delta': -0.0192, 'se': 0.0126, 'ci_lo': -0.0418, 'ci_hi': 0.0082}  significant=False
+bootstrap v4-vs-v3       [long]: {'delta': -0.0382, 'se': 0.0064, 'ci_lo': -0.0496, 'ci_hi': -0.0243}  significant=True
+ramp cohort (n=173):
+    baseline  wape=0.1706 bias=+0.4%
+    v3        wape=0.1927 bias=+0.1%
+    v4        wape=0.1816 bias=+5.4%
+v4 feature importance (gain):
+  feature          gain
+ramp_4_12 519213.391998
+ y_last_r 214473.429688
+  lag_1_r 125372.077393
+     lead 119827.757774
+  is_long  42634.323769
+  is_long share of total gain: 4.17%
+
+==============================================================
+Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+pooled WAPE (v3 iters=44, v4 iters=52):
+model         baseline      v3      v4
+segment                               
+TOTAL           0.1408  0.1071  0.1060
+smooth/long     0.1213  0.0995  0.0981
+smooth/short    0.4755  0.2376  0.2422
+
+bias% by segment:
+              baseline   v3   v4
+segment                         
+smooth/long       -8.2  1.4  1.4
+smooth/short     -47.6  1.0  2.3
+TOTAL            -10.4  1.4  1.4
+bootstrap v4-vs-baseline [short]: {'delta': -0.2334, 'se': 0.0926, 'ci_lo': -0.3634, 'ci_hi': -0.0112}  significant=True
+bootstrap v4-vs-v3       [short]: {'delta': 0.0046, 'se': 0.0078, 'ci_lo': -0.0072, 'ci_hi': 0.0235}  significant=False
+bootstrap v4-vs-baseline [long]: {'delta': -0.0232, 'se': 0.0184, 'ci_lo': -0.0576, 'ci_hi': 0.0159}  significant=False
+bootstrap v4-vs-v3       [long]: {'delta': -0.0014, 'se': 0.001, 'ci_lo': -0.0036, 'ci_hi': 0.0004}  significant=False
+ramp cohort (n=18):
+    baseline  wape=0.3413 bias=-30.4%
+    v3        wape=0.2052 bias=-0.8%
+    v4        wape=0.2043 bias=-0.1%
+v4 feature importance (gain):
+  feature          gain
+ramp_4_12 449379.980385
+ y_last_r 152031.522316
+  lag_1_r  99500.849182
+     lead  72098.745300
+  is_long   2586.716980
+  is_long share of total gain: 0.33%

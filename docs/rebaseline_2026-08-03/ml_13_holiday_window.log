@@ -1,0 +1,57 @@
+
+==================================================================
+Mar-May  Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+pooled WAPE:
+model         end_12-15  end_12-31
+segment                           
+TOTAL            0.1706     0.1776
+smooth/long      0.1313     0.1330
+smooth/short     0.1928     0.2028
+
+bias% by segment:
+              end_12-31  end_12-15
+segment                           
+smooth/long        -5.6       -2.1
+smooth/short       -7.6       -4.3
+TOTAL              -6.9       -3.5
+bootstrap candidate-vs-current [short]: {'delta': -0.01, 'se': 0.0031, 'ci_lo': -0.0152, 'ci_hi': -0.0037}  significant=True
+bootstrap candidate-vs-current [long]: {'delta': -0.0017, 'se': 0.0071, 'ci_lo': -0.0154, 'ci_hi': 0.0116}  significant=False
+
+==================================================================
+Dec-Feb  Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+pooled WAPE:
+model         end_12-15  end_12-31
+segment                           
+TOTAL            0.2815     0.2852
+smooth/long      0.2175     0.2768
+smooth/short     0.3204     0.2904
+
+bias% by segment:
+              end_12-31  end_12-15
+segment                           
+smooth/long        24.1       16.7
+smooth/short      -22.3      -27.0
+TOTAL              -4.7      -10.4
+bootstrap candidate-vs-current [short]: {'delta': 0.03, 'se': 0.0028, 'ci_lo': 0.0244, 'ci_hi': 0.0349}  significant=True
+bootstrap candidate-vs-current [long]: {'delta': -0.0593, 'se': 0.0065, 'ci_lo': -0.069, 'ci_hi': -0.045}  significant=True
+
+==================================================================
+Oct-Dec  Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+pooled WAPE:
+model         end_12-15  end_12-31
+segment                           
+TOTAL            0.1374     0.1374
+smooth/long      0.1213     0.1213
+smooth/short     0.4137     0.4137
+
+bias% by segment:
+              end_12-31  end_12-15
+segment                           
+smooth/long        -8.2       -8.2
+smooth/short      -41.4      -41.4
+TOTAL             -10.0      -10.0
+bootstrap candidate-vs-current [short]: {'delta': 0.0, 'se': 0.0, 'ci_lo': 0.0, 'ci_hi': 0.0}  significant=False
+bootstrap candidate-vs-current [long]: {'delta': 0.0, 'se': 0.0, 'ci_lo': 0.0, 'ci_hi': 0.0}  significant=False

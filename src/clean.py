@@ -2,7 +2,7 @@
 import pandas as pd
 from pathlib import Path
 
-from src.weeks import drop_incomplete_weeks
+from src.weeks import drop_incomplete_weeks, drop_leading_partial_week
 
 PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 OUTPUT_PATH = PROCESSED_DIR / "sales_clean.parquet"
@@ -70,6 +70,34 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     if weekly["ds"].max() < before:
         print(f"  Dropped incomplete trailing week {before.date()} "
               f"(training through {weekly['ds'].max().date()})")
+
+    # And the same at the other end, which nothing did until 2026-08-10.
+    #
+    # The source data starts partway through a week, so the first W-MON bucket
+    # held a fraction of a week and was stamped as a full one. In the 2026-07-20
+    # snapshot that was 32 units against neighbouring weeks of 280 to 415.
+    #
+    # It is quieter than the trailing case and was missed for that reason: a
+    # short final week looks wrong, a short FIRST week looks like a launch. The
+    # damage is smaller too, because a series' opening weeks sit outside the
+    # 12-week level and 52-week elevation windows of any recent cutoff. What it
+    # does reach is src/profile.py, which reads train_start and the early
+    # zero-fraction off this frame for every SKU alive at the start.
+    #
+    # Before the grid, for the same reason as the trailing trim: the reindex
+    # below would re-create the dropped week as a row of zeros, which is worse
+    # than the partial week rather than better.
+    first_before = weekly["ds"].min()
+    weekly = drop_leading_partial_week(weekly, df["order_date"].min())
+    if weekly.empty:
+        raise ValueError(
+            "Dropping the leading partial week emptied the frame: the data "
+            "covers less than one complete Tuesday-to-Monday week."
+        )
+    if weekly["ds"].min() > first_before:
+        print(f"  Dropped partial leading week {first_before.date()} "
+              f"(data starts {pd.Timestamp(df['order_date'].min()).date()}, "
+              f"mid-bucket; training from {weekly['ds'].min().date()})")
 
     # Build a full regular grid so every SKU has a row for every week
     all_weeks = pd.date_range(weekly["ds"].min(), weekly["ds"].max(), freq="W-MON")

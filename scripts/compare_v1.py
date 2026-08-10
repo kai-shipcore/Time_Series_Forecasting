@@ -33,7 +33,8 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from urllib.parse import quote_plus
 
-load_dotenv()
+# Same stale-shell-export trap as src/v1.py. See CLAUDE.md.
+load_dotenv(override=True)
 
 PROCESSED    = ROOT / "data" / "processed"
 RAW_PATH     = PROCESSED / "orders_raw.parquet"

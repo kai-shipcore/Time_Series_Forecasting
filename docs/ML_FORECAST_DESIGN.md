@@ -1387,6 +1387,94 @@ at least one arm before a change of sign means anything, and any future use of t
 should say so. **This does not rescue the result.** The magnitude criteria failed on their
 own, by a factor of two and a half on the largest cell.
 
+### 4.31 Snapshot advanced to 2026-08-03, and what re-measuring found
+
+**Decision (2026-08-10): `ML_DATA_SNAPSHOT` advanced from `2026-07-20` to `2026-08-03`, and
+every version-log figure re-measured.** The 2026-07-20 snapshot remains on disk untouched,
+so setting the value back reproduces every figure recorded before this date.
+
+**Why.** `src/clean.py` trimmed a partial trailing week and nothing trimmed a partial
+LEADING one. The source orders begin on 2024-06-17, which under Tuesday-to-Monday weeks is
+the last day of the bucket labelled 2024-06-17, so that bucket held one day of seven and was
+stamped as a full week: 32 units against neighbouring weeks of 280 to 415. The tail case was
+caught a year ago because a short final week looks wrong. The head case survived because a
+short first week looks like a launch. `src/weeks.py:drop_leading_partial_week` now tests it
+against the calendar, asking whether the earliest order falls on or before the bucket's
+Tuesday rather than inferring anything from the unit count.
+
+**The effect on recorded results was almost nothing, which was worth establishing rather
+than assuming.** The partial week touches no prediction in any window: the longest feature
+window is `elev_long`'s 52 weeks and the earliest cutoff is 2025-10-06, so nothing reaches
+back to June 2024. What it did reach was `src/profile.py`, which read `train_start` and the
+early zero-fraction off that frame.
+
+Measured across the snapshot change, on identical window definitions:
+
+| | old (2026-07-20) | new (2026-08-03) |
+|---|---|---|
+| v-base Mar-May short / long | 0.2097 / 0.1302 | 0.2114 / 0.1313 |
+| v-base Dec-Feb short / long | 0.1788 / 0.2167 | 0.1893 / 0.2175 |
+| v-base Oct-Dec short / long | 0.4861 / 0.1209 | 0.4755 / 0.1213 |
+| v11 Mar-May short / long | 0.1961 / 0.1355 | 0.1859 / 0.1337 |
+| v11 Dec-Feb short / long | 0.2000 / 0.1380 | 0.2030 / 0.1447 |
+| v11 Oct-Dec long | 0.1000 | 0.1001 |
+
+Every cell moves by at most 0.011, and v11's long segment by at most 0.0067, all inside the
+±0.011 to ±0.014 bootstrap noise floor for a single-window difference. The scored population
+is stable too: 95% to 97% of scored SKUs are shared at every window, no shared SKU changed
+segment label, and the long counts move by at most two. Windows themselves cannot move,
+being anchored to `ML_FINAL_TEST_CUTOFF` by date.
+
+**A caveat on the smooth count.** Buckets went from 447 smooth / 3,002 intermittent to 467 /
+3,058, and 190 SKUs were promoted to smooth/short. Almost none of that reaches the scored
+set, because `src/profile.py` overwrites a promoted SKU's `train_start` with the start of the
+trailing 13-week window, which advances every refresh while the cutoffs stay fixed. Extending
+the data by three weeks moved that window forward and pushed nine previously-scored SKUs out
+of eligibility. This is the pre-existing flaw already recorded under `eligible_skus` and in
+BACKLOG; it is noted here only so the larger smooth count is not read as more SKUs being
+evaluated.
+
+**What the exercise actually found.** The re-baseline was a non-event. Comparing recorded
+figures against a fresh run was not. The v-base table had been stale since v9 moved
+`ML_HOLIDAY_END`, and `ml_12`, the regression check that exists to catch exactly this, had
+been failing or unrun long enough for nobody to notice. Details and the confirming audit are
+in the v-base entry in Section 6.
+
+**`ml_12` was failing for a second, independent reason, and it is the same root cause.** Its
+first assertion required `src/ml/seasonal.py` and `src/deseasonalize.py` to produce identical
+factors on every week in the pinned data. v9 moved `ML_HOLIDAY_END` to `(12, 15)` while the
+prototype's `HOLIDAY_END` stayed `(12, 31)`, so from that moment the two differ on any week
+covering Dec 16 to 31. The pinned data holds exactly four such weeks, labelled 2024-12-23,
+2024-12-30, 2025-12-22 and 2025-12-29, where the ML factor is 1.0 and the prototype's is 1.26.
+The same four differ on both snapshots, so this is not a re-baseline effect.
+
+The assertion was therefore forbidding the divergence that the v9 split exists to create.
+The comment above it justified the check by reasoning about labels versus covered days, which
+was correct for that distinction and silently assumed the two windows were otherwise
+identical. The script now asserts the SHAPE of the divergence instead: the sources may differ
+only on weeks touching the gap between the two window ends, derived from config so that moving
+either window keeps the check honest, and any disagreement outside that gap fails. Seven of
+111 weeks are eligible to differ, so the check retains its force.
+
+This is why the stale figures survived. The one guard positioned to catch them was already
+red for an unrelated and legitimate reason, and a check that always fails is a check nobody
+reads.
+
+**Three changes to stop it recurring.** `src/ml/reference.py` holds every cross-script
+reference figure once, tagged with the snapshot it was measured on, and prints a banner in
+any run where the active snapshot differs; seven scripts previously carried private copies
+with no such tag. `ml_12` now returns "inconclusive" rather than "the two factor sources
+differ" when the snapshot has moved, because that message named a cause the run could not
+distinguish. And its factor assertion permits the deliberate v9 divergence while still
+catching an accidental one.
+
+**Not re-measured, deliberately.** `ml_04`, `ml_17` to `ml_19` and `ml_26` to `ml_28` are
+parameter and phase searches whose selected values are already committed to `config.py` and
+to the week convention. They cost several times the rest of the batch combined and no
+version comparison depends on their internals being re-derived. Every re-run's raw output is
+committed under `docs/rebaseline_2026-08-03/`, which is the record; the tables in Section 6
+are a summary of it and the logs are authoritative where they disagree.
+
 ---
 
 ## 5. Feature Backlog & Open Questions
@@ -1534,6 +1622,10 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v11 | hybrid: shared short model + dedicated long model with an elevation feature | **BEST**, all criteria met; final test pending | Section 4.27 |
 | v12 | + SKU age feature in the shared (short) model | rejected | Section 4.28 |
 | v13 | acceleration feature: two independent tests (short model, and long model) | both rejected | Section 6 |
+| v14 | `min_child_samples` swept for the collapsing tail | rejected at every value tested | Section 6 |
+| v15 | seasonal factor blended across the days a week covers | passed its criterion, not adopted after v16 | Section 6 |
+| v16 | the holiday half of v15 without the monthly half | rejected, and it overturned v15's attribution | Section 6 |
+| v17 | + trailing 12-week Amazon-FBA share in the long model | pre-registered 2026-08-10 | Section 6 |
 
 ### v-base (July 2026)
 
@@ -1541,12 +1633,44 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
   SKUs, none for short (Sections 4.10, 4.17). No learned parameters.
 - **Status:** BEST. This is the floor every later version must beat.
 
+Measured on snapshot 2026-08-03. Raw output: `docs/rebaseline_2026-08-03/ml_03_baseline_deseas.log`.
+
 | Pooled WAPE | Mar-May | Dec-Feb | Oct-Dec |
 |---|---|---|---|
-| smooth/short | 0.2097 | 0.1788 | (0.4861) |
-| smooth/long | 0.1321 | 0.2764 | 0.1209 |
+| smooth/short | 0.2114 | 0.1893 | (0.4755) |
+| smooth/long | 0.1313 | 0.2175 | 0.1213 |
 
-Bias: short −7.1%, +1.7%, −48.6%; long −5.6%, +24.4%, −8.3%.
+Bias: long −2.2%, +16.9%, −8.3%.
+
+**Correction, 2026-08-10. The figures previously in this table were stale, and not
+because of the snapshot.** They read short 0.2097 / 0.1788 / (0.4861) and long 0.1321 /
+0.2764 / 0.1209, with long bias −5.6%, +24.4%, −8.3%. Re-running v-base on the
+2026-07-20 snapshot they claim to come from returns long 0.1302 / 0.2167 / 0.1209.
+Setting `ML_HOLIDAY_END` back to `(12, 31)`, its value before v9, reproduces all six
+cells and all three bias percentages exactly (`scripts/ml_33_holiday_window_audit.py`).
+
+v-base applies the seasonal round-trip to long SKUs, so the holiday window is one of its
+inputs. When v9 moved `ML_HOLIDAY_END` to `(12, 15)` the baseline moved with it, and this
+table was not re-measured. The pattern of which cells were affected confirms the
+mechanism rather than merely being consistent with it: all three short cells were
+unaffected because short SKUs get no round-trip in v-base at all, and Oct-Dec long was
+unaffected because its test window ends 2025-12-15, exactly where the two windows begin
+to differ. Only Mar-May long and Dec-Feb long moved, and Dec-Feb moved most because both
+divergent weeks, labelled 2025-12-22 and 2025-12-29, fall inside it.
+
+Consequence. From v9 onward, every figure quoted as a margin over v-base in this document
+was a margin over a baseline built on different seasonal factors from the model being
+judged, overstating the baseline's error in Dec-Feb by about 0.06. No adoption or
+rejection changes: v11 still beats the corrected v-base on Dec-Feb long by 0.0727, which
+is decisive on any reading. The margins were overstated, not the verdicts. Comparisons
+computed inside a script at run time were never affected, because those recompute the
+baseline; only figures transcribed into this document were.
+
+The lesson is the one this correction is filed under in Section 4.31: nothing in this
+project re-derived a recorded number, so a figure could go stale the moment a config value
+it depended on moved, and stay stale indefinitely. `src/ml/reference.py` now holds these
+values once, tagged with the snapshot they were measured on, and every script that prints
+them says so when the active snapshot differs.
 
 ### v0 (July 2026)
 
@@ -2155,23 +2279,38 @@ episode across all long SKUs and weeks, not on December alone.
 
 **Status: all three criteria met. New BEST. Final test not yet run.**
 
+Re-measured on snapshot 2026-08-03 (Section 4.31). Raw output:
+`docs/rebaseline_2026-08-03/ml_22_v11_hybrid.log`.
+
 | Pooled WAPE | v11 | v9 | v-base | prototype | v11 vs v-base (long) |
 |---|---|---|---|---|---|
-| short, Mar-May | 0.1961 | 0.1961 | 0.2097 | 0.2014 | (short = v9) |
-| short, Dec-Feb | 0.2000 | 0.2000 | 0.1788 | 0.2863 | (short = v9) |
-| short, Oct-Dec (ref) | 0.1783 | 0.1783 | 0.4861 | 0.4251 | (short = v9) |
-| long, Mar-May | 0.1355 | 0.1394 | 0.1302 | 0.1411 | +0.0053, tie |
-| long, Dec-Feb | **0.1380** | 0.2528 | 0.2167 | 0.2737 | −0.0787, significant |
-| long, Oct-Dec | 0.1000 | 0.1023 | 0.1209 | 0.0911 | −0.0209, tie |
+| short, Mar-May | 0.1859 | 0.1859 | 0.2114 | 0.2028 | (short = v9) |
+| short, Dec-Feb | 0.2030 | 0.2030 | 0.1893 | 0.2904 | (short = v9) |
+| short, Oct-Dec (ref) | 0.2376 | 0.2376 | 0.4755 | 0.4137 | (short = v9) |
+| long, Mar-May | 0.1337 | 0.1431 | 0.1313 | 0.1437 | +0.0024, tie |
+| long, Dec-Feb | **0.1447** | 0.2365 | 0.2175 | 0.2690 | −0.0727, significant |
+| long, Oct-Dec | 0.1001 | 0.0995 | 0.1213 | 0.0918 | −0.0212, tie |
 
-Long bias: −7.2%, +5.0%, +1.7% across the three windows; the Dec-Feb figure
-falls from v9's +22.2% to +5.0%.
+Long bias: −6.5%, +4.5%, +1.0% across the three windows; the Dec-Feb figure falls from v9's
++20.0% to +4.5%.
 
-The defining result: Dec-Feb long, which every version since v1 has lost and where a moving
-average still beat v9, is now 0.1380, well below both v-base (0.2167) and the prototype
-(0.2737). Short is identical to v9 by construction, so its qualification is intact, and the
-long model does not regress in the other two windows. v11 beats the prototype in five of
-six cells, losing only Oct-Dec long, the cell V1 also wins.
+Figures on the previous snapshot, for continuity: short 0.1961 / 0.2000 / 0.1783, long
+0.1355 / 0.1380 / 0.1000. Every cell moves by less than the bootstrap noise floor and no
+criterion changes. The Oct-Dec short reference cell moves most, from 0.1783 to 0.2376; that
+cell has 13 eligible SKUs and is excluded from decisions under Section 1.5, which is why a
+swing of that size there is unremarkable.
+
+The defining result is unchanged: Dec-Feb long, which every version since v1 has lost and
+where a moving average still beat v9, is 0.1447, well below both v-base (0.2175) and the
+prototype (0.2690). Short is identical to v9 by construction, so its qualification is
+intact, and the long model does not regress in the other two windows. v11 beats the
+prototype in five of six cells, losing only Oct-Dec long, the cell V1 also wins.
+
+**Note on the v-base correction.** The criteria above cite v-base Dec-Feb long as 0.2167,
+which was the correct value all along; only the transcribed table in the v-base entry
+carried the stale 0.2764. That is the direct evidence that the staleness described in
+Section 4.31 never reached a verdict: comparisons made inside a script recompute the
+baseline, and this entry was written against one of those.
 
 The within-long re-stratification improved the result over the exploration (Dec-Feb long
 0.1380 versus the exploration's 0.1557 for the same feature set), confirming that the
@@ -2598,3 +2737,102 @@ that its pass was a cancellation of two effects rather than a demonstration that
 free; adopting on that basis would be reading a number without its explanation. The underlying
 defects are real and remain documented: the label-month assignment in v15's opening paragraphs,
 and the 4-of-7 holiday cliff. Both are BACKLOG material for whoever has more than a week.
+
+### v17 (August 2026) — trailing 12-week Amazon-FBA share, long model only
+
+**Status: pre-registered 2026-08-10, before running.**
+
+**Why this is worth a run when the prior is low.** Every feature from v0 to v16 is derived from
+the SKU's own demand history: levels, ratios of recent windows to that level, elevation against
+an annual mean, acceleration, age. The model has been rearranging one information source for
+seventeen versions, and v15 and v16 read as a model that has stopped responding to
+rearrangement. Channel mix is the first input from outside that source. That is the entire
+argument for testing it, and it is an argument about information rather than about any expected
+effect size. The mechanism by which mix would predict total demand is second order at best: FBA
+and direct demand differ in seasonality and in how quickly they respond, so the mix says which
+mixture of dynamics a SKU is currently running. Nothing establishes that this matters at the
+scale pooled WAPE measures.
+
+**Where the data came from.** `shipcore.fc_velocity_link_snapshot_forecast` already carries a
+`channel` column. `scripts/ml_31_export_channel_mix.py` groups it as the business specifies,
+`amazon_fba`, `amazon_fbm`, `walmart`, `coverland` (B2C plus B2B plus ICarCover), `parts`
+(Advance_Parts plus Auto_Armor), and writes per-SKU per-week units to
+`channel_mix.parquet` beside the pinned snapshot. Written beside it, never into it: adding a
+column to `sales_clean.parquet` would change its checksum and re-baseline every number in this
+log. Eight distinct channel strings exist and all eight map, so `other` is empty.
+
+**What the input data showed, and what it decided.** These are properties of the inputs, not of
+any model's error, so using them to design the feature is not development-set peeking.
+
+| | short (366 SKUs) | long (81 SKUs) |
+|---|---|---|
+| FBA share of units | 2.5% | 51.5% |
+| SKUs above a 10% FBA share | 13 of 366 | 58 of 81 |
+| Coverland share of units | 88.5% | 7.6% |
+| SKUs that are >90% one channel | 231 of 366 | 4 of 81 |
+| within-SKU sd of trailing FBA share | 0.025 | 0.190 |
+| between-SKU sd of trailing FBA share | 0.084 | 0.193 |
+
+Three things follow. The two segments are different businesses, short being almost entirely
+direct sales and long genuinely mixed, so a single feature spanning both would be near-constant
+on one side. Walmart is out at 0.4% of units with no SKU above a 10% share. And the mix moves
+within a SKU over time rather than being fixed at launch, which is the precondition that
+matters: a static per-SKU value is a SKU fingerprint, and a tree given a fingerprint memorises
+per-SKU levels instead of learning a relationship.
+
+**Why one column and not the full mix.** Shares sum to one, so `k` groups buy `k-1` independent
+columns, and the full mix would be three. The long model has four features and trains on 81
+SKUs. Three more nearly doubles its capacity on that sample, which is the standard way to
+manufacture a development-window result that does not survive the test window. One column keeps
+the comparison interpretable, and if the single largest and most variable component carries
+nothing then the narrower components are very unlikely to.
+
+**Why not a categorical or one-hot encoding.** Considered and rejected on three grounds. Trees
+split on thresholds, so a continuous share already lets LightGBM learn any cut of it, and
+one-hot supplies only the coarse version of the same split, which is a loss of information
+rather than a different encoding. A dominant-channel label would be near-constant per SKU, and
+that shape is exactly `is_long` in v4, which the model used to reallocate capacity between
+segments rather than to learn anything, and which Section 4.23 rejected. And the label would be
+unstable anyway: long-segment median shares are FBA 25.6%, parts 22.0%, FBM 18.0%, close enough
+that "which is biggest" changes on ordinary variation.
+
+**The change.** `FEATURES_V17_LONG = FEATURES_V11_LONG + ["fba_share_12w"]`. The short arm is
+the v11 shared model, untouched. The feature is FBA units divided by all channel units over the
+trailing 12 weeks inclusive of the anchor, matching the level window. It is as-of by
+construction: the frame it is built from is truncated at the cutoff and a trailing sum only
+looks backwards. Weeks where the SKU sold nothing at all carry the last observed share forward,
+because 0.0 there would read as "no FBA" when the truth is "no sales"; leading weeks before a
+SKU has ever sold fall back to 0.0, which is close to immaterial since those rows also have a
+zero level and are weighted by level. Computation is gated behind a flag derived from the
+feature list, so a checkout without `channel_mix.parquet` reproduces v0 through v16 unchanged.
+
+**Pass criteria, stated before running.** This is a feature, not a correctness fix, so the
+Section 1.5 adoption rule applies in full and the non-inferiority basis used for v15 and v16
+does not.
+
+1. **Primary.** Consistent sign across the three development windows on smooth/long, and a
+   three-window mean improvement of at least 0.01. Borderline calls go to the bootstrap: the
+   mean improvement must exceed twice the standard error of the paired difference.
+2. **Judged on smooth/long only.** The short arm is the v11 model unchanged, so short and TOTAL
+   are reported as a correctness check and cannot contribute to the verdict. Any short-segment
+   difference other than zero is a bug in the experiment, not a result.
+3. **Disconfirming evidence, also pre-registered.** If `fba_share_12w` carries near-zero
+   LightGBM gain, the feature was not used and the null result says nothing about channel mix,
+   only that this encoding of it was ignored. Feature importance is reported either way.
+4. **Guard against a second bite.** If v17 is flat, the wider three-column version is NOT run.
+   The single largest and most variable component failing is evidence about the hypothesis, not
+   an invitation to search the remaining components for one that clears a 0.01 bar against
+   ±0.011 to ±0.014 noise.
+
+**Known limitation, recorded rather than discovered later.** `channel_mix.parquet` was queried
+on 2026-08-10 and `sales_clean.parquet` on 2026-07-20, from a source table that is still being
+restated. The two disagree on 4,492 of 379,390 SKU-weeks, 0.4% of units, spread across 73 of
+110 weeks. This is the ordinary point-in-time-data caveat that already applies to the whole
+backtest, since the pinned snapshot is itself a 2026-07-20 restatement of 2024 data, and it
+lands in both the numerator and the denominator of a ratio. It is not a lookahead: the
+disagreement concerns how past weeks were later restated, not future weeks becoming visible.
+Separately, the snapshot's final week 2026-07-20 is a partial week, holding 4,423 units against
+the 5,499 the complete week now shows, because the snapshot was built on a Monday morning before
+`last_complete_week` had its Monday step restored. That week falls outside every development
+window and outside the final test window, which ends at 2026-07-13, so it is inert for every
+number in this log. It is recorded so nobody later reads it as a demand collapse.

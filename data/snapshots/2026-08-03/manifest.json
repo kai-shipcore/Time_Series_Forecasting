@@ -1,0 +1,31 @@
+{
+  "snapshot": "2026-08-03",
+  "created_at": "2026-08-10T14:38:11-07:00",
+  "source": "/Users/dev.maccoverland.com/Documents/Time_Series_Forecasting/data/processed",
+  "purpose": "Pinned inputs for the ML development track (src/ml/dataset.py). Immutable: the weekly cron refreshes data/processed/ only.",
+  "weekly_rows": 391275,
+  "weekly_skus": 3525,
+  "week_first": "2024-06-24",
+  "week_last": "2026-08-03",
+  "n_weeks": 111,
+  "profile_rows": 3525,
+  "buckets": {
+    "intermittent": 3058,
+    "smooth": 467
+  },
+  "history_length": {
+    "full": 3099,
+    "short": 394,
+    "medium": 32
+  },
+  "files": {
+    "sales_clean.parquet": {
+      "md5": "655c7f5ac72a167414fb100369bee427",
+      "bytes": 163775
+    },
+    "sku_profiles.csv": {
+      "md5": "c204b9b617373d269b4d3ff1957a08a9",
+      "bytes": 724204
+    }
+  }
+}
