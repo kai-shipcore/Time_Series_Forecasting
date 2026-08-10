@@ -105,16 +105,55 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-          if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^coverland-forecast-api\.service'; then
+          # `systemctl cat`, not `list-unit-files | grep -q`. The pipeline
+          # version was the cause of the port-8000 squatter, and the mechanism
+          # is worth stating because it looks like working code:
+          #
+          #   set -o pipefail is active. `grep -q` exits at its FIRST match and
+          #   closes the pipe. `systemctl list-unit-files` prints hundreds of
+          #   units, so it is still writing, dies of SIGPIPE and returns 141.
+          #   pipefail makes that 141 the status of the whole pipeline. So the
+          #   condition evaluated FALSE every time even though the unit was
+          #   found, both systemd branches were skipped, and the fallback ran.
+          #
+          # The fallback then `pkill`ed the systemd-managed process and started
+          # its own uvicorn on loopback, which systemd could not displace: it
+          # restarted under Restart=always, failed to bind, and crash-looped,
+          # while the deploy reported green because the readiness check below
+          # only proves SOMETHING from this directory is answering. Observed
+          # twice on 2026-08-07 (pids 3152116 and 3269753). See BACKLOG 21.
+          #
+          # `systemctl cat` takes a unit name directly, needs no pipe, and
+          # returns non-zero when the unit does not exist.
+          if command -v systemctl >/dev/null 2>&1 && systemctl cat coverland-forecast-api.service >/dev/null 2>&1; then
             sudo systemctl restart coverland-forecast-api
-          elif command -v systemctl >/dev/null 2>&1 && systemctl --user list-unit-files | grep -q '^coverland-forecast-api\.service'; then
+          elif command -v systemctl >/dev/null 2>&1 && systemctl --user cat coverland-forecast-api.service >/dev/null 2>&1; then
             systemctl --user restart coverland-forecast-api
           else
-            # Loopback, matching the systemd unit in docs/DEPLOYMENT.md. On a
-            # shared box the only client is the Next.js process beside it, and
-            # binding 0.0.0.0 would expose the API to the network for no gain.
+            # Only for a box with no systemd unit at all. Binds 0.0.0.0 to match
+            # the unit, which changed on 2026-08-07 so the API is reachable off
+            # the box; a loopback fallback here would silently undo that.
             pkill -f 'uvicorn api.main:app' || true
-            nohup .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 > api.log 2>&1 &
+            nohup .venv/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
+          fi
+
+          # Assert the unit actually came up. `systemctl restart` exits 0 even
+          # when the service then fails to start, so without this a crash-loop
+          # is a green build. A unit that is restarting reports
+          # "activating (auto-restart)", never "active".
+          if command -v systemctl >/dev/null 2>&1 && systemctl cat coverland-forecast-api.service >/dev/null 2>&1; then
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              state=$(systemctl is-active coverland-forecast-api || true)
+              [ "$state" = "active" ] && break
+              sleep 2
+            done
+            if [ "$state" != "active" ]; then
+              echo "::error::coverland-forecast-api is '$state', not 'active', 20s after restart."
+              echo "Last 20 journal lines:"
+              journalctl -u coverland-forecast-api -n 20 --no-pager || true
+              exit 1
+            fi
+            echo "unit is active"
           fi
           EOF
 

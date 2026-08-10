@@ -916,7 +916,35 @@ check rather than a new mechanism.
 
 ## 21. The deploy cannot tell whether the unit it restarted is the one serving
 
-**Status: observed 2026-08-07, cause of the squatter not yet identified.**
+**Status: CAUSE FOUND and FIXED 2026-08-07. The monitoring half remains open.**
+
+**The cause was the deploy itself.** `.github/workflows/ci-cd.yml` chose between systemd and a
+fallback with:
+
+```bash
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^coverland-forecast-api\.service'; then
+```
+
+under `set -euo pipefail`. `grep -q` exits at its first match and closes the pipe;
+`systemctl list-unit-files` prints hundreds of units, is still writing, dies of SIGPIPE and
+returns 141; `pipefail` makes 141 the status of the pipeline. So the condition was FALSE on
+every deploy even though the unit was found. Reproduced in isolation: the same construct with
+`seq 1 200000 | grep -q '^42$'` takes the else branch under `pipefail` and the if branch
+without it.
+
+The fallback then ran `pkill -f 'uvicorn api.main:app'`, killing the systemd-managed process,
+and started `nohup .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 &`.
+That command line matches the observed squatter character for character, including the
+relative venv path and the missing `--workers 1`. systemd then restarted under
+`Restart=always`, could not bind, and crash-looped indefinitely.
+
+**Fixed** by replacing the pipeline with `systemctl cat coverland-forecast-api.service`, which
+takes a unit name directly, needs no pipe and returns non-zero when the unit is absent. The
+fallback now binds `0.0.0.0` to match the unit rather than silently reverting the change that
+made the API reachable. An `is-active` assertion was added after the restart, polling for 20
+seconds and failing the build with the journal attached if the unit is not `active`.
+
+**Still open: the monitoring gap that let this run for a day.**
 
 On 2026-08-07 the systemd unit was found crash-looping with `[Errno 98] address already in
 use`, having been in that state since 00:01:11 UTC. An unmanaged uvicorn process held port

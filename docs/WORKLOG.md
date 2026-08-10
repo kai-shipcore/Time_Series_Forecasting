@@ -2943,3 +2943,61 @@ detail lives in the design document and codebase guide, not here.
   Previously an unrecognised prefix (CA-CL and others) was shown as its own raw, uninterpreted
   category; now anything not confirmed as one of the two named families reads as Other, which
   is honest without being a filter list nobody can read.
+
+- 2026-08-07. Recorded the next round of planning-screen changes as BACKLOG 13, five presentation
+  items on screens whose numbers are already right: reorder the Forecast Validation page, redo its
+  contents list with it, replace the demand table with a Pareto curve, fit the Action List table to
+  the screen so it stops scrolling horizontally, and explain the priority labels where they appear.
+  The explanation item is sequenced last deliberately, since BACKLOG 14 changes what the labels are.
+  Writing the criteria out is what surfaced 14. Best Seller sits in the same precedence ladder as
+  Preorder, No Stock and Routine, and it is not the same kind of thing: those three are states of
+  one variable, supply, while best seller is importance, which every SKU carries independently. One
+  slot cannot hold both, so importance is discarded on every row that has a supply problem. The
+  visible symptom was the question that started this: 86 SKUs carry the best_seller flag and 27
+  carry the badge, because a top seller is exactly the kind of SKU that is out of stock or on
+  preorder. The badge therefore thins out where it would be most useful, and a best seller with a
+  preorder backlog is indistinguishable from a tail SKU with one. Decided: take it out of the
+  ladder, keep it as an attribute with its own marker and filter, and use it as a tiebreaker within
+  each queue. The star then means "top 20% by demand" rather than "top 20% with nothing more
+  pressing about it". Consequences recorded rather than left to be discovered: the summary count
+  moves 27 to 86 and changes in kind from a queue to an attribute, and best_seller_at_risk is a
+  third set again and wants revisiting in the same pass. Nothing in the order quantity or the
+  stockout projection reads priority, so no recommended figure moves. Left open whether a fixed 20%
+  cut earns its place at all once the Pareto view exists.
+
+--- DAILY SUMMARY 2026-08-07 ---
+- Spent most of the day trying to make the forecasting service reachable from outside the server.
+  Not finished, and it is the first thing next time.
+- The hold-up: another program keeps seizing the service moments after each release, so it was
+  down while the release still reported success. Cleared it twice. Until we find what starts it, a
+  release can ship code that never runs.
+- Built a one-step fix for that and a server check anyone can run, so the next occurrence costs
+  minutes rather than an evening.
+- Tried two changes to the seasonal adjustment, neither adopted. The one that passed only did so
+  because two opposite effects cancelled out.
+- Moved the weekly forecast run to Tuesday, dropped product names from the planning screens, and
+  wrote up the next round of screen changes.
+
+--- SUMMARY PRODUCED 2026-08-07 (covering the 2026-08-07 entries above) ---
+
+- 2026-08-07 (root cause of the squatter found: the deploy was doing it). Not pm2. The
+  fallback branch in ci-cd.yml's restart step starts
+  `nohup .venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 &`, which
+  matches the observed squatter character for character, and `pkill`s the systemd process
+  first. Grepped both repos: that line exists in exactly one place.
+  Why the fallback fired when the unit plainly exists. The condition was
+  `systemctl list-unit-files | grep -q '^coverland-forecast-api\.service'` under
+  `set -euo pipefail`. grep -q exits at the first match and closes the pipe, systemctl dies of
+  SIGPIPE returning 141, and pipefail makes 141 the pipeline's status, so the if evaluated
+  false every time. Reproduced in isolation before claiming it: `seq 1 200000 | grep -q "^42$"`
+  takes the else branch with pipefail and the if branch without, exit status 141.
+  So every deploy killed the managed process, started an unmanaged loopback one, and left
+  systemd crash-looping under Restart=always, while the readiness check passed because the
+  squatter runs from the deploy directory and reports the same repo_root.
+  Fixed three things in that step: the condition now uses `systemctl cat`, which takes a unit
+  name and needs no pipe; the fallback binds 0.0.0.0 so it cannot silently undo the change
+  that made the API reachable; and an is-active assertion polls for 20 seconds after the
+  restart and fails the build with the journal attached if the unit is not active.
+  My pm2 hypothesis was wrong. It was a reasonable place to look given DEPLOYMENT.md says
+  Next.js runs under pm2 and pm2 holds env per process, but the answer was in a file I had
+  already read twice today without reading the else branch.
