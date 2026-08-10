@@ -3001,3 +3001,18 @@ detail lives in the design document and codebase guide, not here.
   My pm2 hypothesis was wrong. It was a reasonable place to look given DEPLOYMENT.md says
   Next.js runs under pm2 and pm2 holds env per process, but the answer was in a file I had
   already read twice today without reading the else branch.
+
+- 2026-08-10. Deployed the pipefail fix. It stopped the deploy CREATING squatters: today's run
+  took the systemd branch, so no pkill and no new process. But the port was still held by pid
+  3283184, and two things had gone wrong.
+  First, nothing clears a PRE-EXISTING squatter. The old else-branch used to pkill everything
+  before spawning its own; the fixed if-branch just restarts systemd, which then cannot bind.
+  Second, my is-active assertion passed when it should not have. `systemctl restart` returns as
+  soon as the process starts, and uvicorn needs a second or two to reach the bind error, so the
+  unit reports "active" during that window. The loop polled immediately and broke on the first
+  "active". Hardened: wait 8s, check twice 5s apart, and require 0.0.0.0:8000 to be bound,
+  which is the condition that actually matters and which is-active alone cannot see.
+  The "midnight trigger" I had flagged does not exist. The user pointed out the timestamps are
+  UTC and they are on PDT: 00:00:06 and 00:01:11 UTC are 5:00pm and 5:01pm PDT on consecutive
+  workdays, which is someone finishing for the day. I had been reading UTC timestamps as if
+  they were local and inventing a scheduled job to explain the pattern.
