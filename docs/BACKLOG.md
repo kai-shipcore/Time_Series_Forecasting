@@ -17,7 +17,6 @@ are three different things.
 |---|---|---|
 | 2 | `train_start` does two jobs; 187 of 447 served SKUs can never be scored | medium, forces a re-baseline |
 | 6 | Retire the old Demand Forecast page | waits on `ml_forecast_history` accumulating runs |
-| 8 | Dev machine on Node 24 against a declared 22 | trivial |
 | 15 | On-demand pipeline is not safely interruptible | medium |
 | 18 | LightGBM `eval_set` deprecation warning on every fit | small, do it between model versions |
 | 21 | What starts the unmanaged uvicorn. Detection is built; the cause is not found | unknown |
@@ -27,6 +26,7 @@ are three different things.
 | # | Outcome |
 |---|---|
 | 5 | Both CSV exports name their columns, with human headers, a UTF-8 BOM and correct escaping |
+| 8 | Dev machine moved to Node 22; deploy now asserts the server's Node version against `.nvmrc` before installing |
 | 9 | Closed by decision: the drafted figure reads the same two tables Container Planning does, so there is no second source to compare against |
 | 20 | `/health` returns the deployed commit; the hourly check fails when it is not the tip of main |
 
@@ -299,6 +299,26 @@ or say plainly which half it refreshes.
 ---
 
 ## 8. Node version disagrees with what the project declares
+
+**Status: DONE 2026-08-10.** Machine moved to Node 22. `actions/setup-node` was considered
+for the CI gap this entry itself flagged below, and rejected: the build runs over SSH on the
+server via `appleboy/ssh-action`, not on the GitHub runner, so pinning the runner's Node
+version would have been a no-op that looked like a fix.
+
+**What was done.** Installed Homebrew's `node@22` (keg-only, so it does not conflict with the
+existing unversioned `node` formula) and put it first on `PATH` via `~/.zshrc`, per Homebrew's
+own caveat, rather than force-linking over the existing formula or introducing nvm onto a
+machine that already standardises on Homebrew. `node -v` inside `Commerce_Integration` now
+reports v22.x and `npm install` no longer prints `EBADENGINE`. Neither `engines.node` nor
+`.nvmrc` changed; the machine moved to match the declaration, not the other way round.
+
+For the actual gap, `.github/workflows/deploy.yml` now reads the major version from `.nvmrc`
+and asserts it against the server's `node -v` before `npm install` runs, failing the deploy
+with both versions named if they disagree, rather than silently building against whatever
+Node the server happens to have. It does not install or switch Node on the server; a mismatch
+is a decision to make, not a side effect of a deploy.
+
+Original entry follows.
 
 **Status:** decided 2026-07-31. Move the machine to Node 22. Neither repository changes.
 
