@@ -1,0 +1,68 @@
+
+  !! REFERENCE FIGURES ARE STALE
+     printed below: measured on snapshot 2026-08-03
+     running on:    snapshot 2026-08-03-onset
+     They are NOT comparable to this run's numbers. Re-measure them
+     (scripts/ml_10 for PROTOTYPE, ml_03 and ml_08 for ml_12's) and
+     update src/ml/reference.py before reading anything into a gap.
+
+
+==================================================================
+Mar-May  Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+  long model: 48,030 rows, 9 val SKUs, 80 trees
+  prototype: short 0.2028, long 0.1437
+model         baseline     v11      v9
+segment                               
+TOTAL           0.1898  0.1788  0.1766
+smooth/long     0.1349  0.1517  0.1452
+smooth/short    0.2183  0.1929  0.1929
+
+bias% by segment:
+              baseline   v9   v11
+segment                          
+smooth/long       -2.6  2.5 -10.8
+smooth/short      -8.5  8.2   8.2
+TOTAL             -6.4  6.2   1.7
+  short: v11-vs-v9 +0.0000       v11-vs-vbase -0.0254 SIG
+  long : v11-vs-v9 +0.0065       v11-vs-vbase +0.0168 
+
+==================================================================
+Dec-Feb  Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+  long model: 40,705 rows, 9 val SKUs, 107 trees
+  prototype: short 0.2904, long 0.269
+model         baseline     v11      v9
+segment                               
+TOTAL           0.2048  0.1938  0.2215
+smooth/long     0.2170  0.1586  0.2352
+smooth/short    0.1978  0.2138  0.2138
+
+bias% by segment:
+              baseline    v9  v11
+segment                          
+smooth/long       16.7  19.6  6.4
+smooth/short       2.1   0.5  0.5
+TOTAL              7.4   7.4  2.7
+  short: v11-vs-v9 +0.0000       v11-vs-vbase +0.0160 
+  long : v11-vs-v9 -0.0766 SIG   v11-vs-vbase -0.0584 SIG
+
+==================================================================
+Oct-Dec  Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+  long model: 34,400 rows, 9 val SKUs, 89 trees
+  prototype: short 0.4137, long 0.0918
+model         baseline     v11      v9
+segment                               
+TOTAL           0.1577  0.1318  0.1243
+smooth/long     0.1226  0.1087  0.1004
+smooth/short    0.4837  0.3469  0.3469
+
+bias% by segment:
+              baseline   v9  v11
+segment                         
+smooth/long       -8.0  1.5 -0.4
+smooth/short     -47.8  2.2  2.2
+TOTAL            -11.9  1.5 -0.2
+  short: v11-vs-v9 +0.0000       v11-vs-vbase -0.1368 
+  long : v11-vs-v9 +0.0083       v11-vs-vbase -0.0139 

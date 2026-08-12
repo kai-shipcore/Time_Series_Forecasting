@@ -1,0 +1,62 @@
+
+  !! REFERENCE FIGURES ARE STALE
+     printed below: measured on snapshot 2026-08-03
+     running on:    snapshot 2026-08-03-onset
+     They are NOT comparable to this run's numbers. Re-measure them
+     (scripts/ml_10 for PROTOTYPE, ml_03 and ml_08 for ml_12's) and
+     update src/ml/reference.py before reading anything into a gap.
+
+
+==================================================================
+Mar-May
+  prototype: short 0.2028, long 0.1437
+model         baseline     v11     v12
+segment                               
+TOTAL           0.1898  0.1788  0.3808
+smooth/long     0.1349  0.1517  0.1517
+smooth/short    0.2183  0.1929  0.4999
+
+bias% by segment:
+              baseline   v11   v12
+segment                           
+smooth/long       -2.6 -10.8 -10.8
+smooth/short      -8.5   8.2  46.6
+TOTAL             -6.4   1.7  27.0
+  short: v12-vs-v11 +0.3070 SIG
+  long : v12-vs-v11 +0.0000 
+
+==================================================================
+Dec-Feb
+  prototype: short 0.2904, long 0.269
+model         baseline     v11     v12
+segment                               
+TOTAL           0.2048  0.1938  0.2295
+smooth/long     0.2170  0.1586  0.1586
+smooth/short    0.1978  0.2138  0.2697
+
+bias% by segment:
+              baseline  v11   v12
+segment                          
+smooth/long       16.7  6.4   6.4
+smooth/short       2.1  0.5 -10.4
+TOTAL              7.4  2.7  -4.3
+  short: v12-vs-v11 +0.0559 SIG
+  long : v12-vs-v11 +0.0000 
+
+==================================================================
+Oct-Dec
+  prototype: short 0.4137, long 0.0918
+model         baseline     v11     v12
+segment                               
+TOTAL           0.1577  0.1318  0.1328
+smooth/long     0.1226  0.1087  0.1087
+smooth/short    0.4837  0.3469  0.3572
+
+bias% by segment:
+              baseline  v11  v12
+segment                         
+smooth/long       -8.0 -0.4 -0.4
+smooth/short     -47.8  2.2 -5.8
+TOTAL            -11.9 -0.2 -1.0
+  short: v12-vs-v11 +0.0103 
+  long : v12-vs-v11 +0.0000 

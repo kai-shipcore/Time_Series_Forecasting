@@ -1,0 +1,84 @@
+windows: ['Mar-May', 'Dec-Feb', 'Oct-Dec']
+
+==========================================================================
+BASELINE  v11  (min_child_samples=200)
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1350      57         13166
+Mar-May smooth/short       0.1926     224         23757
+Mar-May        TOTAL       0.1720     281         36923
+Dec-Feb  smooth/long       0.1389      54         11425
+Dec-Feb smooth/short       0.1994     206         18936
+Dec-Feb        TOTAL       0.1766     260         30361
+Oct-Dec  smooth/long       0.1040      54         18207
+Oct-Dec smooth/short       0.2473      16          1180
+Oct-Dec        TOTAL       0.1128      70         19387
+
+tail (short, ramp<0.7): pooled WAPE 0.7676 over 27 SKUs
+
+==========================================================================
+CANDIDATE  min_child_samples=100
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1350      57         13166
+Mar-May smooth/short       0.1894     224         23757
+Mar-May        TOTAL       0.1700     281         36923
+Dec-Feb  smooth/long       0.1389      54         11425
+Dec-Feb smooth/short       0.2024     206         18936
+Dec-Feb        TOTAL       0.1785     260         30361
+Oct-Dec  smooth/long       0.1040      54         18207
+Oct-Dec smooth/short       0.2516      16          1180
+Oct-Dec        TOTAL       0.1130      70         19387
+
+tail (short, ramp<0.7): pooled WAPE 0.7605 over 27 SKUs (baseline 0.7676, delta -0.0071)
+long segment identical to baseline (control): True
+
+==========================================================================
+CANDIDATE  min_child_samples=50
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1350      57         13166
+Mar-May smooth/short       0.1848     224         23757
+Mar-May        TOTAL       0.1671     281         36923
+Dec-Feb  smooth/long       0.1389      54         11425
+Dec-Feb smooth/short       0.1987     206         18936
+Dec-Feb        TOTAL       0.1762     260         30361
+Oct-Dec  smooth/long       0.1040      54         18207
+Oct-Dec smooth/short       0.2471      16          1180
+Oct-Dec        TOTAL       0.1128      70         19387
+
+tail (short, ramp<0.7): pooled WAPE 0.6639 over 27 SKUs (baseline 0.7676, delta -0.1037)
+long segment identical to baseline (control): True
+
+==========================================================================
+CANDIDATE  min_child_samples=20
+==========================================================================
+ window      segment  pooled_wape  n_skus  actual_units
+Mar-May  smooth/long       0.1350      57         13166
+Mar-May smooth/short       0.1819     224         23757
+Mar-May        TOTAL       0.1652     281         36923
+Dec-Feb  smooth/long       0.1389      54         11425
+Dec-Feb smooth/short       0.2004     206         18936
+Dec-Feb        TOTAL       0.1772     260         30361
+Oct-Dec  smooth/long       0.1040      54         18207
+Oct-Dec smooth/short       0.2379      16          1180
+Oct-Dec        TOTAL       0.1122      70         19387
+
+tail (short, ramp<0.7): pooled WAPE 0.5788 over 27 SKUs (baseline 0.7676, delta -0.1888)
+long segment identical to baseline (control): True
+
+==========================================================================
+SHORT SEGMENT, ALL VALUES  (decision windows: Mar-May, Dec-Feb)
+==========================================================================
+window         v11 (200)       mcs=100        mcs=50        mcs=20
+Mar-May           0.1926   0.1894-0.00   0.1848-0.00   0.1819-0.01
+Dec-Feb           0.1994   0.2024+0.00   0.1987-0.00   0.2004+0.00
+Oct-Dec           0.2473   0.2516+0.00   0.2471-0.00   0.2379-0.00
+
+value        tail WAPE     delta   long identical
+200 (v11)       0.7676    0.0000         baseline
+100             0.7605   -0.0071             True
+50              0.6639   -0.1037             True
+20              0.5788   -0.1888             True
+
+wrote outputs/reports/v14_min_child_sweep.csv

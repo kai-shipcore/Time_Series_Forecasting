@@ -1,0 +1,77 @@
+
+  !! REFERENCE FIGURES ARE STALE
+     printed below: measured on snapshot 2026-08-03
+     running on:    snapshot 2026-08-03-v2
+     They are NOT comparable to this run's numbers. Re-measure them
+     (scripts/ml_10 for PROTOTYPE, ml_03 and ml_08 for ml_12's) and
+     update src/ml/reference.py before reading anything into a gap.
+
+
+==================================================================
+Mar-May  Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+  long model : 44,215 rows, 10 val SKUs, 90 trees
+  short model: 40,242 rows, 38 val SKUs, 63 trees
+  prototype (the bar): short 0.2028, long 0.1437
+
+pooled WAPE:
+model         baseline      v3      v8
+segment                               
+TOTAL           0.1845  0.1743  0.2404
+smooth/long     0.1311  0.1413  0.1392
+smooth/short    0.2141  0.1926  0.2965
+
+bias% by segment:
+              baseline   v3    v8
+segment                          
+smooth/long       -2.1  1.4  -3.7
+smooth/short      -8.0  8.3  25.2
+TOTAL             -5.9  5.8  14.9
+bootstrap v8-vs-v3 [short]: {'delta': 0.1039, 'se': 0.0153, 'ci_lo': 0.0736, 'ci_hi': 0.1322}  significant=True
+bootstrap v8-vs-v3 [long]: {'delta': -0.0021, 'se': 0.0147, 'ci_lo': -0.0305, 'ci_hi': 0.0262}  significant=False
+
+==================================================================
+Dec-Feb  Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+  long model : 37,390 rows, 10 val SKUs, 67 trees
+  short model: 19,063 rows, 35 val SKUs, 72 trees
+  prototype (the bar): short 0.2904, long 0.2690
+
+pooled WAPE:
+model         baseline      v3      v8
+segment                               
+TOTAL           0.2016  0.2117  0.1946
+smooth/long     0.2171  0.2321  0.1691
+smooth/short    0.1923  0.1994  0.2099
+
+bias% by segment:
+              baseline    v3    v8
+segment                           
+smooth/long       16.7  19.0  11.5
+smooth/short       2.1   0.4  10.7
+TOTAL              7.6   7.4  11.0
+bootstrap v8-vs-v3 [short]: {'delta': 0.0106, 'se': 0.0132, 'ci_lo': -0.0159, 'ci_hi': 0.0374}  significant=False
+bootstrap v8-vs-v3 [long]: {'delta': -0.063, 'se': 0.0177, 'ci_lo': -0.0937, 'ci_hi': -0.0247}  significant=True
+
+==================================================================
+Oct-Dec  Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+  long model : 31,990 rows, 10 val SKUs, 106 trees
+  short model: 3,459 rows, 32 val SKUs, 50 trees
+  prototype (the bar): short 0.4137, long 0.0918
+
+pooled WAPE:
+model         baseline      v3      v8
+segment                               
+TOTAL           0.1421  0.1030  0.1113
+smooth/long     0.1215  0.0937  0.0974
+smooth/short    0.4605  0.2473  0.3261
+
+bias% by segment:
+              baseline   v3    v8
+segment                          
+smooth/long       -8.2 -0.9  -1.0
+smooth/short     -46.0  7.5 -10.2
+TOTAL            -10.5 -0.4  -1.6
+bootstrap v8-vs-v3 [short]: {'delta': 0.0788, 'se': 0.0417, 'ci_lo': -0.0204, 'ci_hi': 0.1374}  significant=False
+bootstrap v8-vs-v3 [long]: {'delta': 0.0037, 'se': 0.0028, 'ci_lo': -0.0018, 'ci_hi': 0.0089}  significant=False

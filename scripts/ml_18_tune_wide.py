@@ -62,17 +62,23 @@ def sample(rng):
 def evaluate(cfg, splits, vals, profiles):
     scores, trees = [], []
     for s, v in zip(splits, vals):
-        m = RatioLGBM(s.horizon, FEATURES_V1, deseas_features=True,
-                      deseas_all=True, patience=cfg["patience"])
-        m.PARAMS = {**RatioLGBM.PARAMS,
-                    **{k: v_ for k, v_ in cfg.items() if k != "patience"}}
+        # Built as a dict and passed to the constructor. Assigning `m.PARAMS`
+        # after construction is inert as of the 2026-07-29 refactor: __init__
+        # copies self.PARAMS into self.params and fit() reads self.params. The
+        # attribute was the supported route when this last ran on 2026-07-21, so
+        # the recorded results stand (81 configurations, 81 distinct scores,
+        # impossible if the settings had not applied). Fixed 2026-08-11 so that
+        # a re-run is not silently a search over one configuration.
+        pr = {k: v_ for k, v_ in cfg.items() if k != "patience"}
         # Cap trees for the SEARCH only: a low learning_rate with high patience
         # never early-stops before the deployment cap of 3000, which both runs
         # for minutes and can exhaust memory. 800 is ample for ranking configs;
         # the winner is refit at the real cap in stage 2.
-        m.PARAMS["n_estimators"] = 800
+        pr["n_estimators"] = 800
         if cfg["subsample"] < 1.0:
-            m.PARAMS["subsample_freq"] = 1
+            pr["subsample_freq"] = 1
+        m = RatioLGBM(s.horizon, FEATURES_V1, deseas_features=True,
+                      deseas_all=True, patience=cfg["patience"], params=pr)
         m.fit(s.train, profiles, s.cutoff, v)
         scores.append(float(m.model.best_score_["valid_0"]["l1"]))
         trees.append(m.model.best_iteration_)

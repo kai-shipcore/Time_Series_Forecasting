@@ -1,0 +1,34 @@
+
+Mar-May  cutoff 2026-02-23
+  [PASS] 1 no training target after the cutoff  max target 2026-02-23 vs cutoff 2026-02-23
+  [PASS] 2 no feature anchor after the cutoff  max anchor 2026-02-16
+  [PASS] 2b training frame itself stops at the cutoff
+  [PASS] 3 every prediction is after the cutoff  earliest 2026-03-02
+  [PASS] 3b predictions cover the test window only
+  [PASS] 7 validation SKUs excluded from training rows  48 val SKUs
+
+Dec-Feb  cutoff 2025-12-15
+  [PASS] 1 no training target after the cutoff  max target 2025-12-15 vs cutoff 2025-12-15
+  [PASS] 2 no feature anchor after the cutoff  max anchor 2025-12-08
+  [PASS] 2b training frame itself stops at the cutoff
+  [PASS] 3 every prediction is after the cutoff  earliest 2025-12-22
+  [PASS] 3b predictions cover the test window only
+  [PASS] 7 validation SKUs excluded from training rows  45 val SKUs
+
+Oct-Dec  cutoff 2025-10-06
+  [PASS] 1 no training target after the cutoff  max target 2025-10-06 vs cutoff 2025-10-06
+  [PASS] 2 no feature anchor after the cutoff  max anchor 2025-09-29
+  [PASS] 2b training frame itself stops at the cutoff
+  [PASS] 3 every prediction is after the cutoff  earliest 2025-10-13
+  [PASS] 3b predictions cover the test window only
+  [PASS] 7 validation SKUs excluded from training rows  42 val SKUs
+
+cross-window
+  [PASS] 4 a distinct fitted model per window  3 distinct boosters across 3 windows
+  [PASS] 5 refitting the same window is bit-identical
+  [PASS] 6 window results independent of fitting order
+  [PASS] 8 per-instance params do not mutate the class default  num_leaves now 31
+  [PASS] 9 long model predicts only its own segment  57 SKUs, segment holds 57
+
+============================================================
+All checks passed. Models are refitted per window, trained only on data at or before each cutoff, and independent of fitting order.

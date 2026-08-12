@@ -1,0 +1,23 @@
+
+================================================================
+Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+  naive_seasonal: 19% of SKU-weeks had a value a year earlier
+
+================================================================
+Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+  naive_seasonal: 19% of SKU-weeks had a value a year earlier
+
+================================================================
+Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+  naive_seasonal: 19% of SKU-weeks had a value a year earlier
+
+================================================================
+TOTAL, pooled across the three dev windows
+  naive_last        33.98%
+  naive_mean12      24.72%
+  naive_seasonal    75.67%
+
+  v1                25.91%   (from ml_accuracy.csv)
+  v11               15.96%   (from ml_accuracy.csv)
+
+wrote outputs/reports/ml_naive_baseline.csv

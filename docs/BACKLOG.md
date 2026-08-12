@@ -18,7 +18,6 @@ are three different things.
 | 2 | `train_start` does two jobs; 187 of 447 served SKUs can never be scored | medium, forces a re-baseline |
 | 6 | Retire the old Demand Forecast page | waits on `ml_forecast_history` accumulating runs |
 | 15 | On-demand pipeline is not safely interruptible | medium |
-| 18 | LightGBM `eval_set` deprecation warning on every fit | small, do it between model versions |
 | 21 | What starts the unmanaged uvicorn. Detection is built; the cause is not found | unknown |
 
 **Done 2026-08-10**
@@ -28,6 +27,7 @@ are three different things.
 | 5 | Both CSV exports name their columns, with human headers, a UTF-8 BOM and correct escaping |
 | 8 | Dev machine moved to Node 22; deploy now asserts the server's Node version against `.nvmrc` before installing |
 | 9 | Closed by decision: the drafted figure reads the same two tables Container Planning does, so there is no second source to compare against |
+| 18 | `eval_X` / `eval_y`, verified bit-identical against the re-baseline logs |
 | 20 | `/health` returns the deployed commit; the hourly check fails when it is not the tip of main |
 
 **Open, but verify rather than build**
@@ -971,6 +971,31 @@ checked, and no such item existed; the file went 16, 18. Written afterwards, int
 ---
 
 ## 18. LightGBM 4.7 deprecates the argument every model fit uses
+
+**Status: DONE 2026-08-10.** `src/ml/model.py:fit` now passes `eval_X` / `eval_y`.
+`eval_sample_weight` is unchanged: it is not part of the deprecation, and the library still
+indexes it per validation set alongside `eval_class_weight` and `eval_group`. Renaming it to
+match would have raised.
+
+**Confirmed behaviour-preserving two ways.** By construction first: both spellings meet in
+the library's own `_validate_eval_set_Xy`, which returns `eval_set` unchanged on one path and
+builds `[(eval_X, eval_y)]` on the other. That list is exactly what the old call passed, so
+training receives the same object either way. Then empirically, because the first argument is
+a reading of someone else's code: `scripts/_verify_backlog_18.sh` re-ran six experiments and
+diffed them against the logs in `docs/rebaseline_2026-08-03/`. Every pooled WAPE, bias
+figure, tree count, row count and bootstrap delta is identical.
+
+**The verification failed first, for a reason worth recording.** Four of the six reported
+DIFFERS. Every differing line was a `prototype:` reference figure or the stale-reference
+banner, because `PROTOTYPE` had been re-measured on the 2026-08-03 snapshot AFTER those logs
+were written. Nothing about the model had moved. The comparison now excludes reference
+figures, which are orientation printed beside results and explicitly not pass criteria, while
+retaining 28 to 66 substantive lines per script so it cannot pass vacuously.
+
+That failure is the same shape as the one in item 20 and in `ml_12`: a check that goes red
+for a reason unrelated to what it is testing gets read as noise, and then it is not a check.
+
+Original entry follows.
 
 `src/ml/model.py:fit` calls `self.model.fit(..., eval_set=[...])`. LightGBM 4.7.0 emits
 `LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y'

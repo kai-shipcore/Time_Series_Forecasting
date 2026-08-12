@@ -1,0 +1,66 @@
+
+==============================================================
+Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+pooled WAPE by segment:
+model         WA12_deseas  WA12_raw
+segment                            
+TOTAL              0.1725    0.1879
+smooth/long        0.1311    0.1408
+smooth/short       0.1955    0.2141
+
+bias% by segment:
+              WA12_raw  WA12_deseas
+segment                            
+smooth/long       -6.8         -2.1
+smooth/short      -8.0         -4.7
+TOTAL             -7.5         -3.8
+bootstrap deseas-vs-raw [short]: {'delta': -0.0186, 'se': 0.0027, 'ci_lo': -0.0235, 'ci_hi': -0.013}
+bootstrap deseas-vs-raw [long]: {'delta': -0.0097, 'se': 0.0082, 'ci_lo': -0.0259, 'ci_hi': 0.0056}
+ramp cohort (n=47):
+    raw     wape=0.3337 bias=-27.4%
+    deseas  wape=0.3039 bias=-22.0%
+
+==============================================================
+Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+pooled WAPE by segment:
+model         WA12_deseas  WA12_raw
+segment                            
+TOTAL              0.2817    0.3404
+smooth/long        0.2171    0.5858
+smooth/short       0.3208    0.1923
+
+bias% by segment:
+              WA12_raw  WA12_deseas
+segment                            
+smooth/long       58.0         16.7
+smooth/short       2.1        -26.7
+TOTAL             23.1        -10.4
+bootstrap deseas-vs-raw [short]: {'delta': 0.1284, 'se': 0.0191, 'ci_lo': 0.0878, 'ci_hi': 0.1612}
+bootstrap deseas-vs-raw [long]: {'delta': -0.3687, 'se': 0.0233, 'ci_lo': -0.4062, 'ci_hi': -0.315}
+ramp cohort (n=176):
+    raw     wape=0.1761 bias=+0.9%
+    deseas  wape=0.3147 bias=-27.8%
+
+==============================================================
+Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+pooled WAPE by segment:
+model         WA12_deseas  WA12_raw
+segment                            
+TOTAL              0.1383    0.2144
+smooth/long        0.1215    0.1984
+smooth/short       0.3972    0.4605
+
+bias% by segment:
+              WA12_raw  WA12_deseas
+segment                            
+smooth/long      -18.4         -8.2
+smooth/short     -46.0        -39.7
+TOTAL            -20.0        -10.1
+bootstrap deseas-vs-raw [short]: {'delta': -0.0633, 'se': 0.0051, 'ci_lo': -0.0758, 'ci_hi': -0.0559}
+bootstrap deseas-vs-raw [long]: {'delta': -0.0769, 'se': 0.0071, 'ci_lo': -0.0872, 'ci_hi': -0.0607}
+ramp cohort (n=21):
+    raw     wape=0.3672 bias=-35.3%
+    deseas  wape=0.3103 bias=-27.5%

@@ -46,7 +46,7 @@ ML_FINAL_TEST_CUTOFF = "2026-05-04"
 # older one is untouched, so every figure recorded before this date remains
 # reproducible by setting this back. Reasons and consequences: design doc
 # Section 4.31.
-ML_DATA_SNAPSHOT = "2026-08-03"
+ML_DATA_SNAPSHOT = "2026-08-03-v2"
 DATA_SNAPSHOTS = ROOT / "data" / "snapshots"
 
 # Conformal prediction interval levels.
@@ -57,7 +57,14 @@ CONFORMAL_LEVELS = [40, 60, 70, 80, 90]
 # Segmentation thresholds
 ZERO_PCT_INTERMITTENT = 0.30    # fraction of zero weeks → intermittent bucket
 CV_THRESHOLD = 1.5              # coefficient of variation cutoff for lumpy demand
-MEAN_INTERMITTENT_CUTOFF = 3.0  # SKUs above this mean go to smooth even if high zero_pct
+# Below this mean → intermittent, as a filter INDEPENDENT of zero_pct. The
+# comment here used to read "SKUs above this mean go to smooth even if high
+# zero_pct", which describes a different rule: mean as an escape from the
+# sparsity test rather than a second bar. src/profile.py:classify() tests
+# zero_pct first and returns intermittent, so the mean never rescues anything.
+# Corrected 2026-08-11. src/profile.py:RECENT_MEAN_UPGRADE is matched to this
+# value so the two cannot disagree about the same judgement.
+MEAN_INTERMITTENT_CUTOFF = 3.0
 
 # History-length boundaries (active training weeks)
 SHORT_HISTORY_WEEKS   = 50   # < 50 → short

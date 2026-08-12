@@ -1,0 +1,41 @@
+  Mar-May: both arms fitted and scored
+  Dec-Feb: both arms fitted and scored
+  Oct-Dec: both arms fitted and scored
+
+======================================================================
+pooled WAPE  (delta = v16 - v11; negative is better)
+arm                      v11     v16   delta
+segment      window                         
+TOTAL        Dec-Feb  0.1938  0.1858 -0.0080
+             Mar-May  0.1788  0.1778 -0.0010
+             Oct-Dec  0.1318  0.1323  0.0005
+smooth/long  Dec-Feb  0.1586  0.1387 -0.0199
+             Mar-May  0.1517  0.1509 -0.0008
+             Oct-Dec  0.1087  0.1087  0.0000
+smooth/short Dec-Feb  0.2138  0.2125 -0.0013
+             Mar-May  0.1929  0.1919 -0.0010
+             Oct-Dec  0.3469  0.3514  0.0045
+
+======================================================================
+bootstrap of the difference, 1000 paired SKU resamples
+  window    segment           delta      se               95% CI  verdict
+  Mar-May   smooth/short    -0.0010  0.0047  [-0.0102, +0.0076]  tie
+  Mar-May   smooth/long     -0.0008  0.0044  [-0.0102, +0.0070]  tie
+  Mar-May   TOTAL           -0.0010  0.0034  [-0.0078, +0.0051]  tie
+  Dec-Feb   smooth/short    -0.0013  0.0041  [-0.0093, +0.0071]  tie
+  Dec-Feb   smooth/long     -0.0199  0.0138  [-0.0497, +0.0021]  tie
+  Dec-Feb   TOTAL           -0.0080  0.0053  [-0.0192, +0.0021]  tie
+  Oct-Dec   smooth/short    +0.0044  0.0062  [-0.0077, +0.0164]  excluded
+  Oct-Dec   smooth/long     +0.0000  0.0028  [-0.0056, +0.0052]  tie
+  Oct-Dec   TOTAL           +0.0004  0.0027  [-0.0047, +0.0055]  tie
+
+======================================================================
+VERDICT against the pre-registered criterion
+  Adopt unless a judged cell regresses by more than 2 standard errors.
+
+  ADOPT. No judged cell regresses beyond noise.
+  Set ML_SEASONAL_BLEND = True in config.py, then re-run the
+  versions still quoted (v11, structural baseline, naive) and
+  the phase sweep, which is v15's secondary criterion.
+
+wrote outputs/reports/ml_v16_holiday_blend.csv

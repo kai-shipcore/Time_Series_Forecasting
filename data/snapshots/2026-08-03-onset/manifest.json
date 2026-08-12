@@ -1,0 +1,30 @@
+{
+  "snapshot": "2026-08-03-onset",
+  "created_at": "2026-08-11T11:47:25-07:00",
+  "derived_from": "2026-08-03",
+  "purpose": "Same sales data as the source snapshot, profiles regenerated with the current src/profile.py. Isolates a profiling change from any data change so a re-baseline attributes cleanly.",
+  "sales_clean_identical_to_source": true,
+  "weekly_rows": 391275,
+  "weekly_skus": 3525,
+  "week_first": "2024-06-24",
+  "week_last": "2026-08-03",
+  "buckets": {
+    "intermittent": 3058,
+    "smooth": 467
+  },
+  "history_length": {
+    "full": 3104,
+    "short": 321,
+    "medium": 100
+  },
+  "files": {
+    "sales_clean.parquet": {
+      "md5": "655c7f5ac72a167414fb100369bee427",
+      "bytes": 163775
+    },
+    "sku_profiles.csv": {
+      "md5": "08439c33b10c15cabfee79a0e1027f59",
+      "bytes": 724272
+    }
+  }
+}

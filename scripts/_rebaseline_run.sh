@@ -69,6 +69,22 @@ RUNS=(
 declare -a FAILED=()
 START_ALL=$(date +%s)
 
+# Harness integrity FIRST, and abort on failure. Re-deriving every recorded
+# figure from a harness that leaks, reuses a fitted model between windows, or
+# is not deterministic produces a full set of numbers that all look reasonable
+# and are all wrong. That is a worse outcome than not running, because the
+# output is indistinguishable from a good run.
+echo "verifying the harness before re-deriving anything ..."
+if ! "$PY" scripts/ml_38_training_integrity.py > "$LOGS/ml_38_training_integrity.log" 2>&1; then
+    echo
+    echo "  ABORTED: harness integrity checks failed."
+    echo "  $LOGS/ml_38_training_integrity.log"
+    tail -20 "$LOGS/ml_38_training_integrity.log"
+    exit 1
+fi
+echo "  harness OK: refitted per window, no data past the cutoff, order-independent"
+echo
+
 for entry in "${RUNS[@]}"; do
     set -- $entry
     script="$1"; shift

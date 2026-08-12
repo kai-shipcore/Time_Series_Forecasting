@@ -1,0 +1,178 @@
+
+==================================================================
+Mar-May  Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+Dropped    : last 0 weeks (noisy tail, pending orders)
+Test set   : 2026-03-02 → 2026-05-04 (10 weeks, 3,560 rows)
+Train data : up to 2026-02-23 (88 weeks)
+
+  smooth/medium: 62 SKUs | n_windows=3 | ['AutoARIMA', 'AutoETS', 'AutoTheta', 'WindowAverage', 'HistoricAverage'] [deseasonalized]
+    → 1,860 rows in 4.8s
+
+CV results  : cv_results.parquet  (1,860 rows, 62 SKUs)
+Test set    : test_set.parquet  (3,560 rows, 10 weeks)
+Short-hist  : 306 SKUs — no CV, selector.py assigns defaults
+Computing CV metrics (horizon-aggregate)...
+Computing ensemble metrics...
+Selecting best model per SKU...
+
+Saved: cv_metrics.csv  (372 rows)
+Saved: selection.csv   (368 SKUs)
+
+Model selection breakdown:
+bucket  model                                 
+smooth  AutoARIMA                                   9
+        AutoETS                                    16
+        AutoTheta                                   6
+        Ensemble:AutoARIMA+AutoETS                  3
+        Ensemble:AutoARIMA+HistoricAverage          1
+        Ensemble:AutoARIMA+WindowAverage            1
+        Ensemble:AutoETS+AutoTheta                  1
+        Ensemble:AutoETS+HistoricAverage            3
+        Ensemble:AutoETS+WindowAverage              2
+        Ensemble:AutoTheta+HistoricAverage          1
+        Ensemble:HistoricAverage+WindowAverage      4
+        HistoricAverage                             7
+        WindowAverage                             302
+
+Median horizon metrics by bucket (medium/full SKUs only):
+        HorizonWAPE  HorizonBias  HorizonMAE
+bucket                                      
+smooth        0.124        0.016      13.302
+
+Low-confidence SKUs (manual restocking review recommended): 296
+  smooth/medium: 62 SKUs  (4.6s)
+  smooth/short: 294 SKUs  (3.6s)
+
+pooled WAPE (356 SKUs forecast by the prototype):
+model         prototype  v-base
+segment                        
+TOTAL            0.1883  0.1898
+smooth/long      0.1469  0.1349
+smooth/short     0.2098  0.2183
+
+bias% by segment:
+              prototype  v-base
+segment                        
+smooth/long        -2.2    -2.6
+smooth/short       -8.4    -8.5
+TOTAL              -6.3    -6.4
+
+==================================================================
+Dec-Feb  Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+Dropped    : last 0 weeks (noisy tail, pending orders)
+Test set   : 2025-12-22 → 2026-02-23 (10 weeks, 3,270 rows)
+Train data : up to 2025-12-15 (78 weeks)
+
+  smooth/medium: 59 SKUs | n_windows=3 | ['AutoARIMA', 'AutoETS', 'AutoTheta', 'WindowAverage', 'HistoricAverage'] [deseasonalized]
+    → 1,770 rows in 4.8s
+
+CV results  : cv_results.parquet  (1,770 rows, 59 SKUs)
+Test set    : test_set.parquet  (3,270 rows, 10 weeks)
+Short-hist  : 280 SKUs — no CV, selector.py assigns defaults
+Computing CV metrics (horizon-aggregate)...
+Computing ensemble metrics...
+Selecting best model per SKU...
+
+Saved: cv_metrics.csv  (354 rows)
+Saved: selection.csv   (339 SKUs)
+
+Model selection breakdown:
+bucket  model                                 
+smooth  AutoARIMA                                   5
+        AutoETS                                    10
+        AutoTheta                                   4
+        Ensemble:AutoARIMA+AutoETS                  2
+        Ensemble:AutoARIMA+AutoTheta                1
+        Ensemble:AutoARIMA+HistoricAverage          3
+        Ensemble:AutoARIMA+WindowAverage            4
+        Ensemble:AutoETS+AutoTheta                  2
+        Ensemble:AutoETS+HistoricAverage            2
+        Ensemble:AutoETS+WindowAverage              4
+        Ensemble:AutoTheta+HistoricAverage          1
+        Ensemble:AutoTheta+WindowAverage            6
+        Ensemble:HistoricAverage+WindowAverage      2
+        HistoricAverage                             1
+        WindowAverage                             280
+
+Median horizon metrics by bucket (medium/full SKUs only):
+        HorizonWAPE  HorizonBias  HorizonMAE
+bucket                                      
+smooth        0.136       -0.005      14.478
+
+Low-confidence SKUs (manual restocking review recommended): 268
+  smooth/medium: 59 SKUs  (4.9s)
+  smooth/short: 268 SKUs  (3.6s)
+
+pooled WAPE (327 SKUs forecast by the prototype):
+model         prototype  v-base
+segment                        
+TOTAL            0.2834  0.2048
+smooth/long      0.2686  0.2170
+smooth/short     0.2919  0.1978
+
+bias% by segment:
+              prototype  v-base
+segment                        
+smooth/long        21.7    16.7
+smooth/short      -22.0     2.1
+TOTAL              -6.2     7.4
+
+==================================================================
+Oct-Dec  Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+Dropped    : last 0 weeks (noisy tail, pending orders)
+Test set   : 2025-10-13 → 2025-12-15 (10 weeks, 1,030 rows)
+Train data : up to 2025-10-06 (68 weeks)
+
+  smooth/medium: 58 SKUs | n_windows=3 | ['AutoARIMA', 'AutoETS', 'AutoTheta', 'WindowAverage', 'HistoricAverage'] [deseasonalized]
+    → 1,740 rows in 4.7s
+
+CV results  : cv_results.parquet  (1,740 rows, 58 SKUs)
+Test set    : test_set.parquet  (1,030 rows, 10 weeks)
+Short-hist  : 45 SKUs — no CV, selector.py assigns defaults
+Computing CV metrics (horizon-aggregate)...
+Computing ensemble metrics...
+Selecting best model per SKU...
+
+Saved: cv_metrics.csv  (348 rows)
+Saved: selection.csv   (103 SKUs)
+
+Model selection breakdown:
+bucket  model                                 
+smooth  AutoARIMA                                  7
+        AutoETS                                   11
+        AutoTheta                                  7
+        Ensemble:AutoARIMA+AutoTheta               1
+        Ensemble:AutoARIMA+WindowAverage           4
+        Ensemble:AutoETS+AutoTheta                 2
+        Ensemble:AutoETS+HistoricAverage           1
+        Ensemble:AutoETS+WindowAverage             4
+        Ensemble:AutoTheta+WindowAverage           2
+        Ensemble:HistoricAverage+WindowAverage     1
+        WindowAverage                             63
+
+Median horizon metrics by bucket (medium/full SKUs only):
+        HorizonWAPE  HorizonBias  HorizonMAE
+bucket                                      
+smooth        0.117       -0.024      12.102
+
+Low-confidence SKUs (manual restocking review recommended): 45
+  smooth/medium: 58 SKUs  (4.5s)
+  smooth/short: 45 SKUs  (3.6s)
+
+pooled WAPE (103 SKUs forecast by the prototype):
+model         prototype  v-base
+segment                        
+TOTAL            0.1269  0.1577
+smooth/long      0.0942  0.1226
+smooth/short     0.4310  0.4837
+
+bias% by segment:
+              prototype  v-base
+segment                        
+smooth/long        -1.4    -8.0
+smooth/short      -41.6   -47.8
+TOTAL              -5.3   -11.9
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/multiprocessing/resource_tracker.py:301: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-10351-mm70bbab'}
+  warnings.warn(
+/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/multiprocessing/resource_tracker.py:317: UserWarning: resource_tracker: '/loky-10351-mm70bbab': [Errno 2] No such file or directory
+  warnings.warn('resource_tracker: %r: %s' % (name, e))

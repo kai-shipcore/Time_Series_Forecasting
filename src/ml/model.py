@@ -454,7 +454,26 @@ class RatioLGBM:
         self.model.fit(
             tr[self.features], tr["ratio"],
             sample_weight=tr["weight"],
-            eval_set=[(va[self.features], va["ratio"])],
+            # eval_X / eval_y, not eval_set. LightGBM 4.7.0 deprecates the
+            # latter and warns once per fit, which is a dozen lines on a full
+            # experiment. That noise is the actual cost: it buries the
+            # per_sku_totals() warning about eligible SKUs with no predictions,
+            # which is a real bug signal (BACKLOG 18).
+            #
+            # This cannot change a number, and the reason is stronger than a
+            # passing comparison. Both spellings meet in the library's own
+            # _validate_eval_set_Xy, which returns `eval_set` unchanged on one
+            # path and builds `[(eval_X, eval_y)]` on the other. That list is
+            # identical to what this call used to pass, so training receives the
+            # same object either way. The dev-window run was compared as well,
+            # because "identical by construction" is a reading of someone else's
+            # code and worth checking against the numbers.
+            #
+            # eval_sample_weight is NOT part of the deprecation and stays a
+            # list: the library indexes it per validation set alongside
+            # eval_class_weight and eval_group, none of which changed.
+            eval_X=va[self.features],
+            eval_y=va["ratio"],
             eval_sample_weight=[va["weight"]],
             eval_metric="l1",
             callbacks=[lgb.early_stopping(self.patience, verbose=False)],

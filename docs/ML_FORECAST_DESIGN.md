@@ -1418,12 +1418,28 @@ Measured across the snapshot change, on identical window definitions:
 | v11 Mar-May short / long | 0.1961 / 0.1355 | 0.1859 / 0.1337 |
 | v11 Dec-Feb short / long | 0.2000 / 0.1380 | 0.2030 / 0.1447 |
 | v11 Oct-Dec long | 0.1000 | 0.1001 |
+| v11 Oct-Dec short | 0.1783 | **0.2376** |
 
-Every cell moves by at most 0.011, and v11's long segment by at most 0.0067, all inside the
-±0.011 to ±0.014 bootstrap noise floor for a single-window difference. The scored population
-is stable too: 95% to 97% of scored SKUs are shared at every window, no shared SKU changed
-segment label, and the long counts move by at most two. Windows themselves cannot move,
-being anchored to `ML_FINAL_TEST_CUTOFF` by date.
+**Correction, 2026-08-11.** This entry originally read "every cell moves by at most 0.011,
+all inside the bootstrap noise floor", and the table it was drawn from omitted the last row.
+v11's Oct-Dec short cell moved 0.0593, five times the noise floor, and it flipped a verdict:
+v11 beat V1 there on 2026-07-20 (0.1783 against 0.2015) and lost on 2026-08-03 (0.2376
+against 0.2059). The summary claim was wrong because it was written from an incomplete table,
+which is the same failure mode as the stale v-base row this section documents.
+
+The corrected statement: every cell EXCEPT Oct-Dec smooth/short moved by at most 0.011. That
+cell held 13 eligible SKUs on both snapshots, is excluded from adoption decisions under
+Section 1.5 for exactly that reason, and is the noisiest in the grid. It is nonetheless where
+a comparison against V1 reversed, and reporting it as inside the noise floor was incorrect.
+
+Worth noting alongside it: V1 scored 0.2015, 0.2059 and 0.2037 on that cell across the three
+snapshots, while v11 scored 0.1783, 0.2376 and 0.2473. The model changed in none of those
+runs; only the population did. V1 is close to invariant to that and v11 is not, which is the
+Section 4.30 and v16 fragility finding appearing in a third place.
+
+The rest of the original claim stands: 95% to 97% of scored SKUs are shared at every window,
+no shared SKU changed segment label, and the long counts move by at most two. Windows
+themselves cannot move, being anchored to `ML_FINAL_TEST_CUTOFF` by date.
 
 **A caveat on the smooth count.** Buckets went from 447 smooth / 3,002 intermittent to 467 /
 3,058, and 190 SKUs were promoted to smooth/short. Almost none of that reaches the scored
@@ -1474,6 +1490,205 @@ to the week convention. They cost several times the rest of the batch combined a
 version comparison depends on their internals being re-derived. Every re-run's raw output is
 committed under `docs/rebaseline_2026-08-03/`, which is the record; the tables in Section 6
 are a summary of it and the logs are authoritative where they disagree.
+
+### 4.32 The promotion override was hiding 41% of the catalogue, and the threshold that follows
+
+**Two changes on 2026-08-11, in `src/profile.py`. Snapshot advanced to
+`2026-08-03-v2`, which carries the same `sales_clean.parquet` as `2026-08-03`
+byte for byte so that neither change is confounded with a data refresh
+(`scripts/ml_36_reprofile_snapshot.py`).**
+
+#### Change 1: promoted SKUs get their real history
+
+The promotion override assigned three constants: `train_start` to the start of
+the trailing 13-week window, `active_weeks` to 13, `history_length` to `short`.
+
+That is correct for a SKU that genuinely just became forecastable. It is wrong
+for one that was always steady, and a SKU reaches the promotion path by two
+different routes. `classify()` returns intermittent when a SKU is sparse
+(`zero_pct >= 0.30`) OR merely small (`mean < 3.0`). A SKU selling a regular 2.5
+units every week is not sporadic in any sense; it failed the second test only,
+was promoted on its recent window, and then had its history cut to 13 weeks as
+though it had just appeared.
+
+Measured before the fix: 190 SKUs promoted, 41% of the 467 smooth SKUs. Only 15
+genuinely had 13 weeks. The median had 34 and the maximum 111, which is the
+entire series. 73 had at least 50 weeks and were still labelled `short`, so they
+were routed to the short model as well as starved. 4,615 SKU-weeks of usable
+history were discarded, because `load_weekly` trims each SKU's training frame to
+`train_start`.
+
+**The consequence that matters more than the truncation.** `train_start` for
+these SKUs was a window that slides forward every profiling run, and it sits in
+the future relative to every evaluation cutoff. So all 190 had negative history
+at every window and were silently absent from every figure ever recorded. The
+scored population went from 266/251/66 across the three windows to 356/327/103.
+
+Every number recorded before this date was measured on the easier 59% of the
+catalogue, and nothing said so. That is the finding; the truncation is the cause.
+
+`_smooth_onset` now walks back as far as the promotion test still holds and sets
+all three fields from the result. It stops at the first failing length rather
+than searching for the longest passing window anywhere, because a window that
+passes only after skipping a bad patch would silently include that patch.
+
+This also closes BACKLOG item 2, by a different route than that item proposed.
+Its suggested fix, a stable `launch_week` used for eligibility, was measured and
+is wrong: it admits 178 to 226 SKUs per window of which 93% to 95% have no
+training rows at that cutoff, and they would be scored as zero forecasts.
+
+#### Change 2: the promotion bar matched to the classification bar, at 3.0
+
+`RECENT_MEAN_UPGRADE` was 2.0 against `MEAN_INTERMITTENT_CUTOFF` at 3.0. Two
+bars for one judgement, which is what allowed a SKU to fail one and pass the
+other and is the mechanism behind change 1. Now both are 3.0.
+
+**Recorded as a judgement, because the development windows cannot locate this
+boundary.** The population it governs numbered SEVEN SKUs at the Oct-2025
+cutoff. Being regular is recent for these SKUs even where selling is not: of the
+190, 22 had not sold at all by that cutoff, 78 had under 13 weeks, and 83 had
+history but were genuinely sparse then. `scripts/ml_35` and `scripts/ml_37`
+measured the demand bands either side of 3.0 and returned indistinguishable,
+with point estimates favouring a trailing mean. That is consistent with a floor
+existing and silent about where it sits.
+
+**The cost is measured even though the location is not**, so it can be revisited
+deliberately: 127 SKUs lose their forecast, smooth goes 467 to 340, and 3,978 of
+58,842 smooth units stop being covered. That is 6.8% of forecast demand and 5.3%
+of the catalogue, from SKUs whose weekly means run 2.00 to 2.92. They remain
+visible in the Action List's Not-forecast section on a trailing actual-sales
+rate, so they are unforecast rather than invisible.
+
+**The reasoning, stated plainly because it is not an empirical result.** Serving
+a forecast is a positive claim and needs evidence for it. "Indistinguishable
+from a trailing mean" is not evidence that a forecast is harmless, it is the
+absence of evidence that it helps, and the burden belongs on the forecast. The
+alternative reading, that a band should keep its forecast until proven harmful,
+makes the default "forecast everything not yet disproven", which is how the
+catalogue came to include SKUs selling 1.3 units a week where model and baseline
+differ by 0.0007.
+
+`RECENT_MEAN_DOWNGRADE` deliberately stays at 2.0. Equal bars would make a SKU
+hovering at the threshold flip between smooth and intermittent week after week,
+and each flip removes or restores a forecast and resets `train_start`. The gap
+is a hysteresis band.
+
+#### What the two changes did to the recorded figures
+
+| smooth/long | 2026-08-03 | onset only | onset + bar 3.0 |
+|---|---|---|---|
+| v11 Mar-May | 0.1337 | 0.1517 | 0.1350 |
+| v11 Dec-Feb | 0.1447 | 0.1586 | 0.1389 |
+| v11 Oct-Dec | 0.1001 | 0.1087 | 0.1040 |
+
+v11 against the structural baseline on the final configuration: Mar-May short
+−0.0215, Mar-May long +0.0039, Dec-Feb short +0.0071, Dec-Feb long −0.0782,
+Oct-Dec short −0.2132, Oct-Dec long −0.0175. Ahead in four of six cells, level
+in one, marginally behind in one.
+
+Against V1: ahead in four of six by 0.05 to 0.26, behind in both Oct-Dec cells
+by 0.02 to 0.04. V1 taking a full window is a change from what was previously
+recorded, and the reason the legacy velocity method is more robust in that
+window is **not understood**.
+
+**How to read the improvement between the middle and right columns, because it
+is easy to read wrongly.** It is substantially mechanical. Raising the bar
+removed the 127 hardest SKUs, so those figures are not a like-for-like model
+comparison against the middle column; the model looks better because it was
+asked to do something easier on 6.8% less demand. The honest report pairs
+accuracy with coverage: 340 SKUs at these error rates, down from 467, with the
+excluded 127 still served a trailing rate elsewhere in the product. Quoting the
+improvement without the coverage change would be the flattering version.
+
+### 4.33 A refactor silently disarmed the three hyperparameter scripts
+
+**Found 2026-08-11 during a codebase audit. Fixed. No recorded result changes,
+and that was established rather than assumed.**
+
+`scripts/ml_17_tune.py`, `ml_18_tune_wide.py` and `ml_19_tune_verify.py` all set
+hyperparameters by assigning `m.PARAMS` after constructing a `RatioLGBM`. That
+route stopped working on 2026-07-29, when `RatioLGBM.__init__` began copying
+`self.PARAMS` into a per-instance `self.params` that `fit()` reads. From that
+date, the assignment is inert: the model trains on defaults while the log
+reports the tuned configuration.
+
+**Why the recorded v10 results are nonetheless safe.** The scripts last ran on
+2026-07-21, eight days before the refactor, when the attribute was the supported
+route. The check that settles it is in the output rather than in the dates:
+`outputs/reports/tune_wide.csv` holds 81 configurations with **81 distinct**
+`val_l1` scores. Only `patience` reaches the estimator through the constructor,
+so if nothing else had applied, configurations sharing a `patience` would have
+scored identically. They do not. The hyperparameters were live when the search
+ran, and v10's rejection stands.
+
+That prediction was made before looking, and it failed in the direction that
+exonerates the record. Worth stating because the first conclusion drawn here was
+the alarming one, that the entire v10 track had compared the default against
+itself, and it was wrong.
+
+**What the refactor actually broke is every future run.** Its own comment reads
+"Default None reproduces PARAMS exactly, so existing versions are unaffected",
+which is true of every caller that uses the argument and false of the three that
+used the attribute. A latent regression in scripts nobody had re-run, which is
+precisely the population that a change like this cannot be tested against.
+
+**The general lesson, which is the reusable part.** Replacing a class attribute
+with a per-instance copy is invisible to any caller that reads it and silent for
+any caller that writes it. Grep for writes as well as reads when doing that, and
+prefer a construct that fails loudly: `ml_19` now asserts that the tuned value
+reached `m.params` before fitting, so the same breakage would raise rather than
+produce a plausible number.
+
+### v18 (August 2026) — the tuned hyperparameters, asked of the model that exists
+
+**Status: run 2026-08-11 on snapshot 2026-08-03-v2. REJECTED on both arms.**
+
+**Why v10 was re-opened.** v10 searched hyperparameters for the architecture of the
+time, a single shared model on `FEATURES_V1` across all smooth SKUs. It was rejected and
+the defaults kept. v11 then replaced that architecture with a hybrid, and the search was
+never repeated against it. A setting that does nothing for one global model can matter
+for a model fitted to 55 long SKUs, which is a different bias-variance problem.
+
+The search itself was not repeated. `outputs/reports/tune_wide.csv` holds 81
+configurations scored on the internal validation slice, which costs no development
+window, and Section 4.33 establishes those results are sound. This took the winner and
+asked where it belongs. Arms were separated by design: the short model sees thousands of
+SKU-weeks while the long model sees 55 to 62, so a configuration helping one could hurt
+the other and a combined test would let the effects cancel into a tie.
+
+| arm | segment | Mar-May | Dec-Feb | Oct-Dec | mean | verdict |
+|---|---|---|---|---|---|---|
+| short-tuned | smooth/short | +0.0002 | +0.0024 | −0.0023 | +0.0001 | rejected |
+| long-tuned | smooth/long | −0.0058 | **+0.0159** | −0.0019 | +0.0027 | rejected |
+
+**The pre-registered disconfirming criterion does not apply, which is what makes this a
+real null.** Tree counts moved by a factor of two to four: short 127 to 295, 69 to 344,
+76 to 348; long 62 to 267, 170 to 282, 122 to 305. The settings were applied and changed
+the fit substantially. The model was tuned and did not improve.
+
+**The short arm's result is the more interesting one.** Four times the trees, a tenth the
+learning rate, twenty times fewer minimum child samples, and the answer moves by 0.0001
+across three windows. The short model is **data-limited rather than capacity-limited**, so
+there is nothing for capacity tuning to buy. That is a statement about the problem rather
+than about these particular settings, and it argues against further hyperparameter work on
+that arm at all.
+
+**The long arm's only significant cell is a regression**, +0.0159 in Dec-Feb, which is the
+window carrying v11's defining result. Tuning the long model damages the one thing the
+project rests on.
+
+**This is the sixth perturbation to cost the long segment**, after the v15 blend (+0.0059),
+the monthly-only blend (+0.0085), the v16 holiday blend (+0.0054), the week-boundary shift
+(Section 4.30), and the v17 channel-mix feature (+0.0120). Six changes of different kinds,
+in different directions, in different parts of the pipeline. At 55 to 62 SKUs that is not
+six coincidences; it is a model at a narrow optimum on a small sample, where nearly any
+added degree of freedom costs more variance than it returns in signal.
+
+**Consequence.** v10's verdict stands and is now verified against the architecture actually
+in service. Defaults retained. Anyone proposing further tuning of the long model should
+read this entry and the five before it first.
+
+Experiment: `scripts/ml_39_v18_tune_hybrid.py`.
 
 ---
 
@@ -1605,6 +1820,15 @@ in the git history at the `model/v*` tagged commits; they are not reproducible,
 because the data they were measured on was never snapshotted. The verdicts are unchanged:
 re-measurement moved individual numbers but did not reverse any adoption decision.
 
+**Which snapshot each figure below was measured on.** v-base and v11, the two entries that
+still describe live behaviour, were re-measured on `2026-08-03-v2` on 2026-08-11. Every other
+entry's table is on the snapshot current when that version was tested, and those populations
+differ, most importantly because 41% of the smooth set was absent from any evaluation before
+2026-08-11 (Section 4.32). Superseded versions have not been re-derived because doing so
+would not change a single adoption decision, and the raw output for all of them on the
+current snapshot is committed under `docs/rebaseline_2026-08-03-v2/`, which is authoritative
+where a table here disagrees.
+
 | Version | Change from previous | Status | Details |
 |---|---|---|---|
 | v-base | structural baseline, no learned parameters | superseded by v9 | Sections 3, 4.17 |
@@ -1626,6 +1850,7 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
 | v15 | seasonal factor blended across the days a week covers | passed its criterion, not adopted after v16 | Section 6 |
 | v16 | the holiday half of v15 without the monthly half | rejected, and it overturned v15's attribution | Section 6 |
 | v17 | + trailing 12-week Amazon-FBA share in the long model | rejected; the feature was used heavily and still regressed | Section 6 |
+| v18 | v10's tuned hyperparameters re-tested per arm on the v11 hybrid | rejected on both arms; v10's verdict holds on the current architecture | Section 6 |
 
 ### v-base (July 2026)
 
@@ -1633,14 +1858,21 @@ re-measurement moved individual numbers but did not reverse any adoption decisio
   SKUs, none for short (Sections 4.10, 4.17). No learned parameters.
 - **Status:** BEST. This is the floor every later version must beat.
 
-Measured on snapshot 2026-08-03. Raw output: `docs/rebaseline_2026-08-03/ml_03_baseline_deseas.log`.
+Measured on snapshot **2026-08-03-v2**. Raw output:
+`docs/rebaseline_2026-08-03-v2/ml_03_baseline_deseas.log`.
 
 | Pooled WAPE | Mar-May | Dec-Feb | Oct-Dec |
 |---|---|---|---|
-| smooth/short | 0.2114 | 0.1893 | (0.4755) |
-| smooth/long | 0.1313 | 0.2175 | 0.1213 |
+| smooth/short | 0.2141 | 0.1923 | (0.4605) |
+| smooth/long | 0.1311 | 0.2171 | 0.1215 |
 
-Bias: long −2.2%, +16.9%, −8.3%.
+Figures on earlier snapshots, for continuity. They are NOT comparable: the
+scored population differs between all three, per Section 4.32.
+
+| | short | long |
+|---|---|---|
+| 2026-08-03 | 0.2114 / 0.1893 / 0.4755 | 0.1313 / 0.2175 / 0.1213 |
+| 2026-07-20 | 0.2097 / 0.1788 / 0.4861 | 0.1302 / 0.2167 / 0.1209 |
 
 **Correction, 2026-08-10. The figures previously in this table were stale, and not
 because of the snapshot.** They read short 0.2097 / 0.1788 / (0.4861) and long 0.1321 /
@@ -2279,32 +2511,42 @@ episode across all long SKUs and weeks, not on December alone.
 
 **Status: all three criteria met. New BEST. Final test not yet run.**
 
-Re-measured on snapshot 2026-08-03 (Section 4.31). Raw output:
-`docs/rebaseline_2026-08-03/ml_22_v11_hybrid.log`.
+Re-measured on snapshot **2026-08-03-v2** (Section 4.32). Raw output:
+`docs/rebaseline_2026-08-03-v2/ml_22_v11_hybrid.log`.
 
-| Pooled WAPE | v11 | v9 | v-base | prototype | v11 vs v-base (long) |
-|---|---|---|---|---|---|
-| short, Mar-May | 0.1859 | 0.1859 | 0.2114 | 0.2028 | (short = v9) |
-| short, Dec-Feb | 0.2030 | 0.2030 | 0.1893 | 0.2904 | (short = v9) |
-| short, Oct-Dec (ref) | 0.2376 | 0.2376 | 0.4755 | 0.4137 | (short = v9) |
-| long, Mar-May | 0.1337 | 0.1431 | 0.1313 | 0.1437 | +0.0024, tie |
-| long, Dec-Feb | **0.1447** | 0.2365 | 0.2175 | 0.2690 | −0.0727, significant |
-| long, Oct-Dec | 0.1001 | 0.0995 | 0.1213 | 0.0918 | −0.0212, tie |
+| Pooled WAPE | v11 | v9 | v-base | prototype | V1 | v11 vs v-base |
+|---|---|---|---|---|---|---|
+| short, Mar-May | 0.1926 | 0.1926 | 0.2141 | 0.2053 | 0.3275 | −0.0215 |
+| short, Dec-Feb | 0.1994 | 0.1994 | 0.1923 | 0.2912 | 0.2518 | +0.0070 |
+| short, Oct-Dec (ref) | 0.2473 | 0.2473 | 0.4605 | 0.3972 | 0.2037 | −0.2132, significant |
+| long, Mar-May | 0.1350 | 0.1413 | 0.1311 | 0.1435 | 0.2884 | +0.0039, tie |
+| long, Dec-Feb | **0.1389** | 0.2321 | 0.2171 | 0.2685 | 0.4007 | −0.0782, significant |
+| long, Oct-Dec | 0.1040 | 0.0937 | 0.1215 | 0.0918 | 0.0841 | −0.0174, tie |
 
-Long bias: −6.5%, +4.5%, +1.0% across the three windows; the Dec-Feb figure falls from v9's
-+20.0% to +4.5%.
+**Status: all three criteria still met.** Short is identical to v9 by construction, verified
+at exactly 0.0000 in all three windows. Dec-Feb long improves significantly against v-base
+(−0.0782) and against v9 (−0.0932). No significant long regression in Mar-May (−0.0063
+against v9) or Oct-Dec (+0.0104 against v9, not significant).
 
-Figures on the previous snapshot, for continuity: short 0.1961 / 0.2000 / 0.1783, long
-0.1355 / 0.1380 / 0.1000. Every cell moves by less than the bootstrap noise floor and no
-criterion changes. The Oct-Dec short reference cell moves most, from 0.1783 to 0.2376; that
-cell has 13 eligible SKUs and is excluded from decisions under Section 1.5, which is why a
-swing of that size there is unremarkable.
+The defining result holds: Dec-Feb long, which every version since v1 has lost and where a
+moving average still beat v9, is 0.1389 against v-base 0.2171 and the prototype 0.2685.
 
-The defining result is unchanged: Dec-Feb long, which every version since v1 has lost and
-where a moving average still beat v9, is 0.1447, well below both v-base (0.2175) and the
-prototype (0.2690). Short is identical to v9 by construction, so its qualification is
-intact, and the long model does not regress in the other two windows. v11 beats the
-prototype in five of six cells, losing only Oct-Dec long, the cell V1 also wins.
+**Against V1, the legacy spreadsheet method: v11 wins four of six cells** by 0.05 to 0.26,
+and loses both Oct-Dec cells by 0.02 to 0.04. V1 taking an entire window is a change from
+what was previously recorded, where it won only Oct-Dec long. Why the velocity method is
+more robust in that window is **not understood** and is worth someone's attention.
+
+**The margin against v-base is narrower than earlier snapshots showed**, and Mar-May long is
+now level rather than ahead. Both are consequences of Section 4.32: 41% of the smooth set had
+never been scored, and it is the harder 41%.
+
+Figures on earlier snapshots, for continuity only. They are NOT comparable, because the
+scored population differs between all three:
+
+| | short | long |
+|---|---|---|
+| 2026-08-03 | 0.1859 / 0.2030 / 0.2376 | 0.1337 / 0.1447 / 0.1001 |
+| 2026-07-20 | 0.1961 / 0.2000 / 0.1783 | 0.1355 / 0.1380 / 0.1000 |
 
 **Note on the v-base correction.** The criteria above cite v-base Dec-Feb long as 0.2167,
 which was the correct value all along; only the transcribed table in the v-base entry

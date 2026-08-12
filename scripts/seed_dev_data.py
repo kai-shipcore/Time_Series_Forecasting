@@ -12,8 +12,8 @@ one who has to run the planning pages locally to work on them.
 Everything needed is already in the repository, just not where readiness()
 looks:
 
-    sales_clean.parquet     data/snapshots/2026-07-20/   (tracked, pinned)
-    sku_profiles.csv        data/snapshots/2026-07-20/   (tracked, pinned)
+    sales_clean.parquet     data/snapshots/<ML_DATA_SNAPSHOT>/  (tracked, pinned)
+    sku_profiles.csv        data/snapshots/<ML_DATA_SNAPSHOT>/  (tracked, pinned)
     ml_forward_forecasts    data/dev_seed/               (tracked fixture)
     v1_forward_forecasts    data/dev_seed/               (tracked fixture)
     ml_accuracy*.csv        outputs/reports/             (already in place)

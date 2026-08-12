@@ -29,15 +29,25 @@ if str(ROOT) not in sys.path:
 from config import ML_DATA_SNAPSHOT  # noqa: E402
 
 # The snapshot every number below was measured on.
-REFERENCE_SNAPSHOT = "2026-08-03"
+REFERENCE_SNAPSHOT = "2026-08-03-v2"
 
 # The statistical prototype (scripts/ml_10), per window: (short, long) pooled WAPE.
-# Re-measured 2026-08-10 on 2026-08-03. Previous values, on 2026-07-20:
-#   Mar-May (0.2014, 0.1411)  Dec-Feb (0.2863, 0.2737)  Oct-Dec (0.4251, 0.0911)
+#
+# Re-measured 2026-08-11 on 2026-08-03-v2. That snapshot carries two profiling
+# changes against 2026-08-03, and figures are NOT comparable across them:
+#   - promoted SKUs get their detected smooth-history onset instead of a flat
+#     13 weeks, which admitted 190 previously unscoreable SKUs
+#   - the promotion bar was matched to the classification bar at 3.0, which
+#     removed 127 SKUs below it
+# Design doc Section 4.32.
+#
+# Previous values, for the record:
+#   on 2026-08-03  Mar-May (0.2028, 0.1437)  Dec-Feb (0.2904, 0.2690)  Oct-Dec (0.4137, 0.0918)
+#   on 2026-07-20  Mar-May (0.2014, 0.1411)  Dec-Feb (0.2863, 0.2737)  Oct-Dec (0.4251, 0.0911)
 PROTOTYPE = {
-    "Mar-May": (0.2028, 0.1437),
-    "Dec-Feb": (0.2904, 0.2690),
-    "Oct-Dec": (0.4137, 0.0918),
+    "Mar-May": (0.2053, 0.1435),
+    "Dec-Feb": (0.2912, 0.2685),
+    "Oct-Dec": (0.3972, 0.0918),
 }
 
 # scripts/ml_12 regression check, per window: (short, long) pooled WAPE.
@@ -53,15 +63,24 @@ PROTOTYPE = {
 # The old EXPECT_V3 reproduces under NEITHER holiday window; at least three
 # things changed beneath it and no single one accounts for the gap. v3 is
 # superseded and gates no decision, so it is re-measured rather than explained.
+# Re-measured 2026-08-11 on 2026-08-03-v2. EXPECT_BASE cross-checks exactly
+# against the baseline column of ml_22's own run, which is the confirmation that
+# these were read out of the right table: v-base is the RAW series for short
+# SKUs and the DESEASONALIZED one for long (Section 4.17), and ml_03 prints
+# both columns, so taking the wrong one is an easy and silent mistake.
+#
+# Previous values, on 2026-08-03:
+#   EXPECT_BASE  Mar-May (0.2114, 0.1313)  Dec-Feb (0.1893, 0.2175)  Oct-Dec (0.4755, 0.1213)
+#   EXPECT_V3    Mar-May (0.1859, 0.1431)  Dec-Feb (0.2030, 0.2365)  Oct-Dec (0.2376, 0.0995)
 EXPECT_BASE = {
-    "Mar-May": (0.2114, 0.1313),
-    "Dec-Feb": (0.1893, 0.2175),
-    "Oct-Dec": (0.4755, 0.1213),
+    "Mar-May": (0.2141, 0.1311),
+    "Dec-Feb": (0.1923, 0.2171),
+    "Oct-Dec": (0.4605, 0.1215),
 }
 EXPECT_V3 = {
-    "Mar-May": (0.1859, 0.1431),
-    "Dec-Feb": (0.2030, 0.2365),
-    "Oct-Dec": (0.2376, 0.0995),
+    "Mar-May": (0.1926, 0.1413),
+    "Dec-Feb": (0.1994, 0.2321),
+    "Oct-Dec": (0.2473, 0.0937),
 }
 
 

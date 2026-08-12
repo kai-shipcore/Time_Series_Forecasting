@@ -1,0 +1,99 @@
+
+==============================================================
+Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+pooled WAPE (v3 iters=127, v4 iters=169):
+model         baseline      v3      v4
+segment                               
+TOTAL           0.1845  0.1743  0.2339
+smooth/long     0.1311  0.1413  0.1398
+smooth/short    0.2141  0.1926  0.2860
+
+bias% by segment:
+              baseline   v3    v4
+segment                          
+smooth/long       -2.1  1.4  -3.2
+smooth/short      -8.0  8.3  23.9
+TOTAL             -5.9  5.8  14.2
+bootstrap v4-vs-baseline [short]: {'delta': 0.072, 'se': 0.0209, 'ci_lo': 0.033, 'ci_hi': 0.1126}  significant=True
+bootstrap v4-vs-v3       [short]: {'delta': 0.0935, 'se': 0.0153, 'ci_lo': 0.0615, 'ci_hi': 0.1223}  significant=True
+bootstrap v4-vs-baseline [long]: {'delta': 0.0087, 'se': 0.0155, 'ci_lo': -0.0195, 'ci_hi': 0.0406}  significant=False
+bootstrap v4-vs-v3       [long]: {'delta': -0.0015, 'se': 0.0131, 'ci_lo': -0.0249, 'ci_hi': 0.0244}  significant=False
+ramp cohort (n=47):
+    baseline  wape=0.3338 bias=-27.3%
+    v3        wape=0.2861 bias=+14.6%
+    v4        wape=0.2692 bias=+10.9%
+v4 feature importance (gain):
+  feature          gain
+ramp_4_12 903314.657196
+ y_last_r 466278.572598
+  lag_1_r 311314.126492
+     lead 203108.180845
+  is_long 187582.043108
+  is_long share of total gain: 9.05%
+
+==============================================================
+Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+pooled WAPE (v3 iters=69, v4 iters=138):
+model         baseline      v3      v4
+segment                               
+TOTAL           0.2016  0.2117  0.1892
+smooth/long     0.2171  0.2321  0.1722
+smooth/short    0.1923  0.1994  0.1994
+
+bias% by segment:
+              baseline    v3    v4
+segment                           
+smooth/long       16.7  19.0  11.7
+smooth/short       2.1   0.4   4.8
+TOTAL              7.6   7.4   7.4
+bootstrap v4-vs-baseline [short]: {'delta': 0.0071, 'se': 0.009, 'ci_lo': -0.0114, 'ci_hi': 0.025}  significant=False
+bootstrap v4-vs-v3       [short]: {'delta': 0.0001, 'se': 0.006, 'ci_lo': -0.0116, 'ci_hi': 0.0119}  significant=False
+bootstrap v4-vs-baseline [long]: {'delta': -0.0449, 'se': 0.0172, 'ci_lo': -0.0736, 'ci_hi': -0.0065}  significant=True
+bootstrap v4-vs-v3       [long]: {'delta': -0.0599, 'se': 0.012, 'ci_lo': -0.081, 'ci_hi': -0.0344}  significant=True
+ramp cohort (n=176):
+    baseline  wape=0.1714 bias=+0.4%
+    v3        wape=0.1881 bias=+0.7%
+    v4        wape=0.1848 bias=+4.5%
+v4 feature importance (gain):
+  feature          gain
+ramp_4_12 558512.994562
+ y_last_r 286331.001480
+  lag_1_r 203943.457273
+     lead 123703.336132
+  is_long  59701.560284
+  is_long share of total gain: 4.85%
+
+==============================================================
+Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+pooled WAPE (v3 iters=76, v4 iters=139):
+model         baseline      v3      v4
+segment                               
+TOTAL           0.1421  0.1030  0.1041
+smooth/long     0.1215  0.0937  0.0937
+smooth/short    0.4605  0.2473  0.2648
+
+bias% by segment:
+              baseline   v3   v4
+segment                         
+smooth/long       -8.2 -0.9 -1.1
+smooth/short     -46.0  7.5  5.2
+TOTAL            -10.5 -0.4 -0.7
+bootstrap v4-vs-baseline [short]: {'delta': -0.1957, 'se': 0.1033, 'ci_lo': -0.3324, 'ci_hi': 0.0521}  significant=False
+bootstrap v4-vs-v3       [short]: {'delta': 0.0175, 'se': 0.011, 'ci_lo': -0.0046, 'ci_hi': 0.0393}  significant=False
+bootstrap v4-vs-baseline [long]: {'delta': -0.0278, 'se': 0.0142, 'ci_lo': -0.0529, 'ci_hi': 0.0013}  significant=False
+bootstrap v4-vs-v3       [long]: {'delta': 0.0, 'se': 0.0029, 'ci_lo': -0.0059, 'ci_hi': 0.0056}  significant=False
+ramp cohort (n=21):
+    baseline  wape=0.3409 bias=-30.6%
+    v3        wape=0.2093 bias=+2.6%
+    v4        wape=0.2214 bias=+0.9%
+v4 feature importance (gain):
+  feature          gain
+ramp_4_12 489336.632517
+ y_last_r 240632.805412
+  lag_1_r 201629.144329
+     lead  85793.864410
+  is_long   4365.741085
+  is_long share of total gain: 0.43%

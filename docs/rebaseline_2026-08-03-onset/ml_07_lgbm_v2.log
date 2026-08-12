@@ -1,0 +1,93 @@
+
+==============================================================
+Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+pooled WAPE (v1 iters=93, v2 iters=68):
+model         baseline      v1      v2
+segment                               
+TOTAL           0.1898  0.1701  0.1694
+smooth/long     0.1349  0.1436  0.1422
+smooth/short    0.2183  0.1839  0.1835
+
+bias% by segment:
+              baseline   v1   v2
+segment                         
+smooth/long       -2.6  1.3  1.1
+smooth/short      -8.5 -3.7 -2.1
+TOTAL             -6.4 -2.0 -1.0
+bootstrap v2-vs-baseline [short]: {'delta': -0.0348, 'se': 0.0058, 'ci_lo': -0.0462, 'ci_hi': -0.023}
+bootstrap v2-vs-v1       [short]: {'delta': -0.0004, 'se': 0.0067, 'ci_lo': -0.0131, 'ci_hi': 0.0121}
+bootstrap v2-vs-baseline [long]: {'delta': 0.0074, 'se': 0.0102, 'ci_lo': -0.0136, 'ci_hi': 0.0266}
+bootstrap v2-vs-v1       [long]: {'delta': -0.0013, 'se': 0.0041, 'ci_lo': -0.0083, 'ci_hi': 0.007}
+ramp cohort (n=68):
+    baseline  wape=0.3261 bias=-26.5%
+    v1        wape=0.2565 bias=-12.5%
+    v2        wape=0.2703 bias=-9.1%
+v2 feature importance (gain):
+  feature          gain
+ramp_4_12 391695.018272
+ y_last_r 354084.010048
+  lag_1_r 220876.090302
+     lead 116732.009468
+
+==============================================================
+Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+pooled WAPE (v1 iters=70, v2 iters=99):
+model         baseline      v1      v2
+segment                               
+TOTAL           0.2048  0.4532  0.3751
+smooth/long     0.2170  0.2518  0.2617
+smooth/short    0.1978  0.5674  0.4395
+
+bias% by segment:
+              baseline    v1    v2
+segment                           
+smooth/long       16.7  21.8  22.9
+smooth/short       2.1  54.9  41.2
+TOTAL              7.4  42.9  34.6
+bootstrap v2-vs-baseline [short]: {'delta': 0.2417, 'se': 0.0218, 'ci_lo': 0.2004, 'ci_hi': 0.2847}
+bootstrap v2-vs-v1       [short]: {'delta': -0.1279, 'se': 0.0091, 'ci_lo': -0.1459, 'ci_hi': -0.1098}
+bootstrap v2-vs-baseline [long]: {'delta': 0.0447, 'se': 0.0115, 'ci_lo': 0.0225, 'ci_hi': 0.0673}
+bootstrap v2-vs-v1       [long]: {'delta': 0.0099, 'se': 0.0084, 'ci_lo': -0.0061, 'ci_hi': 0.0262}
+ramp cohort (n=225):
+    baseline  wape=0.1771 bias=+0.3%
+    v1        wape=0.5666 bias=+55.5%
+    v2        wape=0.4301 bias=+41.0%
+v2 feature importance (gain):
+  feature          gain
+ramp_4_12 500600.162109
+ y_last_r 238375.769863
+  lag_1_r 174593.361530
+     lead 105542.589844
+
+==============================================================
+Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+pooled WAPE (v1 iters=79, v2 iters=76):
+model         baseline      v1      v2
+segment                               
+TOTAL           0.1577  0.1234  0.1264
+smooth/long     0.1226  0.0971  0.1011
+smooth/short    0.4837  0.3677  0.3615
+
+bias% by segment:
+              baseline   v1   v2
+segment                         
+smooth/long       -8.0  1.1  1.4
+smooth/short     -47.8 -6.3 -8.7
+TOTAL            -11.9  0.4  0.4
+bootstrap v2-vs-baseline [short]: {'delta': -0.1222, 'se': 0.0631, 'ci_lo': -0.2307, 'ci_hi': 0.0124}
+bootstrap v2-vs-v1       [short]: {'delta': -0.0063, 'se': 0.0072, 'ci_lo': -0.0206, 'ci_hi': 0.0079}
+bootstrap v2-vs-baseline [long]: {'delta': -0.0215, 'se': 0.0179, 'ci_lo': -0.0551, 'ci_hi': 0.0152}
+bootstrap v2-vs-v1       [long]: {'delta': 0.004, 'se': 0.0024, 'ci_lo': -0.0005, 'ci_hi': 0.0088}
+ramp cohort (n=41):
+    baseline  wape=0.3468 bias=-30.7%
+    v1        wape=0.2638 bias=+1.7%
+    v2        wape=0.2588 bias=+0.7%
+v2 feature importance (gain):
+  feature          gain
+ramp_4_12 480287.985878
+ y_last_r 185331.951630
+  lag_1_r 136830.575058
+     lead  80816.703316

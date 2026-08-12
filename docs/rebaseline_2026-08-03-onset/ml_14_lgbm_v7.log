@@ -1,0 +1,74 @@
+
+  !! REFERENCE FIGURES ARE STALE
+     printed below: measured on snapshot 2026-08-03
+     running on:    snapshot 2026-08-03-onset
+     They are NOT comparable to this run's numbers. Re-measure them
+     (scripts/ml_10 for PROTOTYPE, ml_03 and ml_08 for ml_12's) and
+     update src/ml/reference.py before reading anything into a gap.
+
+
+==================================================================
+Mar-May  Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+  weight scaling: long x0.838, short x1.319   (v3 iters=69, v7 iters=135)
+  prototype (the bar): short 0.2028, long 0.1437
+
+pooled WAPE:
+model         baseline      v3      v4      v7   v7ref
+segment                                               
+TOTAL           0.1898  0.1766  0.2264  0.2297  0.1888
+smooth/long     0.1349  0.1452  0.1432  0.1454  0.1658
+smooth/short    0.2183  0.1929  0.2696  0.2736  0.2008
+
+bias% by segment:
+              baseline   v3    v4    v7  v7ref
+segment                                       
+smooth/long       -2.6  2.5  -1.0  -1.3    4.9
+smooth/short      -8.5  8.2  21.2  21.8    9.5
+TOTAL             -6.4  6.2  13.6  13.9    7.9
+bootstrap v7-vs-v3 [short]: {'delta': 0.0807, 'se': 0.0146, 'ci_lo': 0.0531, 'ci_hi': 0.11}  significant=True
+bootstrap v7-vs-v3 [long]: {'delta': 0.0001, 'se': 0.0095, 'ci_lo': -0.0179, 'ci_hi': 0.0202}  significant=False
+
+==================================================================
+Dec-Feb  Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+  weight scaling: long x0.775, short x1.724   (v3 iters=170, v7 iters=353)
+  prototype (the bar): short 0.2904, long 0.2690
+
+pooled WAPE:
+model         baseline      v3      v4      v7   v7ref
+segment                                               
+TOTAL           0.2048  0.2215  0.2128  0.2101  0.2249
+smooth/long     0.2170  0.2352  0.2156  0.2130  0.2561
+smooth/short    0.1978  0.2138  0.2113  0.2084  0.2072
+
+bias% by segment:
+              baseline    v3    v4    v7  v7ref
+segment                                        
+smooth/long       16.7  19.6  17.1  16.5   22.2
+smooth/short       2.1   0.5   5.3   5.5    0.8
+TOTAL              7.4   7.4   9.5   9.5    8.5
+bootstrap v7-vs-v3 [short]: {'delta': -0.0053, 'se': 0.0096, 'ci_lo': -0.0246, 'ci_hi': 0.0132}  significant=False
+bootstrap v7-vs-v3 [long]: {'delta': -0.0223, 'se': 0.0092, 'ci_lo': -0.04, 'ci_hi': -0.0044}  significant=True
+
+==================================================================
+Oct-Dec  Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+  weight scaling: long x0.715, short x4.753   (v3 iters=93, v7 iters=67)
+  prototype (the bar): short 0.4137, long 0.0918
+
+pooled WAPE:
+model         baseline      v3      v4      v7   v7ref
+segment                                               
+TOTAL           0.1577  0.1243  0.1256  0.1296  0.1268
+smooth/long     0.1226  0.1004  0.1016  0.1049  0.1025
+smooth/short    0.4837  0.3469  0.3494  0.3597  0.3520
+
+bias% by segment:
+              baseline   v3   v4   v7  v7ref
+segment                                     
+smooth/long       -8.0  1.5  1.5  1.4    1.5
+smooth/short     -47.8  2.2  1.0  3.9    3.3
+TOTAL            -11.9  1.5  1.5  1.6    1.7
+bootstrap v7-vs-v3 [short]: {'delta': 0.0128, 'se': 0.0157, 'ci_lo': -0.0143, 'ci_hi': 0.0451}  significant=False
+bootstrap v7-vs-v3 [long]: {'delta': 0.0045, 'se': 0.0024, 'ci_lo': -0.0003, 'ci_hi': 0.0094}  significant=False

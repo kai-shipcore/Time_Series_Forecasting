@@ -28,9 +28,12 @@ RUNS_HIGH_RATIO = 1.5
 #: 10 more than doubles that, almost all of them trivial.
 RUNS_HIGH_EXCESS_UNITS = 20
 
-#: `active_weeks` value that marks a SKU promoted from intermittent to
-#: smooth/short. `src/profile.py` assigns RECENT_WEEKS there rather than a
-#: measured count, so the constant is a marker, not a coincidence.
+#: LEGACY marker. `active_weeks` value that used to identify a SKU promoted from
+#: intermittent, because `src/profile.py` assigned RECENT_WEEKS there rather than
+#: a measured count. Since 2026-08-11 promotion detects each SKU's real onset, so
+#: this identifies only the 15 that genuinely have 13 weeks. Read the `promoted`
+#: column instead; this is kept solely so a profile file written before that
+#: change is still interpreted the way it was written.
 PROMOTED_ACTIVE_WEEKS = 13
 #: Pooled WAPE of promoted SKUs across the three development windows, used as
 #: their safety-stock fallback when they have no measured error of their own.
@@ -40,6 +43,13 @@ PROMOTED_ACTIVE_WEEKS = 13
 #: `scripts/promoted_sku_accuracy.py`, which re-profiles as-of each cutoff to
 #: identify which SKUs were promoted at the time. Refresh it when the pinned
 #: windows move, since it is a measurement and will drift with them.
+#:
+#: STALE as of 2026-08-11 and should be re-measured before it is relied on. It
+#: was measured when a promoted SKU trained on exactly 13 weeks. Onset detection
+#: now gives them their real history, median 18 weeks under the current
+#: thresholds, and many are eligible for backtesting for the first time, so they
+#: will increasingly have a measured error of their own and need no fallback at
+#: all. Re-run scripts/promoted_sku_accuracy.py to refresh it.
 PROMOTED_ERROR_FALLBACK = 0.24
 
 DEFAULT_PARAMS = {
@@ -253,12 +263,23 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     # median would size their safety stock with a number now known to be too low
     # for them specifically, and they carry a fifth of all recommended units.
     #
-    # A promoted SKU is identifiable by active_weeks sitting exactly at the
-    # promotion constant: profile.py assigns RECENT_WEEKS rather than a measured
-    # count. Anything else unmeasured falls back to its segment median as before.
+    # A promoted SKU is identified by the explicit `promoted` column that
+    # src/profile.py writes. It used to be identified by active_weeks sitting at
+    # the promotion constant, which worked only while promotion assigned that
+    # constant to every promoted SKU. Since 2026-08-11 promotion detects each
+    # SKU's real smooth-history onset, so only 15 of 190 still sit at 13 and the
+    # old test would have silently missed the other 175, handing them a segment
+    # median and under-sizing their safety stock.
+    #
+    # The fallback below reads the column when present and the old signature
+    # otherwise, so a profile file written before that change still behaves as
+    # it did rather than quietly reclassifying everything.
     seg_median = df.groupby("history_group")["wape"].transform("median")
     overall = df["wape"].median()
-    promoted = df["active_weeks"].eq(PROMOTED_ACTIVE_WEEKS)
+    if "promoted" in df.columns:
+        promoted = df["promoted"].fillna(False).astype(bool)
+    else:
+        promoted = df["active_weeks"].eq(PROMOTED_ACTIVE_WEEKS)
     fallback = seg_median.where(~promoted, PROMOTED_ERROR_FALLBACK)
     df["error_used"] = df["wape"].fillna(fallback).fillna(overall).fillna(0.0)
     # Kept so the UI can say which SKUs are running on a cohort estimate rather

@@ -9,6 +9,62 @@ detail lives in the design document and codebase guide, not here.
 
 ---
 
+## NEXT SESSION — written 2026-08-10 for 2026-08-11
+
+Deliberately at the TOP of this file, not the bottom. Summaries cover everything after the
+last `SUMMARY PRODUCED` marker, so a plan written below one would be reported to the manager
+next time as work that was completed. Replace this block as it is worked through.
+
+**State of play.** v11 is the model. v17 was rejected today, and it was the last candidate
+anyone had. The snapshot is `2026-08-03`, the version log is re-measured against it, and the
+final test has still never been run. Nothing is blocking it.
+
+**1. First thing, and it is time-limited.** The weekly cron runs Tuesday morning. Read its
+output once for two lines:
+
+    forecast        N rows written to shipcore.ml_forward_forecasts
+    history         N rows also written to shipcore.ml_forecast_history
+
+That is the only outstanding part of BACKLOG 11, and it closes by being observed rather than
+by anything being built. If either says NOT written, the server's `.env` is the place to look.
+The same run is also the first production use of `drop_leading_partial_week`, so its output
+should mention dropping the partial leading week.
+
+**2. The decision that has to be made before anything else is started: item 2 or the final
+test, because the order is not free.**
+
+BACKLOG item 2 changes `eligible_skus`, which changes which SKUs are scored, which changes
+every number including the final test's. So it can be done BEFORE the final test, or not at
+all. Doing it after would leave the final test measured on a population the code no longer
+produces, which is the one result in this project that cannot be quietly re-run: Section 2.2
+quarantines that window and the value of the number comes from it having been used once.
+
+Both directions are defensible. Item 2 first is the more correct evaluation, and today
+established that a re-baseline costs three minutes with `scripts/_rebaseline_run.sh` already
+written. Final test first is the safer deliverable, and item 2 then becomes documented work
+for whoever inherits this rather than half-finished work. What is NOT defensible is starting
+item 2 without deciding, because a half-migrated eligibility rule is worse than either.
+
+**3. The final test, when it is run.** Once, on v11. Preconditions, all currently met:
+`ML_SEASONAL_BLEND` is `"off"`, `ML_DATA_SNAPSHOT` is `2026-08-03`, lightgbm is 4.7.0 matching
+the pin, and the week convention is settled and deployed. Use `final_test_split`, not
+`dev_splits`. Write the result up whichever way it lands, including if it is worse than the
+development windows suggested, which is the ordinary outcome and the reason the window was
+held back.
+
+**4. Everything else, in rough order of value:** BACKLOG 15 (atomic pipeline writes, which
+lets the Stop button return), 21's remaining thread (what starts the unmanaged uvicorn;
+detection is built, the cause is not found), 6 (retire the old page, still waiting on
+`ml_forecast_history` accumulating runs).
+
+**Known and accepted, not to be re-raised as findings:** `Archive.zip`, the credentials in
+`.claude/settings.local.json`, and the partially-exposed `FORECAST_API_TOKEN`. Assessed
+2026-08-10 and accepted on the grounds that the repository is internal to about three
+developers. Recorded here so the next person inherits the judgement rather than rediscovering
+the files and not knowing whether anyone had looked.
+
+---
+
 - 2026-07-17: Created the master design document (goals, metrics, data and split
   protocol, decision log, feature backlog) and revised it into a professional format.
 - 2026-07-17: Created the codebase guide documenting every file and the full data flow
@@ -3099,3 +3155,40 @@ detail lives in the design document and codebase guide, not here.
   process started from the deploy directory, and a process left over from an earlier deploy
   satisfies that exactly, which is why the check passed for a whole day while the wrong code
   served traffic. What starts that process is still unknown and stays open.
+  Verified after the push: /health returns the commit that was just deployed, matching local
+  HEAD. The old code has no commit field at all, so the field being present is itself the proof
+  that the new code is running.
+
+- 2026-08-10. Backlog 18, the LightGBM eval_set deprecation. Switched to eval_X/eval_y and
+  confirmed no figure moved. Read the installed library's source before editing rather than
+  guessing at the new argument names, which was worth doing: eval_sample_weight is NOT part of
+  the deprecation and renaming it to match would have raised.
+  The stronger argument is structural. Both spellings meet in the library's own
+  _validate_eval_set_Xy, which builds exactly the list the old call was already passing, so
+  training cannot see a difference. I checked empirically anyway, because that conclusion is my
+  reading of someone else's code.
+  My verification script failed on its first run and the failure was mine. Four of six scripts
+  reported DIFFERS, and every differing line was a prototype reference figure, because I had
+  re-measured PROTOTYPE after those logs were written. Nothing about the model had moved. Fixed
+  the comparison to exclude reference figures while keeping 28 to 66 substantive lines per
+  script so it cannot pass vacuously. That is the third time today the same shape has appeared:
+  a check going red for a reason unrelated to what it tests, which turns it into noise and then
+  into nothing.
+
+--- DAILY SUMMARY 2026-08-10 ---
+- Tested whether telling the forecasting model which sales channel a product sells through would
+  improve it; it made results worse in all three test periods, so it was rejected and the
+  reasoning written down.
+- Found the sales data file was treating a first week containing one day of sales as a full week,
+  fixed how the file is built, rebuilt it, and confirmed no accuracy figure moved.
+- That rebuild exposed a real error: a reference figure everything is compared against had been
+  wrong since July and made the model look further ahead than it is, so it was corrected and
+  checks were added so a stale figure cannot sit unnoticed again.
+- Releases can now confirm that the code just published is the code actually running, closing two
+  long-standing blind spots where a release either never happened or happened without taking
+  effect.
+- Closed seven items from the outstanding work list, including rewriting the planning screen's
+  spreadsheet export, which had been producing forty internal columns instead of the ten on
+  screen.
+
+--- SUMMARY PRODUCED 2026-08-10 (covering the 2026-08-10 entries above) ---

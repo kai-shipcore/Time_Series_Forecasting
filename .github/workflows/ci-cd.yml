@@ -36,6 +36,17 @@ jobs:
       - name: Compile Python modules
         run: python -m compileall api src scripts config.py
 
+      # Runs here because the pinned snapshot is tracked in git, so a runner has
+      # everything it needs. The properties tested are the ones a refactor
+      # silently breaks: a model reused between evaluation windows, training
+      # data from after a cutoff, or a result that depends on the order windows
+      # were fitted in. None of those announce themselves; they look like an
+      # unusually good result. Every figure in the version log assumes all three.
+      # `python`, not `.venv/bin/python`: setup-node aside, this job installs
+      # requirements into the runner's interpreter and has no venv.
+      - name: Harness integrity (no leakage, refit per window, deterministic)
+        run: python scripts/ml_38_training_integrity.py
+
       - name: Smoke test FastAPI app
         run: |
           python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 &

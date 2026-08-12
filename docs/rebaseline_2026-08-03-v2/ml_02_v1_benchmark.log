@@ -1,0 +1,55 @@
+orders_raw: 137,172 rows through 2026-07-23 (smooth SKUs only)
+
+Building daily cumulative sums per stream...
+  Index covers 337 SKUs × 5 streams
+
+==============================================================
+Split(cutoff=2026-02-23, test=2026-03-02→2026-05-04, h=10)
+
+pooled WAPE by segment:
+model             V1    WA12
+segment                     
+TOTAL         0.3135  0.1879
+smooth/long   0.2884  0.1408
+smooth/short  0.3275  0.2141
+
+bias% by segment:
+                V1  WA12
+segment                 
+smooth/long  -28.6  -6.8
+smooth/short -31.1  -8.0
+TOTAL        -30.2  -7.5
+
+==============================================================
+Split(cutoff=2025-12-15, test=2025-12-22→2026-02-23, h=10)
+
+pooled WAPE by segment:
+model             V1    WA12
+segment                     
+TOTAL         0.3078  0.3404
+smooth/long   0.4007  0.5858
+smooth/short  0.2518  0.1923
+
+bias% by segment:
+                V1  WA12
+segment                 
+smooth/long   37.8  58.0
+smooth/short  15.6   2.1
+TOTAL         23.9  23.1
+
+==============================================================
+Split(cutoff=2025-10-06, test=2025-10-13→2025-12-15, h=10)
+
+pooled WAPE by segment:
+model             V1    WA12
+segment                     
+TOTAL         0.0914  0.2144
+smooth/long   0.0841  0.1984
+smooth/short  0.2037  0.4605
+
+bias% by segment:
+               V1  WA12
+segment                
+smooth/long  -0.6 -18.4
+smooth/short -6.9 -46.0
+TOTAL        -1.0 -20.0

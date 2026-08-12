@@ -38,8 +38,19 @@ def load():
 
 
 def fit(split, profiles, val, **params):
-    m = RatioLGBM(split.horizon, FEATURES_V1, deseas_features=True, deseas_all=True)
-    m.PARAMS = {**RatioLGBM.PARAMS, **params}
+    # Must be the constructor argument, not `m.PARAMS = ...` after construction.
+    # __init__ copies self.PARAMS into self.params and fit() reads self.params,
+    # so a later assignment to the attribute is silently ignored and the model
+    # trains on defaults while the log reports the tuned configuration.
+    #
+    # This was the supported route when this script last ran, on 2026-07-21. The
+    # `params=` argument arrived 2026-07-29 and made the attribute inert. The
+    # recorded v10 results predate that and are unaffected: tune_wide.csv holds
+    # 81 configurations with 81 distinct scores, which could not happen if the
+    # hyperparameters had not been applied. Fixed 2026-08-11 so a re-run means
+    # what it says.
+    m = RatioLGBM(split.horizon, FEATURES_V1, deseas_features=True,
+                  deseas_all=True, params=dict(params) if params else None)
     return m.fit(split.train, profiles, split.cutoff, val)
 
 

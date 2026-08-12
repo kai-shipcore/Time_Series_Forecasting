@@ -60,9 +60,15 @@ def main() -> None:
     parts = []
     for window, cut in CUTOFFS.items():
         prof = P.profile(sales[sales["ds"] <= pd.Timestamp(cut)].copy())
-        prof["promoted"] = (
-            prof["active_weeks"].eq(P.RECENT_WEEKS) & prof["bucket"].eq("smooth")
-        )
+        # profile() now writes an explicit `promoted` column. The old test,
+        # active_weeks == RECENT_WEEKS, only worked while promotion assigned that
+        # constant to every promoted SKU; since onset detection landed it
+        # identifies roughly one in ten of them. Falls back to the old test for a
+        # profile frame produced by older code.
+        if "promoted" not in prof.columns:
+            prof["promoted"] = (
+                prof["active_weeks"].eq(P.RECENT_WEEKS) & prof["bucket"].eq("smooth")
+            )
         a = acc[acc["window"] == window].merge(
             prof[["unique_id", "promoted"]], on="unique_id", how="left"
         )

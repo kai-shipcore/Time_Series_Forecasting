@@ -8,13 +8,49 @@ PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 
 ZERO_PCT_INTERMITTENT = 0.30   # SKUs with ≥30% zero weeks → intermittent (hard floor)
 CV_THRESHOLD = 1.5
-MEAN_INTERMITTENT_CUTOFF = 3.0  # used for ramp-up detection only (not classification)
+# Used by classify() AND by ramp-up detection. The comment here previously said
+# "not classification", and config.py's said SKUs above it "go to smooth even if
+# high zero_pct". Both were wrong: classify() tests zero_pct first and returns
+# intermittent, then tests mean as a second independent filter. Corrected rather
+# than acted on, because the documented behaviour is a different rule and
+# changing to it is a decision, not a typo fix.
+MEAN_INTERMITTENT_CUTOFF = 3.0
 
 # Recent-activity overrides (last 13 complete weeks)
 RECENT_WEEKS             = 13
-RECENT_ZERO_PCT_UPGRADE  = 0.20  # if recent zero_pct below this AND mean ≥ threshold → promote to smooth/short
-RECENT_MEAN_UPGRADE      = 2.0   # recent weekly mean must be ≥ this to promote
-RECENT_MEAN_DOWNGRADE    = 2.0   # if recent weekly mean below this → demote to intermittent
+RECENT_ZERO_PCT_UPGRADE  = 0.20  # if recent zero_pct below this AND mean ≥ threshold → promote to smooth
+
+# Matched to MEAN_INTERMITTENT_CUTOFF on 2026-08-11. It was 2.0, which is below
+# the classification bar, so a SKU could fail one test and pass the other: a
+# steady 2.5-unit SKU was called intermittent for being small, then promoted
+# back on its recent window, then had its history truncated. Two bars for one
+# judgement is what made that possible.
+#
+# A JUDGEMENT, not a measurement, and recorded as one. The development windows
+# cannot locate this boundary: the population it governs numbered SEVEN SKUs at
+# the Oct-2025 cutoff, because being regular is recent for these SKUs even when
+# selling is not. The bands either side of 3.0 came back indistinguishable with
+# point estimates favouring a trailing mean, which is consistent with a floor
+# existing but does not say where.
+#
+# Its cost IS measured, so it can be revisited deliberately: 127 SKUs lose their
+# forecast, smooth goes 467 to 340, and 3,978 of 58,842 smooth units stop being
+# covered. That is 6.8% of forecast demand, from SKUs whose weekly means run
+# from 2.0 to 2.92. They keep appearing in the Action List's Not-forecast
+# section with a trailing actual-sales rate, so they are not invisible, only
+# unforecast.
+#
+# The instrument that can settle this is shipcore.ml_forecast_history, which
+# measures these SKUs as they are now rather than as they were when there were
+# seven. See docs/HANDOVER.md finding 7.
+RECENT_MEAN_UPGRADE      = 3.0
+
+# Deliberately LOWER than the promotion bar, and this asymmetry is the point.
+# Equal bars would make a SKU hovering at the threshold flip between smooth and
+# intermittent week after week, and each flip removes or restores its forecast
+# and resets train_start. The gap from 2.0 to 3.0 is a hysteresis band: a SKU
+# must clear 3.0 to start being forecast and fall below 2.0 to stop.
+RECENT_MEAN_DOWNGRADE    = 2.0
 
 # Ramp-up detection
 RAMP_UP_RATIO = 3.0          # second-half mean must be this many times the first-half mean
@@ -89,6 +125,55 @@ def _detect_ramp_up(grp: pd.DataFrame) -> tuple[bool, float, pd.Timestamp]:
     return True, float(second_half_mean), train_start
 
 
+def _smooth_onset(y: np.ndarray, dates: list) -> tuple:
+    """How far back a promoted SKU's smooth behaviour actually runs.
+
+    Returns (train_start, active_weeks).
+
+    The promotion override used to assign three constants: `train_start` set to
+    the start of the trailing RECENT_WEEKS window, `active_weeks` set to
+    RECENT_WEEKS, and `history_length` set to "short". That is right for a SKU
+    that genuinely just became forecastable and wrong for one that has been
+    steady all along.
+
+    It is wrong more often than not, because a SKU reaches the promotion path in
+    two different ways. `classify()` sends a SKU to intermittent when it is
+    sparse (zero_pct >= ZERO_PCT_INTERMITTENT) OR when it is merely small
+    (mean < MEAN_INTERMITTENT_CUTOFF). A SKU selling a steady 2.5 units every
+    week is not sporadic in any sense; it fails the second test only, then gets
+    promoted on its recent window, then has its history cut to 13 weeks as
+    though it had just appeared.
+
+    Measured on the 2026-08-03 snapshot before this was written: 190 SKUs were
+    promoted, 41% of the entire smooth set. Only 15 of them genuinely had 13
+    weeks. The median had 34, the maximum had 111, which is the whole series,
+    and 73 had at least 50 weeks yet were labelled "short" and so routed to the
+    short model. 4,615 SKU-weeks of usable history were being discarded, because
+    load_weekly trims each SKU's training data to train_start.
+
+    The rule here is the promotion test applied to progressively longer trailing
+    windows, stopping at the first length that fails. Stopping rather than
+    scanning for the longest passing window anywhere is deliberate: a window that
+    passes only after skipping a bad patch would silently include that patch.
+    Conservative in the right direction, and it degenerates to RECENT_WEEKS for a
+    SKU that really did just turn around.
+
+    Side effect worth knowing, and it is a fix rather than a surprise:
+    `train_start` stops being pinned to a window that slides forward every run
+    and becomes a fixed historical date. That is what BACKLOG item 2 describes as
+    eligibility being non-stationary, and it is why these SKUs could never appear
+    in a backtest.
+    """
+    best = RECENT_WEEKS
+    for k in range(RECENT_WEEKS, len(y) + 1):
+        w = y[-k:]
+        if (w == 0).mean() < RECENT_ZERO_PCT_UPGRADE and w.mean() >= RECENT_MEAN_UPGRADE:
+            best = k
+        else:
+            break
+    return dates[-best], best
+
+
 def profile(df: pd.DataFrame) -> pd.DataFrame:
     data_end = df["ds"].max()
     stats = []
@@ -151,10 +236,43 @@ def profile(df: pd.DataFrame) -> pd.DataFrame:
         (profiles["recent_mean"] >= RECENT_MEAN_UPGRADE)
     )
     n_up = upgrade.sum()
-    profiles.loc[upgrade, "bucket"]         = "smooth"
-    profiles.loc[upgrade, "history_length"] = "short"
-    profiles.loc[upgrade, "train_start"]    = recent_dates[0]
-    profiles.loc[upgrade, "active_weeks"]   = RECENT_WEEKS
+    profiles.loc[upgrade, "bucket"] = "smooth"
+
+    # Explicit marker, because the implicit one is gone. Downstream code used to
+    # identify a promoted SKU by `active_weeks == RECENT_WEEKS`, which worked
+    # only because promotion assigned that constant. Onset detection below gives
+    # each promoted SKU its real length, so 175 of 190 no longer carry the
+    # signature and every consumer of it would silently stop recognising them.
+    # src/planning/calc.py is the one that matters: it hands promoted SKUs a
+    # cohort error for safety-stock sizing, and losing them means under-sizing.
+    #
+    # A SKU cannot be both promoted and demoted in one run: promotion requires
+    # recent_mean >= RECENT_MEAN_UPGRADE and demotion requires it below
+    # RECENT_MEAN_DOWNGRADE, and the first is now the higher bar.
+    profiles["promoted"] = upgrade
+
+    # train_start, active_weeks and history_length are DETECTED per SKU rather
+    # than assigned as constants. See _smooth_onset for what the constants cost.
+    if n_up:
+        piv = df.pivot_table(index="unique_id", columns="ds", values="y",
+                             fill_value=0)
+        piv = piv[sorted(piv.columns)]
+        cols = list(piv.columns)
+        starts, weeks = {}, {}
+        for uid in profiles.loc[upgrade, "unique_id"]:
+            start, k = _smooth_onset(piv.loc[uid].to_numpy(), cols)
+            starts[uid], weeks[uid] = start, k
+        ids = profiles.loc[upgrade, "unique_id"]
+        profiles.loc[upgrade, "train_start"] = ids.map(starts).to_numpy()
+        profiles.loc[upgrade, "active_weeks"] = ids.map(weeks).to_numpy()
+        # Derived from the detected length by the same function every other SKU
+        # goes through, rather than hardcoded "short". 73 SKUs on the 2026-08-03
+        # snapshot have >= SHORT_HISTORY_WEEKS of smooth history and were being
+        # labelled short, which routes them to the short model as well as
+        # starving them of the data they have.
+        profiles.loc[upgrade, "history_length"] = (
+            ids.map(weeks).map(_history_length).to_numpy()
+        )
 
     # Demote: smooth/low_volume → intermittent if recently dormant
     downgrade = (
@@ -165,7 +283,18 @@ def profile(df: pd.DataFrame) -> pd.DataFrame:
     profiles.loc[downgrade, "bucket"] = "intermittent"
 
     if n_up or n_down:
-        print(f"  Recent-activity overrides: +{n_up} promoted to smooth/short, -{n_down} demoted to intermittent")
+        # Says "smooth" rather than "smooth/short" because the history length is
+        # now detected rather than assumed, and reports the spread so a run that
+        # promotes everything to 13 weeks again is visible rather than silent.
+        if n_up:
+            got = profiles.loc[upgrade, "active_weeks"]
+            spread = (f"{int(got.median())} weeks median, {int(got.min())}-"
+                      f"{int(got.max())} range")
+            lens = profiles.loc[upgrade, "history_length"].value_counts().to_dict()
+        else:
+            spread, lens = "", {}
+        print(f"  Recent-activity overrides: +{n_up} promoted to smooth "
+              f"({spread}; {lens}), -{n_down} demoted to intermittent")
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     profiles.to_csv(PROCESSED_DIR / "sku_profiles.csv", index=False)
