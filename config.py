@@ -1,9 +1,27 @@
+import os
 from pathlib import Path
 
 # Paths
 ROOT = Path(__file__).parent
 DATA_RAW = ROOT / "data" / "raw"
-DATA_PROCESSED = ROOT / "data" / "processed"
+# Where the pipeline reads and writes its live artifacts.
+#
+# Overridable by FORECAST_PROCESSED_DIR so a run can be STAGED: written somewhere
+# else entirely and moved into place only once every step has succeeded. That is
+# the fix for BACKLOG item 15. `scripts/ml_prepare_data.py` writes three
+# artifacts in sequence with no rollback, so cancelling it between them leaves
+# sales data describing this week and segmentation describing last, with nothing
+# on any screen saying so.
+#
+# One environment variable rather than a set of arguments, because the pipeline
+# spans processes: ml_prepare_data writes two files itself and shells out for the
+# third, and the subprocess must READ the two just written, not the previous
+# run's. An argument would have to be threaded through every reader as well as
+# every writer; the variable is inherited.
+#
+# Unset in normal operation, which is every path except a staged run.
+DATA_PROCESSED = Path(os.environ.get("FORECAST_PROCESSED_DIR")
+                      or ROOT / "data" / "processed")
 OUTPUTS_FORECASTS = ROOT / "outputs" / "forecasts"
 OUTPUTS_REPORTS = ROOT / "outputs" / "reports"
 

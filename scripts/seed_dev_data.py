@@ -18,7 +18,7 @@ looks:
     v1_forward_forecasts    data/dev_seed/               (tracked fixture)
     ml_accuracy*.csv        outputs/reports/             (already in place)
     ml_backtest_weekly.csv  outputs/reports/             (already in place)
-    inventory_snapshot.csv  dashboard/data/              (already in place)
+    inventory_snapshot.csv  data/inventory/              (already in place)
 
 So this copies four files and nothing else. No database, no .env, no pipeline
 run, no data handover.
@@ -51,7 +51,7 @@ and it says what it replaced.
 Consistency
 -----------
 The seeded history and the seeded forecast have to meet. The forecast's
-`forecast_date` is checked against the last week in the snapshot's sales file,
+`week_of` is checked against the last week in the snapshot's sales file,
 and a mismatch stops the run rather than producing a chart with a hole in it.
 That check is the thing to look at first if the pinned snapshot is ever advanced
 without rebuilding the fixture.
@@ -166,8 +166,13 @@ def check_consistency(pairs: list[tuple[str, Path]]) -> str:
     sales = pd.read_parquet(by_name["sales_clean.parquet"], columns=["ds"])
     last_week = pd.to_datetime(sales["ds"]).max().date()
 
-    fc = pd.read_parquet(by_name["ml_forward_forecasts.parquet"], columns=["forecast_date", "ds"])
-    trained_through = pd.to_datetime(fc["forecast_date"]).max().date()
+    # The tracked fixture predates the 2026-08-12 rename and still calls the
+    # training week `forecast_date`. Read whichever is present rather than
+    # rewriting the file: it is checksummed by data/dev_seed/manifest.json, so
+    # touching it would mean regenerating that too, for a column name.
+    fc = pd.read_parquet(by_name["ml_forward_forecasts.parquet"])
+    week_col = "week_of" if "week_of" in fc.columns else "forecast_date"
+    trained_through = pd.to_datetime(fc[week_col]).max().date()
     horizon_start = pd.to_datetime(fc["ds"]).min().date()
     horizon_end = pd.to_datetime(fc["ds"]).max().date()
 

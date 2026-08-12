@@ -2,7 +2,7 @@
 stockout dates, and the recommended-order-quantity breakdown.
 
 All formulas are intentionally simple and transparent for a Phase-1 prototype.
-The exact definitions are documented in dashboard/README.md and mirrored in the
+The exact definitions are documented in docs/PLANNING_REQUIREMENTS.md and mirrored in the
 SKU Detail breakdown so displayed values can be traced by hand.
 """
 
@@ -28,29 +28,37 @@ RUNS_HIGH_RATIO = 1.5
 #: 10 more than doubles that, almost all of them trivial.
 RUNS_HIGH_EXCESS_UNITS = 20
 
-#: LEGACY marker. `active_weeks` value that used to identify a SKU promoted from
-#: intermittent, because `src/profile.py` assigned RECENT_WEEKS there rather than
-#: a measured count. Since 2026-08-11 promotion detects each SKU's real onset, so
-#: this identifies only the 15 that genuinely have 13 weeks. Read the `promoted`
-#: column instead; this is kept solely so a profile file written before that
-#: change is still interpreted the way it was written.
-PROMOTED_ACTIVE_WEEKS = 13
-#: Pooled WAPE of promoted SKUs across the three development windows, used as
-#: their safety-stock fallback when they have no measured error of their own.
-#: Measured July 2026 at 0.2397 over 118 scored SKU-windows, against 0.1912 for
-#: the rest of the short segment; worse in all three windows, and distinguishable
-#: from sampling noise in Dec-Feb. Reproduce with
-#: `scripts/promoted_sku_accuracy.py`, which re-profiles as-of each cutoff to
-#: identify which SKUs were promoted at the time. Refresh it when the pinned
-#: windows move, since it is a measurement and will drift with them.
-#:
-#: STALE as of 2026-08-11 and should be re-measured before it is relied on. It
-#: was measured when a promoted SKU trained on exactly 13 weeks. Onset detection
-#: now gives them their real history, median 18 weeks under the current
-#: thresholds, and many are eligible for backtesting for the first time, so they
-#: will increasingly have a measured error of their own and need no fallback at
-#: all. Re-run scripts/promoted_sku_accuracy.py to refresh it.
-PROMOTED_ERROR_FALLBACK = 0.24
+#: Weekly-demand boundaries for the unmeasured-error fallback, in units a week.
+#: These are the bands the error curve was measured on (design doc Section 4.32
+#: and scripts/ml_37_band_worth_forecasting.py), not round numbers: pooled WAPE
+#: is flat within them and steps between them.
+ERROR_BAND_EDGES = [0.0, 2.0, 4.0, 6.0, 10.0, float("inf")]
+
+#: Measured SKUs a band needs before its median is trusted as a fallback. Below
+#: this the median is one or two SKUs, which is noisier than the segment median
+#: it would be replacing, so the chain falls through instead.
+MIN_BAND_MEASURED = 5
+
+# REMOVED 2026-08-12: PROMOTED_ERROR_FALLBACK = 0.24, and PROMOTED_ACTIVE_WEEKS.
+#
+# The constant gave promoted SKUs a fixed error for safety-stock sizing. It was
+# measured in July 2026 at 0.2397 over 118 scored SKU-windows, against 0.1912 for
+# the rest of the short segment, and it is not being replaced with a fresher
+# constant because the shape was wrong twice over.
+#
+# It went stale the moment promotion changed, exactly as the recorded baseline
+# figures went stale when the holiday window moved. A measurement frozen into
+# source has no way of knowing the thing it measured has moved.
+#
+# And "promoted" was a proxy for the real predictor. What drives error is weekly
+# demand: 0.357 below 2 units a week against 0.134 above 10, a 2.7x spread,
+# where the spread across segments is much narrower. Promoted SKUs were mostly
+# low-volume, which is why the cohort looked predictive.
+#
+# The replacement computes band medians from whichever SKUs currently have a
+# measured error, every run, so it cannot go stale and sharpens as backtest
+# coverage grows. `scripts/promoted_sku_accuracy.py` still reproduces the old
+# figure and remains useful as an analysis; nothing reads its output any more.
 
 DEFAULT_PARAMS = {
     # An order must cover demand until the NEXT order can arrive, which is the
@@ -189,7 +197,11 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     # `forward_forecast` writes the literal "smooth" on every row, since only
     # smooth SKUs are modelled at all, so the forecast's own bucket column can
     # never disagree with itself and is useless as a check.
-    profiles = D.load_profiles()[["unique_id", "mean", "active_weeks", "bucket"]]
+    # recent_mean is the trailing 13-week weekly mean. Carried because the
+    # unmeasured-error fallback bands on it, and because banding on anything
+    # else would sort SKUs by one statistic into bands calibrated on another.
+    profiles = D.load_profiles()[
+        ["unique_id", "mean", "active_weeks", "bucket", "recent_mean"]]
     recent = D.recent_sales(weeks=4)
     inv = D.load_inventory()
 
@@ -249,46 +261,97 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     df = df.merge(rel, on="unique_id", how="left")
     df["tier"] = df["tier"].fillna("none")
     df["n_windows"] = df["n_windows"].fillna(0).astype(int)
-    # A SKU with no backtest history is not assumed accurate. It inherits its
-    # segment's median error, so "unmeasured" costs a normal amount of cushion
-    # rather than none at all.
-    # Two different fallbacks, because "unmeasured" is not one population.
+    # A SKU with no backtest history is not assumed accurate. It inherits an
+    # error from SKUs that resemble it, so "unmeasured" costs a normal amount of
+    # cushion rather than none at all.
     #
-    # Most unmeasured SKUs are unmeasured because they were promoted from
-    # intermittent to smooth/short, which resets their training start to the
-    # trailing 13 weeks and makes them ineligible for every pinned backtest
-    # window (see docs/BACKLOG.md item 2). Promoted SKUs that COULD be scored
-    # historically came in at 0.24 pooled against 0.19 for the rest of the short
-    # segment, consistently worse in all three windows. Handing them the segment
-    # median would size their safety stock with a number now known to be too low
-    # for them specifically, and they carry a fifth of all recommended units.
+    # WHAT IT RESEMBLES IS WEEKLY DEMAND, not which cohort it belongs to.
+    # This used to hand promoted SKUs a hardcoded 0.24 and everything else its
+    # segment median. Two problems with that. The constant was a measurement
+    # frozen into source, and it went stale the moment promotion changed on
+    # 2026-08-11, exactly as the recorded baseline figures had gone stale when
+    # the holiday window moved. And "promoted" was only ever a proxy: what
+    # actually predicts error is volume. Measured across the three development
+    # windows, pooled WAPE by weekly demand runs 0.357 below 2 units, about 0.32
+    # from 2 to 3, 0.24 to 0.29 from 3 to 10, and 0.134 above 10. That is a
+    # 2.7x spread on volume against a much narrower one on segment.
     #
-    # A promoted SKU is identified by the explicit `promoted` column that
-    # src/profile.py writes. It used to be identified by active_weeks sitting at
-    # the promotion constant, which worked only while promotion assigned that
-    # constant to every promoted SKU. Since 2026-08-11 promotion detects each
-    # SKU's real smooth-history onset, so only 15 of 190 still sit at 13 and the
-    # old test would have silently missed the other 175, handing them a segment
-    # median and under-sizing their safety stock.
+    # So the fallback is the median measured error of SKUs in the same demand
+    # band, COMPUTED EACH RUN from whichever SKUs currently have a measured
+    # error. Nothing is hardcoded, so nothing can go stale. As the backtest
+    # covers more SKUs the bands sharpen on their own.
     #
-    # The fallback below reads the column when present and the old signature
-    # otherwise, so a profile file written before that change still behaves as
-    # it did rather than quietly reclassifying everything.
+    # A band needs MIN_BAND_MEASURED real measurements before it is trusted.
+    # Below that, it borrows from the NEAREST TRUSTED BAND rather than from the
+    # segment median, and that detail is load-bearing.
+    #
+    # The first version of this fell through to the segment median and got the
+    # lowest band backwards. Under 2 units a week is the hardest band to forecast
+    # (0.357 measured) and also the thinnest, with 4 measured SKUs against a
+    # threshold of 5, so it fell through to a segment median dominated by
+    # high-volume SKUs and gave its 33 members LESS cushion than before, by
+    # 0.038. Precisely the wrong direction, from a guard meant to be cautious.
+    #
+    # Borrowing along the volume axis keeps the relationship the evidence is
+    # about. A thin band takes the nearest band that has real measurements,
+    # which for the bottom band means the one above it, and only if no band
+    # anywhere is trusted does the chain fall back to segment, overall, zero.
     seg_median = df.groupby("history_group")["wape"].transform("median")
     overall = df["wape"].median()
-    if "promoted" in df.columns:
-        promoted = df["promoted"].fillna(False).astype(bool)
-    else:
-        promoted = df["active_weeks"].eq(PROMOTED_ACTIVE_WEEKS)
-    fallback = seg_median.where(~promoted, PROMOTED_ERROR_FALLBACK)
-    df["error_used"] = df["wape"].fillna(fallback).fillna(overall).fillna(0.0)
+
+    # Band on `recent_mean`, the trailing 13-week weekly mean, NOT on
+    # recent_units/4.
+    #
+    # The first version used the 4-week rate and that was wrong twice over. The
+    # band edges were measured on a 13-week mean
+    # (scripts/ml_37_band_worth_forecasting.py), so a 4-week rate sorts SKUs into
+    # bands calibrated on a different and noisier statistic. And every
+    # classification threshold in src/profile.py is on the same 13-week window,
+    # so banding on 4 weeks put the fallback out of step with the rule deciding
+    # whether a SKU is forecast at all. On the current profiler that produced 11
+    # SKUs sitting below 2 units a week in a catalogue where, by the rule that
+    # actually governs demotion, none are.
+    #
+    # Falls back to the 4-week rate only if a profile file predates the column,
+    # which no current one does.
+    weekly_rate = (df["recent_mean"] if "recent_mean" in df.columns
+                   else df["recent_units"] / 4.0).fillna(0.0)
+    band = pd.cut(weekly_rate, bins=ERROR_BAND_EDGES, right=False)
+    measured = df["wape"].notna()
+    stats = (df.loc[measured].groupby(band[measured], observed=False)["wape"]
+             .agg(["median", "count"]))
+    order = list(stats.index)
+    trusted = {b: m for b, m, c in
+               zip(order, stats["median"], stats["count"])
+               if c >= MIN_BAND_MEASURED and pd.notna(m)}
+    # Nearest trusted band by position, ties going to the lower-volume side,
+    # which is the more cautious direction because error rises as volume falls.
+    resolved = {}
+    for i, b in enumerate(order):
+        if b in trusted:
+            resolved[b] = trusted[b]
+        elif trusted:
+            resolved[b] = trusted[min(
+                (x for x in trusted), key=lambda x: (abs(order.index(x) - i),
+                                                     order.index(x)))]
+    band_median = band.map(resolved).astype(float)
+
+    df["error_used"] = (df["wape"]
+                        .fillna(band_median)
+                        .fillna(seg_median)
+                        .fillna(overall)
+                        .fillna(0.0))
     # Kept so the UI can say which SKUs are running on a cohort estimate rather
     # than their own measured error, instead of showing a number with no
     # provenance.
     df["error_is_measured"] = df["wape"].notna()
+    # Which rung of the chain each SKU landed on, so the UI can say where a
+    # number came from instead of showing one with no provenance. "promoted
+    # cohort" is gone; it named a population rather than a reason.
     df["error_basis"] = np.where(
         df["wape"].notna(), "measured",
-        np.where(promoted, "promoted cohort", "segment median"),
+        np.where(band_median.notna(), "demand band",
+                 np.where(seg_median.notna(), "segment median", "overall median")),
     )
 
     # ----- Where the forecast disagrees with recent sales ---------------------

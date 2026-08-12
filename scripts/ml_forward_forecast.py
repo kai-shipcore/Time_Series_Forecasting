@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src import weeks  # noqa: E402
 from src.ml.serving import store  # noqa: E402
 from src.ml.serving.forecast import forward_forecast  # noqa: E402
 from src.ml.serving.history import append as append_history  # noqa: E402
@@ -41,6 +42,11 @@ def main() -> None:
     ap.add_argument("--out", default="data/processed/ml_forward_forecasts.parquet")
     ap.add_argument("--models-dir", default="outputs/models")
     ap.add_argument("--no-v1", action="store_true", help="skip the V1 comparison forecast")
+    ap.add_argument("--allow-stale", action="store_true",
+                    help="write to the database even though data/processed is older than "
+                         "the last complete week. For backfills and for re-running an old "
+                         "week on purpose. Without it a stale run stays local, because the "
+                         "write replaces a whole run and would overwrite a newer one.")
     ap.add_argument("--no-history", action="store_true",
                     help="skip appending this run to the accumulating forecast history")
     ap.add_argument("--v1-out", default="data/processed/v1_forward_forecasts.parquet")
@@ -70,14 +76,59 @@ def main() -> None:
     #
     # Never fatal. The forecast is already written above, and a database that is
     # briefly unreachable should not turn a good run into a failed one.
-    fwd_rows = store.write_forward(fc)
-    if fwd_rows >= 0:
+    #
+    # Unless the inputs are stale, in which case it is not written at all.
+    #
+    # The shared table is refreshed by the server's cron, which ingests fresh
+    # orders and re-profiles before forecasting. A developer machine does
+    # neither: `--snapshot live` reads whatever is already in data/processed,
+    # which on a laptop is usually the seeded fixture. Forecasting from it
+    # succeeds and produces a confident, old answer.
+    #
+    # That used to be survivable, because the write was an upsert and could only
+    # add or overwrite rows for the SKUs it named. It is not survivable now: the
+    # write deletes the whole (model_version, week_of) run first, so a stale
+    # laptop run replaces a good server run outright. That is a regression the
+    # correctness fix introduced, and this is the guard for it.
+    #
+    # On 2026-08-12 this exact thing was one working .env away from happening:
+    # a laptop run with 2026-08-03 sales and pre-onset profiles rebuilt the old
+    # 467-SKU segmentation, and only a failed connection stopped it being
+    # written.
+    latest = weeks.last_complete_week()
+    stale_by = int((latest - fc["week_of"].iloc[0]).days // 7)
+    write_db = stale_by <= 0 or args.allow_stale
+
+    if not write_db:
+        # Skipped, not aborted. The local artifacts below are all still wanted:
+        # this is exactly how a developer inspects a forecast without touching
+        # the shared table, and refusing to save the model would make the guard
+        # something people work around rather than accept.
+        print(f"\nNOT written to the database: the inputs are {stale_by} week(s) old.")
+        print(f"  trained through      {fc['week_of'].iloc[0].date()}")
+        print(f"  last complete week   {latest.date()}")
+        print("\nThis run would replace a newer one in the shared table with an older")
+        print("answer. data/processed/ on this machine has not been refreshed; the")
+        print("server's cron does that before it forecasts.")
+        print("\n  to refresh first     scripts/ml_prepare_data.py")
+        print("  to write it anyway   --allow-stale  (backfills, and rerunning an old week)")
+        print("\nEverything below was still written locally.")
+
+    fwd_rows = store.write_forward(fc) if write_db else 0
+    if not write_db:
+        print(f"forecast        local only ({len(fc):,} rows)")
+    elif fwd_rows >= 0:
         print(f"forecast        {fwd_rows:,} rows written to {store.FORWARD_TABLE}")
     else:
-        print(f"forecast        NOT written to {store.FORWARD_TABLE} "
-              "(no DB credentials, or it could not be reached)")
+        # Print the cause when there is one. This used to assert a cause it had
+        # not checked, and on 2026-08-12 it reported "no DB credentials" for a
+        # failure that was never diagnosed, on a machine whose .env was fine.
+        why = store.LAST_ERROR or "no DB credentials, or it could not be reached"
+        print(f"forecast        NOT written to {store.FORWARD_TABLE}")
+        print(f"                {why}")
+        print("                scripts/ml_check_db.py reports which step fails")
 
-    cutoff = fc["forecast_date"].iloc[0].date()
+    cutoff = fc["week_of"].iloc[0].date()
     model_path = ROOT / args.models_dir / f"{args.version}_{cutoff}.joblib"
     save_model(model, model_path)
 
@@ -96,7 +147,15 @@ def main() -> None:
     # "is the model getting better", and until now every weekly run destroyed
     # the evidence needed for the second question. Re-running in the same week
     # replaces its own rows rather than duplicating them.
-    if not args.no_history:
+    #
+    # Skipped entirely when the inputs are stale, parquet included. History is
+    # the accuracy evidence, and a run now replaces its whole week, so appending
+    # a stale rebuild would overwrite the real predictions for that week with
+    # ones made from older data and quietly change every accuracy figure
+    # computed from it.
+    if not args.no_history and not write_db:
+        print("history         skipped: stale inputs, see above")
+    elif not args.no_history:
         try:
             summary = append_history(fc)
             print(f"history         +{summary['added']:,} rows "
@@ -124,7 +183,7 @@ def main() -> None:
     if not args.no_v1:
         print()
         try:
-            v1_fc = v1_forward(fc[["unique_id", "ds", "forecast_date"]], refresh=args.v1_refresh)
+            v1_fc = v1_forward(fc[["unique_id", "ds", "week_of"]], refresh=args.v1_refresh)
             v1_out = ROOT / args.v1_out
             v1_out.parent.mkdir(parents=True, exist_ok=True)
             v1_fc.to_parquet(v1_out, index=False)

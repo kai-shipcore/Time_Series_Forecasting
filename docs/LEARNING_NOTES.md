@@ -17,7 +17,13 @@ multiplies by hand-set seasonal factors; it systematically forecasts wrong becau
 averages cannot anticipate change. We built a machine-learning model that forecasts a
 demand *multiplier* on top of each product's recent level, learns patterns from the whole
 catalog at once, and can be extended with new signals later. It matches or beats the
-spreadsheet in five of six seasonal tests. The one hard problem, established products being
+spreadsheet in five of six seasonal tests.
+<!-- SUPERSEDED 2026-08-12: four of six, and two exceptions rather than one. A profiling
+     defect found on 2026-08-11 had hidden 41% of the catalogue from every evaluation;
+     correcting it, and matching the two demand thresholds, moved both the population and
+     the figures. V1 now wins both autumn cells. Current numbers live in
+     ML_FORECAST_DESIGN.md Section 6. Rewritten here after the final test. -->
+The one hard problem, established products being
 over-forecast after the holidays, was solved by fixing a seasonal-calendar bug and by
 adding a feature that recognises when a product is running unsustainably high. The model is
 now close to the best achievable on sales data alone; further gains need new data sources.

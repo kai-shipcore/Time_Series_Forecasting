@@ -4,7 +4,7 @@
 Purpose: snapshot shipcore.fc_forward_forecasts to
 data/processed/fc_forward_forecasts.parquet so the dashboard can be pointed at
 current forecasts instead of the stale fc_forward_forecasts_test snapshot
-(dashboard/README.md, "Known limitations").
+(docs/PLANNING_REQUIREMENTS.md, "Known limitations").
 
 Run locally (requires DB access):
     .venv/bin/python scripts/export_forward_forecasts.py
@@ -13,7 +13,7 @@ Output: data/processed/fc_forward_forecasts.parquet (full replace).
 
 Notes:
 - The column list is fixed to match fc_forward_forecasts_test.parquet exactly
-  (see dashboard/lib/data.py) so the file is a drop-in replacement. Conformal
+  (see src/planning/data.py) so the file is a drop-in replacement. Conformal
   interval columns (yhat_lo_*/yhat_hi_*) are excluded, matching the exclusion
   in export_forecast_history.py.
 - Unlike the test snapshot (one run), the live table accumulates one row set

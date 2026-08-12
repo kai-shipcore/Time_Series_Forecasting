@@ -9,16 +9,39 @@ their value is stopping the same question being reopened from scratch. Read the 
 first: it says whether an item was solved, decided against, or ruled out of scope, and those
 are three different things.
 
-## Index, reviewed 2026-08-10
+## Index, reviewed 2026-08-12
 
 **Still open and actionable**
 
 | # | Item | Size |
 |---|---|---|
-| 2 | `train_start` does two jobs; 187 of 447 served SKUs can never be scored | medium, forces a re-baseline |
 | 6 | Retire the old Demand Forecast page | waits on `ml_forecast_history` accumulating runs |
-| 15 | On-demand pipeline is not safely interruptible | medium |
-| 21 | What starts the unmanaged uvicorn. Detection is built; the cause is not found | unknown |
+| 24 | Take the personal copy of this repository | last thing before handover, see below |
+
+> **24 is last, and it has to happen before anything else is deleted.** The statsforecast
+> half of `api/main.py`, plus `src/models.py`, `selector.py`, `backtest.py` and
+> `baselines.py`, are still in the tree only because BACKLOG 6 has not closed. A copy taken
+> after that page is retired does not contain them. Details in section 24.
+
+**Not in this file, and the largest piece of documentation debt**
+
+`docs/PROJECT_WRITEUP.md` carries v11 and V1 figures from the July snapshot and claims the
+model "matches or beats the production spreadsheet in five of six cells" with one exception.
+On the current snapshot it is four of six with two exceptions, and the V1 column does not
+match any measurement taken since. It is the document most likely to be read by someone
+outside the project, so it is the one most worth correcting.
+
+**Done 2026-08-11 and 2026-08-12**
+
+| # | Outcome |
+|---|---|
+| 2 | Resolved via the promotion path rather than the proposed `launch_week`; the proposed fix was measured and is wrong |
+| 11 | Both `shipcore.ml_*` tables written by the Tuesday cron, 6,071 rows each; no longer single-copy |
+| 15 | Pipeline runs staged and committed atomically; verified by killing a real run mid-write |
+| 21 | Closed. Both causes identified: the deploy's own fallback branch, and manual testing during the port-8000 work. Nothing recurring |
+| 23 | A stored run now replaces the whole week rather than only the SKUs it repeats. Covered by `scripts/test_store_replace_run.py` |
+| — | Unmeasured-error fallback moved from a hardcoded promoted-cohort constant to demand-band medians computed each run |
+| — | 14 dead files removed, Streamlit prototype retired, production data relocated out of `dashboard/` |
 
 **Done 2026-08-10**
 
@@ -30,11 +53,11 @@ are three different things.
 | 18 | `eval_X` / `eval_y`, verified bit-identical against the re-baseline logs |
 | 20 | `/health` returns the deployed commit; the hourly check fails when it is not the tip of main |
 
-**Open, but verify rather than build**
+**Verify after the next deploy, not build**
 
 | # | Item |
 |---|---|
-| 11 | Read Tuesday's cron output for the two `rows written to shipcore.ml_*` lines. Push first, or the server runs last week's code |
+| — | Confirm `error_basis` on the live Action List. The demand-band fallback was verified against a local profile file from 2026-08-10, which predates the onset fix, so the counts reported at the time describe a population that no longer exists. The logic is verified; the numbers were stale. |
 
 **Closed**
 
@@ -78,7 +101,7 @@ difference.
 
 **Blockers.**
 1. ~~No inventory input.~~ **Partly cleared (July 2026).** Real inventory now exists at
-   `dashboard/data/inventory_snapshot.csv`, written by `scripts/export_inventory_snapshot.py`
+   `data/inventory/inventory_snapshot.csv`, written by `scripts/export_inventory_snapshot.py`
    from the same tables the Commerce app uses. `profile.py` still reads only sales history
    (`unique_id, ds, y`) and would need that file, or the query behind it, passed in. What
    remains genuinely blocked is blocker 2 below, which the snapshot does not help with.
@@ -94,9 +117,93 @@ That answer decides whether this is the full fix or a forward-only version.
 
 ---
 
+## 22. The service dependencies are unpinned while the model's are exact
+
+**Status: identified 2026-08-12, not fixed.**
+
+`requirements.txt` pins five packages exactly (`pandas`, `numpy`, `scikit-learn`,
+`lightgbm`, `statsforecast`) and leaves twelve unpinned, including every one that serves the
+API: `fastapi`, `uvicorn[standard]`, `sqlalchemy`, `psycopg2-binary`, `plotly`.
+
+CLAUDE.md explains the pins: "ML dependencies are pinned to exact versions in
+requirements.txt, because results are compared at the third decimal." That reasoning was
+applied to the model and not to the service. So a rebuilt server, or any `pip install -r
+requirements.txt` run today, gets whatever FastAPI is current rather than the one the code
+was written against, and nothing records which that was.
+
+**Found by tripping over it.** An attempt to move the legacy endpoints into their own module
+could not be verified locally, because FastAPI registers an included router as a single
+opaque `_IncludedRouter` object instead of copying its routes into `app.routes`. Whether the
+server behaves the same way is unknown, because the server's version is unknown. That is the
+whole problem in one sentence: a behavioural change in an unpinned framework, discovered by
+accident, on a service with no test suite.
+
+**The fix is to pin them**, from whatever the server currently has rather than from today's
+PyPI, so the pins record reality instead of asserting a new one. `pip freeze` on the server
+gives the true set. Doing it the other way round would upgrade production while claiming to
+stabilise it.
+
+**Not done because it needs the server.** Pinning to versions read off a laptop would be a
+guess, and an unlucky guess is a failed deploy on a service with no staging environment.
+
+**Resolved 2026-08-12** by pinning from `pip freeze` on the server. The two environments
+had drifted, which is what the item predicted:
+
+| package | server | this laptop |
+|---|---|---|
+| fastapi | 0.141.1 | 0.138.0 |
+| uvicorn | 0.52.0 | 0.49.0 |
+| plotly | 6.9.0 | 6.8.0 |
+| pyarrow (transitive) | 25.0.0 | 24.0.0 |
+
+The five ML pins matched exactly on both, so no recorded model result is affected.
+
+**A wrong correction, recorded because it is the same mistake as the item.** Midway through
+this work the entry's "FastAPI 0.141" was changed to "0.138.0" on the strength of the
+laptop's `.venv`, where `_IncludedRouter` does exist at `fastapi/routing.py:1518`. Finding
+the class there was treated as confirmation, when it only showed the class exists in both
+versions. The original number was the server's and was correct. The evidence was local, the
+claim was about production, and the gap between those two is the entire subject of this
+item. Left in rather than quietly reverted.
+
+**Consequence for anyone installing this file.** `pip install -r requirements.txt` on a
+machine at 0.138.0 now upgrades FastAPI to 0.141.1. That is the intended direction: the
+pins record production. The port-8000 verification difficulty that started this item should
+be retried against 0.141.1 before concluding anything about how routes are registered.
+
+---
+
 ## 2. `train_start` does two jobs, and promoted SKUs can never be backtested
 
-**Status:** identified, not yet decided.
+**Status: RESOLVED 2026-08-11, by a different route than this item proposes. The fix below
+was measured and is wrong; read that before acting on anything here.**
+
+**The proposed fix does not work.** This item asks for a stable `launch_week` used for
+as-of eligibility. Measured on the pinned snapshot, that admits 178 to 226 SKUs per window
+of which 93% to 95% have NO training rows at that cutoff, because the ramp trim removes
+their pre-onset history. They would be scored as zero forecasts and every pooled figure
+would be destroyed.
+
+**The failure it predicts does not occur either.** It warns that SKUs are scored without
+usable history. Measured: zero SKUs in any window are scored with fewer than the minimum.
+
+**The real defect was upstream, in promotion itself.** `src/profile.py` assigned three
+constants on promotion: `train_start` to 13 weeks ago, `active_weeks` to 13,
+`history_length` to `short`. Only 15 of 190 promoted SKUs genuinely had 13 weeks; the
+median had 34 and the maximum 111. Because that `train_start` sits in the future relative
+to every cutoff, all 190 had negative history and were absent from every recorded figure,
+which is 41% of the smooth set.
+
+Fixed by detecting each SKU's real smooth-history onset (`_smooth_onset`). `train_start`
+becomes a fixed historical date, so eligibility stops being non-stationary, which is what
+this item was really about. Scored population went from 266/251/66 to 356/327/103. Design
+doc Section 4.32.
+
+**One consumer broke and was fixed with it.** `src/planning/calc.py` identified promoted
+SKUs by `active_weeks == 13` to size their safety stock. Onset detection destroyed that
+signature; `src/profile.py` now writes an explicit `promoted` column.
+
+Original entry follows.
 
 **The problem.** `src/profile.py` promotes an intermittent SKU to smooth/short when its recent
 13 weeks look smooth, and sets `train_start` to the first of those 13 weeks. That is right for
@@ -229,7 +336,7 @@ chosen and ordered so a row reads as a sentence. Someone who filters the list an
 gets a different artefact from the one they were reading, with internal names as headings.
 
 **Why it matters when it matters.** The export is the last step of the weekly cycle in
-`dashboard/PLAN.md` §3.4: the purchaser works the list, then exports what they decided. A file
+`docs/PLANNING_PLAN.md` §3.4: the purchaser works the list, then exports what they decided. A file
 nobody can read without the schema in front of them does not close that loop, and a column
 named `gap_closable_by_order` in a spreadsheet sent to a supplier is worse than absent.
 
@@ -361,7 +468,7 @@ independently. If drafted totals ever look wrong, those two are the difference, 
 source. The remaining checks at the end of this item stay written down for that reason.
 
 **How this was reached, because the first answer was wrong.** This started as "let the purchaser
-mark a SKU actioned", taken from `dashboard/PLAN.md` §3.4, where the walkthrough has the
+mark a SKU actioned", taken from `docs/PLANNING_PLAN.md` §3.4, where the walkthrough has the
 purchaser accept a quantity and mark the SKU so the list holds their place. That framing was
 rejected on review: the state it proposes to record by hand is already recorded by the container
 system, and a manual flag would be a second, private, weaker copy of it. The real gap is
@@ -789,8 +896,60 @@ recommendation to move it to Tuesday was a workaround for this bug and is withdr
 
 ## 15. The on-demand pipeline is not safely interruptible
 
-**Status:** identified 2026-08-05, from a live incident. Small, and it blocks giving the Run
-Forecast panel a working Stop button.
+**Status: FIXED 2026-08-12.** `scripts/ml_prepare_data.py` now stages the whole run.
+
+**How.** Everything is written into `data/.staging_<pid>/` and moved into `data/processed/`
+only after every step has succeeded. A cancel, a crash, a dropped SSH session or a failed
+step deletes the staging directory and leaves the previous run's files untouched and still
+being served.
+
+**The lever is one environment variable, `FORECAST_PROCESSED_DIR`, read by
+`config.DATA_PROCESSED`.** It has to be an environment variable rather than an argument
+because the pipeline spans processes: `ml_prepare_data` writes two artifacts itself and
+shells out for the third, and that subprocess must READ the two just written rather than the
+previous run's. `--snapshot live` resolves through the same config value, so the staged
+inputs and outputs stay together. Arguments would have had to be threaded through every
+reader as well as every writer.
+
+`src/clean.py` and `src/profile.py` follow the same value while remaining module-level names
+reassigned at call time, because `scripts/ml_36` and `promoted_sku_accuracy.py` point them at
+a temp directory to stop an analysis overwriting live data, and that had to keep working.
+
+**Verified against the real pipeline** by `scripts/_test_staged_pipeline.sh`. It checksums
+`data/processed`, starts a real run, waits until the staging directory actually contains an
+artifact rather than guessing a time, sends SIGKILL, and asserts the live files are
+byte-identical. SIGKILL because it cannot be deferred, caught or ignored, and because a
+crash, a dropped connection or a power loss is the failure worth protecting against; a
+polite Ctrl-C is the easy case. An orphaned `.staging_*` directory after SIGKILL is expected
+and inert, and the test says so rather than failing on it.
+
+**The test caught a real bug in the first version of this fix, which is why it exists.**
+`src/clean.py` had `OUTPUT_PATH = PROCESSED_DIR / "sales_clean.parquet"` as a module constant
+computed at import. Redirecting `PROCESSED_DIR` therefore moved the CSV, which is built at
+call time, and left the parquet being written straight into live `data/processed`. A kill
+mid-run replaced the live sales file and not the profile: exactly the corruption staging
+exists to prevent, with a staging directory beside it looking like protection. Every check I
+had thought to run passed, because each confirmed the redirect reached a name rather than
+that the write landed in the right place. Now resolved at call time.
+
+**Third instance of one shape this week**, and the pattern is more useful than the instance:
+a derived value stops tracking its source and nothing says so. `RatioLGBM.PARAMS` against
+`self.params` (Section 4.33), the transcribed v-base figures against the recomputed ones
+(Section 4.31), and `OUTPUT_PATH` against `PROCESSED_DIR`. In each case the fix is to resolve
+at use rather than at import, and the way each was found was re-deriving a value rather than
+reading the code.
+
+**Honest limit, recorded rather than glossed.** Each file moves atomically, the set of four
+does not. There is a window of milliseconds where some are new and some are old, against the
+minutes the previous behaviour left open. Closing it entirely means swapping a directory
+symlink, which changes how every reader resolves its paths and is a larger change than this
+problem justifies.
+
+**The Stop button can now come back.** It was removed on 2026-08-05 and replaced with a
+"cannot be interrupted" indicator; the condition that made that necessary is gone. Re-adding
+it is a Commerce-repo change and has not been done here.
+
+Original entry follows.
 
 **What happened.** The panel's Run button was pressed mid-week to test it. It looked stuck during
 the velocity sync, Stop was pressed, and the run continued to completion regardless. That outcome
@@ -1111,8 +1270,52 @@ check rather than a new mechanism.
 
 ## 21. The deploy cannot tell whether the unit it restarted is the one serving
 
-**Status: CAUSE FIXED 2026-08-07. MONITORING BUILT 2026-08-10. One thread still open: what
-starts the unmanaged uvicorn.**
+**Status: CAUSE FIXED 2026-08-07. MONITORING BUILT 2026-08-10. A SECOND ROUTE CLOSED and the
+remaining unknown made self-identifying, 2026-08-12.**
+
+**A second way in, closed 2026-08-12.** `src/lib/forecast-server.ts:resolveServerDir()` in the
+Commerce repo read an explicit `FORECAST_SERVER_DIR` BEFORE checking `NODE_ENV`, so a value
+set in production won and the app would auto-start uvicorn there. Its own docstring said the
+opposite: that an unset variable is how the app declines to compete with systemd. The guard
+described an intention the code did not enforce.
+
+That is also exactly the mistake `DEPLOYMENT.md` warns about, and the hardest one to see:
+`.env.local` overrides `.env` per variable, and under pm2 the value need not appear in any
+file at all, which is why searching `/opt` for one found nothing on 2026-08-07. Production
+now refuses first, before the variable is read, so no environment can re-enter the race.
+
+**CLOSED 2026-08-12. There was no mystery process.** The squatter that appeared after the
+deploy fix was started by hand, by the developer, from a terminal in
+`/opt/coverland-forecast-api`, while doing the work that made port 8000 reachable in the
+first place.
+
+Every piece of evidence fits and none of it needed a further hypothesis. The command line
+used a RELATIVE venv path, `nohup .venv/bin/python -m uvicorn ...`, where systemd's ExecStart
+is absolute, so it came from a shell already sitting in that directory. The two sightings
+were 00:00:06 and 00:01:11 UTC on consecutive workdays, which is 5:00pm and 5:01pm Pacific:
+end of the working day, on exactly the days the port work was being done.
+
+**So there is nothing recurring to fix.** The two causes were the deploy's own fallback branch
+(fixed 2026-08-07) and a person doing manual testing. Neither will produce another squatter
+unaided.
+
+**What was built anyway, and is worth keeping.** `server-diagnostics.yml` walks each uvicorn's
+parent chain to init and prints its cgroup, so systemd, a person over ssh, pm2 and cron are
+told apart on sight rather than by inference. Cheap, and it means a recurrence names its own
+source in seconds instead of costing another investigation. The Commerce-side guard closed a
+route that was real regardless of whether anything had used it.
+
+**Socket activation was considered and NOT done, deliberately.** uvicorn binds port 8000
+itself, so the port is first-come-first-served and a stray process can win the race. A
+`.socket` unit with `ListenStream=0.0.0.0:8000` would have systemd hold the port from boot
+and hand the descriptor to uvicorn via `--fd`, making a second binder structurally impossible.
+That is the real fix for the general problem. It is not taken because it changes how the
+service starts, cannot be rehearsed anywhere but that server, and would leave the API down if
+the handoff misbehaved. With both actual causes eliminated and a commit mismatch surfacing
+within the hour, the exposure does not justify that risk. Recorded as the recommendation for
+whoever has a maintenance window.
+
+Original entry follows.
 
 **The monitoring gap is closed, by both changes this entry asked for.** Change 2, the
 `is-active` assertion, went in on 2026-08-07 and was hardened the same day after it passed
@@ -1192,3 +1395,112 @@ not during a restart. `DEPLOYMENT.md` already says to leave `FORECAST_SERVER_DIR
 production for this reason. The search for it was inconclusive: the candidate paths do not
 exist and the `sudo grep` ran without a TTY. Finding where that app is deployed and checking
 its environment is the next step, and until it is done this recurs at every deploy.
+
+---
+
+## 23. A re-run replaced its own SKUs, not its own week
+
+**Status: done, 2026-08-12.** `src/ml/serving/store.py`, covered by
+`scripts/test_store_replace_run.py`.
+
+**What was wrong.** `store.upsert` wrote with `ON CONFLICT (model_version, week_of,
+unique_id, ds) DO UPDATE`. That replaces a row the incoming run also produces, and it has
+no way to express that a SKU is gone. Removing a SKU from the forecast set is not an
+update to any row; it is the absence of one, and an upsert cannot represent absence.
+
+The function's own docstring recorded the intent as replacing "its own rows and nothing
+else", which is exactly the behaviour and exactly the defect. It reads as correct until
+the set of SKUs shrinks.
+
+**What it would cost, and what it has not yet cost.** The smooth set goes from 467 SKUs to
+338 when the promotion threshold moves to 3.0 units/week. Applied against a table already
+holding the 467, the upsert would overwrite the 338 it produced and leave the other 129 at
+the previous week's values, so the week would describe two segmentations at once. The
+planning screens read the latest `week_of` and would serve all 467 with nothing indicating
+that a quarter were no longer forecast.
+
+That has not happened yet, and this entry said it had. Checked against the live tables on
+2026-08-12: `shipcore.ml_forecast_history` holds two runs, 2026-08-10 and 2026-08-03, both
+467 SKUs at 6,071 rows; `shipcore.ml_forward_forecasts` holds the same two weeks, 467 SKUs
+at 6,071 rows and 468 at 24,336. Every stored run is the 467-SKU segmentation. The
+threshold change has not reached the server, so the mixed week was a reconstruction from
+local files rather than an observation.
+
+The bug is real regardless: it is a property of the write, demonstrated by the test, and it
+fires the first time the server runs with the new threshold. Recorded this way because
+"this already happened" and "this happens on the next deploy" call for different urgency,
+and only the second one is supported.
+
+Silent is the important part either way. A forecast that is merely wrong is still a
+forecast the model stands behind; these would be forecasts the model had stopped making.
+
+**One thing worth a look before the next deploy.** The 2026-08-03 forward week holds 52
+target weeks per SKU where 2026-08-10 holds 13, so a `--horizon 52` run is stored there.
+Aggregates cannot tell a single 52-week run apart from a 13-week run written over one,
+because the upsert replaces in place. `SELECT run_at, count(*) ... GROUP BY 1` on that week
+distinguishes them. Either way the run-replacing write makes the next run for a week
+correct by construction.
+
+**The fix.** `upsert` deletes the `(model_version, week_of)` pair before inserting, both
+statements in one transaction. After a write the week holds exactly what that run
+produced. This is what `src.db.write_forward_forecasts` on the legacy track already did,
+so the two tracks now agree.
+
+Scoped to one `model_version`, so v11 and a candidate version can be stored against the
+same week without either clearing the other.
+
+**What it assumes.** One run writes its week in a single call. Both callers do. A future
+caller that wrote in pieces would have each piece delete the last, which is why the
+constraint is written into the docstring and why `replace_run=False` exists.
+
+**Why there is a test rather than a comment.** The bug has no symptom: nothing throws,
+nothing looks wrong on screen, and the row count goes up rather than down. It is
+reproduced by any change to the segmentation rules, and those are still being tuned. The
+test drives the real `upsert` against SQLite and was confirmed to fail against the
+previous behaviour before being kept.
+
+**Cleaning up the rows already stored.** No purge is needed. Re-running the forecast now
+clears the week first, so `scripts/ml_forward_forecast.py --snapshot live` repairs the
+table by itself, with no window in which the planning screens have nothing to serve.
+`scripts/ml_purge_history_run.py --also-forward` remains for the case where a bad run must
+be removed without a replacement, and its own bug (it read the parquet without the
+`forecast_date` to `week_of` shim, and crashed) was fixed at the same time.
+
+---
+
+## 24. Take the personal copy of this repository
+
+**Status: open, and deliberately last.** Do this after the documentation pass and before
+handover.
+
+**Why it is last.** The documentation is the part worth keeping, and it is being rewritten
+now. A copy taken before it is finished carries the stale figures that BACKLOG's own
+header calls the largest piece of documentation debt.
+
+**Why it must come before any further deletion.** BACKLOG 6 retires the old Demand
+Forecast page, and with it the statsforecast implementation: the legacy half of
+`api/main.py`, `src/models.py`, `src/selector.py`, `src/backtest.py`, `src/baselines.py`.
+That is the model-selection and backtesting work, and it is a substantial part of what the
+project was. Once 6 closes it is gone from the tree. Take the copy first.
+
+**The repository is clean and can be copied as it stands.** `.env` and
+`.claude/settings.local.json` exist locally but have never been tracked, and
+`git log --all` over both paths returns nothing. No credential has ever been committed
+here. This is not true of the Commerce app, where `.claude/settings.local.json` has been
+tracked since 2026-04-28; that repository needs separate thought if it is ever copied.
+
+**It runs without a database.** `scripts/seed_dev_data.py` fills `data/processed/` from
+files already tracked in git, which is why a clone works with no credentials at all:
+
+```
+pip install -r requirements.txt
+python scripts/seed_dev_data.py
+python -m uvicorn api.main:app --port 8000     # /health then reports ready: true
+```
+
+The 4.5 MB that makes this possible is `data/dev_seed/`, the four snapshots under
+`data/snapshots/`, and the accuracy and backtest reports in `outputs/reports/`.
+
+**Worth including.** The design doc's decision log and version log, including the
+rejections. Six perturbations that each cost the long segment 0.005 to 0.012 is a better
+account of the work than the changes that landed.

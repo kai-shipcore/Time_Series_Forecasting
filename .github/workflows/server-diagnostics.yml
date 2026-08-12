@@ -85,6 +85,32 @@ jobs:
           # uses an absolute path and passes --workers 1.
           ps -eo pid,ppid,lstart,cmd | grep -E "uvicorn|api.main" | grep -v grep \
             || echo "  none"
+
+          echo
+          echo "### who is the PARENT of each one, walking up to init"
+          # The question BACKLOG 21 could not answer. The 2026-08-07
+          # investigation identified the deploy's own fallback branch and fixed
+          # it, then a squatter appeared again, and the process list alone could
+          # not say where from. The timestamps looked like end-of-day rather
+          # than a schedule, which points at a person, but that was inference.
+          #
+          # The ancestry settles it. systemd shows PPID 1 with the unit as its
+          # cgroup; a person shows sshd and a login shell; pm2 shows the pm2 God
+          # daemon; a stray cron shows cron. Printed on every run so the next
+          # occurrence identifies its own source instead of starting another
+          # investigation.
+          for pid in $(pgrep -f "uvicorn|api.main" 2>/dev/null); do
+            echo "  --- pid $pid"
+            cur=$pid
+            for _ in 1 2 3 4 5; do
+              read -r ppid cmd <<< "$(ps -o ppid=,cmd= -p "$cur" 2>/dev/null | sed 's/^ *//')"
+              [ -z "${ppid:-}" ] && break
+              echo "      $cur  $cmd"
+              [ "$ppid" = "1" ] && echo "      1  (init/systemd)" && break
+              cur=$ppid
+            done
+            echo "      cgroup: $(cat /proc/$pid/cgroup 2>/dev/null | head -1 | cut -c1-90)"
+          done
           EOF
 
       - name: Does the API answer, and is auth enforced

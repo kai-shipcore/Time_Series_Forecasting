@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export a real inventory snapshot for the dashboard from production tables.
 
-Replaces dashboard/lib/data.py's generated sample with dashboard/data/inventory_snapshot.csv,
+Writes data/inventory/inventory_snapshot.csv, replacing the generated sample the
 sourced from the same systems the Commerce Integration app uses (see docs/ML_FORECAST_DESIGN.md
 Section 2.1 for what the forecast's training target contains, which is the background that
 motivated this, and the stage-1 investigation this script follows for how the routing below
@@ -33,12 +33,12 @@ available_inventory/preorder_backlog/product_name cells (pandas will read these 
 not 0 -- so "no stock record" stays distinguishable from "record says zero". confirmed_inbound
 is different: absence there is queried directly (no container line items match), which is a real
 zero, not a gap, so it is filled with 0. Category is deliberately not included here: it is
-already derived correctly from the SKU prefix in dashboard/lib/data.py::product_category().
+already derived correctly from the SKU prefix in src/planning/data.py::product_category().
 
 Run:
     .venv/bin/python scripts/export_inventory_snapshot.py
 
-Safe to re-run: overwrites dashboard/data/inventory_snapshot.csv in place.
+Safe to re-run: overwrites data/inventory/inventory_snapshot.csv in place.
 """
 import sys
 from pathlib import Path
@@ -51,7 +51,7 @@ sys.path.insert(0, str(ROOT))
 from src.planning import inventory as INV  # noqa: E402
 
 FORECAST_PARQUET = ROOT / "data" / "processed" / "ml_forward_forecasts.parquet"
-OUT_CSV = ROOT / "dashboard" / "data" / "inventory_snapshot.csv"
+OUT_CSV = ROOT / "data" / "inventory" / "inventory_snapshot.csv"
 
 
 def main() -> None:

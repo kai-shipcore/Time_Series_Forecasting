@@ -94,7 +94,7 @@ correction matters, because it was the stated reason to distrust every figure be
 
 Available inventory, preorder backlog, confirmed inbound and inbound ETA are real. They are
 exported from the Commerce and Supabase databases by `scripts/export_inventory_snapshot.py`
-into `dashboard/data/inventory_snapshot.csv`, and `inventory_source()` reports `export`
+into `data/inventory/inventory_snapshot.csv`, and `inventory_source()` reports `export`
 rather than `sample`. The screens still carry a sample banner, but it is conditional on
 `inventory_is_sample()` and does not render. `draft_inbound` and `draft_eta` arrived with the
 same export.

@@ -44,7 +44,7 @@ HISTORY_PATH = REPO_ROOT / "data" / "processed" / "ml_forecast_history.parquet"
 #: which SKU, and for which target week. Re-running the same version on the same
 #: date replaces those rows rather than adding a second copy, which mirrors the
 #: production pipeline's own rule that a re-run within a training week replaces.
-KEY = ["model_version", "forecast_date", "unique_id", "ds"]
+KEY = ["model_version", "week_of", "unique_id", "ds"]
 
 COLUMNS = KEY + ["yhat", "bucket", "history_length", "segment", "served_by", "run_at"]
 
@@ -91,6 +91,19 @@ def canonical_segments(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def _legacy_column_names(df):
+    """Accept parquets written before the 2026-08-12 rename.
+
+    Files on disk still carry `forecast_date`, which in the ML track always held
+    the training week. Renamed on read rather than by rewriting the files: the
+    dev_seed fixture is tracked in git and checksummed by its manifest, and the
+    local history parquet is a backup nobody should have to migrate by hand.
+    """
+    if "forecast_date" in df.columns and "week_of" not in df.columns:
+        df = df.rename(columns={"forecast_date": "week_of"})
+    return df
+
+
 def load() -> pd.DataFrame:
     """Every stored prediction. Empty frame with the right columns if none yet.
 
@@ -110,8 +123,8 @@ def load() -> pd.DataFrame:
 
     if not HISTORY_PATH.exists():
         return pd.DataFrame(columns=COLUMNS)
-    df = pd.read_parquet(HISTORY_PATH)
-    for col in ("forecast_date", "ds"):
+    df = _legacy_column_names(pd.read_parquet(HISTORY_PATH))
+    for col in ("week_of", "ds"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col])
     return canonical_segments(df)
@@ -127,8 +140,8 @@ def _load_parquet() -> pd.DataFrame:
     """
     if not HISTORY_PATH.exists():
         return pd.DataFrame(columns=COLUMNS)
-    df = pd.read_parquet(HISTORY_PATH)
-    for col in ("forecast_date", "ds"):
+    df = _legacy_column_names(pd.read_parquet(HISTORY_PATH))
+    for col in ("week_of", "ds"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col])
     return df
@@ -142,10 +155,16 @@ def append(forecast: pd.DataFrame) -> dict:
     ones, and how large the store now is.
 
     Writes both stores. The table is the durable, shared one; the parquet stays
-    as a local backup and as the path a machine without credentials uses. The
-    table write is an upsert on the key, so it needs no read first and is safe
-    under concurrent runs; the file write is still read-modify-write, which is
-    safe only because the pipeline is a weekly cron with a single writer.
+    as a local backup and as the path a machine without credentials uses.
+
+    Both writes assume a single writer, which the weekly cron provides. The
+    table write clears this (model_version, week_of) before inserting, so two
+    runs racing on the same week would have the second delete the first's rows
+    mid-flight; the file write is read-modify-write and no safer. This was
+    previously a plain upsert and was described here as safe under concurrent
+    runs, which is no longer true and was never something the pipeline relied
+    on. The reason for the change is in `store.upsert`: keying on unique_id
+    could not remove SKUs a re-segmented run stopped producing.
 
     A failed table write does not fail the run. The forecast itself has already
     been produced and the parquet has it, so raising here would turn a
@@ -156,7 +175,7 @@ def append(forecast: pd.DataFrame) -> dict:
         return {"added": 0, "replaced": 0, "total": len(load()), "runs": 0, "db_rows": 0}
 
     incoming = forecast.copy()
-    for col in ("forecast_date", "ds"):
+    for col in ("week_of", "ds"):
         incoming[col] = pd.to_datetime(incoming[col])
     missing = [c for c in KEY if c not in incoming.columns]
     if missing:
@@ -182,7 +201,7 @@ def append(forecast: pd.DataFrame) -> dict:
     # resulting dtypes, so the first write skips it rather than relying on
     # behaviour that is going away.
     out = incoming if existing.empty else pd.concat([existing, incoming], ignore_index=True)
-    out = out.sort_values(["model_version", "forecast_date", "unique_id", "ds"])
+    out = out.sort_values(["model_version", "week_of", "unique_id", "ds"])
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(HISTORY_PATH, index=False)
 
@@ -190,7 +209,7 @@ def append(forecast: pd.DataFrame) -> dict:
         "added": len(incoming),
         "replaced": replaced,
         "total": len(out),
-        "runs": int(out.groupby(["model_version", "forecast_date"]).ngroups),
+        "runs": int(out.groupby(["model_version", "week_of"]).ngroups),
         # Rows written to the table: -1 means it could not be reached, which is
         # normal on a machine with no credentials and worth saying out loud on
         # the server, where it means this run is not backed up.
@@ -203,16 +222,16 @@ def runs() -> pd.DataFrame:
     df = load()
     if df.empty:
         return pd.DataFrame(
-            columns=["model_version", "forecast_date", "n_skus", "n_weeks", "forecast_units"]
+            columns=["model_version", "week_of", "n_skus", "n_weeks", "forecast_units"]
         )
     return (
-        df.groupby(["model_version", "forecast_date"], as_index=False)
+        df.groupby(["model_version", "week_of"], as_index=False)
         .agg(
             n_skus=("unique_id", "nunique"),
             n_weeks=("ds", "nunique"),
             forecast_units=("yhat", "sum"),
         )
-        .sort_values(["model_version", "forecast_date"])
+        .sort_values(["model_version", "week_of"])
         .reset_index(drop=True)
     )
 
@@ -234,7 +253,7 @@ def score_against_actuals(sales: pd.DataFrame | None = None) -> pd.DataFrame:
     hist = load()
     if hist.empty:
         return pd.DataFrame(
-            columns=["model_version", "forecast_date", "unique_id", "ds", "lead", "yhat", "y"]
+            columns=["model_version", "week_of", "unique_id", "ds", "lead", "yhat", "y"]
         )
     if sales is None:
         from src.planning import data as D
@@ -242,7 +261,7 @@ def score_against_actuals(sales: pd.DataFrame | None = None) -> pd.DataFrame:
         sales = D.load_sales()
     if sales.empty:
         return pd.DataFrame(
-            columns=["model_version", "forecast_date", "unique_id", "ds", "lead", "yhat", "y"]
+            columns=["model_version", "week_of", "unique_id", "ds", "lead", "yhat", "y"]
         )
 
     # Bounded by both: the calendar says which weeks have finished, the data
@@ -252,7 +271,7 @@ def score_against_actuals(sales: pd.DataFrame | None = None) -> pd.DataFrame:
     closed = hist[hist["ds"] <= settled_through].copy()
     if closed.empty:
         return pd.DataFrame(
-            columns=["model_version", "forecast_date", "unique_id", "ds", "lead", "yhat", "y"]
+            columns=["model_version", "week_of", "unique_id", "ds", "lead", "yhat", "y"]
         )
 
     actual = sales[["unique_id", "ds", "y"]].copy()
@@ -261,9 +280,9 @@ def score_against_actuals(sales: pd.DataFrame | None = None) -> pd.DataFrame:
     # A SKU-week absent from the sales grid sold nothing. The grid is complete
     # per the ingestion contract, so this is a true zero rather than a gap.
     out["y"] = out["y"].fillna(0.0)
-    out["lead"] = ((out["ds"] - out["forecast_date"]).dt.days / 7).round().astype(int)
+    out["lead"] = ((out["ds"] - out["week_of"]).dt.days / 7).round().astype(int)
     return out[
-        ["model_version", "forecast_date", "unique_id", "ds", "lead", "yhat", "y",
+        ["model_version", "week_of", "unique_id", "ds", "lead", "yhat", "y",
          "bucket", "history_length", "segment"]
     ].reset_index(drop=True)
 
@@ -288,7 +307,7 @@ def performance_by_run(sales: pd.DataFrame | None = None) -> pd.DataFrame:
     scored = score_against_actuals(sales)
     if scored.empty:
         return pd.DataFrame(
-            columns=["model_version", "forecast_date", "segment", "n_skus",
+            columns=["model_version", "week_of", "segment", "n_skus",
                      "weeks_scored", "actual_units", "pooled_wape", "bias_pct"]
         )
 
@@ -305,18 +324,18 @@ def performance_by_run(sales: pd.DataFrame | None = None) -> pd.DataFrame:
         })
 
     per_segment = (
-        scored.groupby(["model_version", "forecast_date", "segment"])
+        scored.groupby(["model_version", "week_of", "segment"])
         .apply(agg, include_groups=False)
         .reset_index()
     )
     total = (
         scored.assign(segment="TOTAL")
-        .groupby(["model_version", "forecast_date", "segment"])
+        .groupby(["model_version", "week_of", "segment"])
         .apply(agg, include_groups=False)
         .reset_index()
     )
     return (
         pd.concat([per_segment, total], ignore_index=True)
-        .sort_values(["model_version", "forecast_date", "segment"])
+        .sort_values(["model_version", "week_of", "segment"])
         .reset_index(drop=True)
     )

@@ -1,23 +1,46 @@
-# ML forecasting track: pinned to exact versions. Model results are compared
-# across versions at the third decimal (design doc Section 1.5), which is finer
-# than the drift an unpinned solver or BLAS update can introduce, so these must
-# not float. Pinned to the versions the recorded results were measured on.
+# All versions pinned exactly, 2026-08-12.
+#
+# The ML pins came first: model results are compared across versions at the
+# third decimal (design doc Section 1.5), which is finer than the drift an
+# unpinned solver or BLAS update can introduce. Those five are the versions the
+# recorded results were measured on and must not float.
+#
+# The service pins were added later, for a different reason. They were left
+# unpinned on the argument that only the model needed reproducibility, and the
+# cost of that showed up as an unverifiable change to route registration in a
+# FastAPI version nobody could name. A service with no test suite and no staging
+# environment gets less benefit from floating versions than almost anything
+# else in this repository.
+#
+# Taken from `pip freeze` on the deploy host, not from PyPI, so these record
+# what production runs rather than proposing an upgrade to it. The two
+# environments had already drifted: the server was on fastapi 0.141.1, uvicorn
+# 0.52.0 and plotly 6.9.0 where the dev laptop was on 0.138.0, 0.49.0 and 6.8.0.
+# The five ML pins matched on both, so no recorded result is affected.
+#
+# To re-check, or after any deliberate upgrade:
+#   ssh "$FORECAST_DEPLOY_USER@$FORECAST_DEPLOY_HOST" \
+#       "cd $FORECAST_DEPLOY_PATH && .venv/bin/pip freeze"
+
+# --- model: pinned because results are compared at the third decimal ---------
 pandas==2.3.3
 numpy==2.4.6
 scikit-learn==1.9.0
 lightgbm==4.7.0
 statsforecast==2.0.3
 
-# Production / API dependencies, intentionally unpinned.
-sqlalchemy
-psycopg2-binary
-python-dotenv
-jupyter
-matplotlib
-fastapi
-uvicorn[standard]
-plotly
-altair
-vl-convert-python
-openai
-requests
+# --- service: pinned to what the deploy host currently runs ------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+sqlalchemy==2.0.51
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2
+requests==2.34.2
+
+# --- reporting and notebooks -------------------------------------------------
+plotly==6.9.0
+altair==6.2.2
+vl-convert-python==1.9.0.post1
+matplotlib==3.11.1
+jupyter==1.1.1
+openai==2.50.0

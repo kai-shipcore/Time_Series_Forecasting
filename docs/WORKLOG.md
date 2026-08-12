@@ -331,7 +331,7 @@ the files and not knowing whether anyone had looked.
   layer under dashboard/lib/, which reads the real forward forecasts, sales history,
   segmentation, and the model-vs-V1 accuracy exports. Inventory, preorder, inbound, product
   name, size, and status are not present in this repo, so the dashboard reads them from
-  dashboard/data/inventory_snapshot.csv and falls back to a clearly labelled sample seeded
+  data/inventory/inventory_snapshot.csv and falls back to a clearly labelled sample seeded
   from real sales until a real export is dropped in. Documented the priority logic,
   recommended-order-quantity formula, and known limitations in dashboard/README.md.
 
@@ -432,7 +432,7 @@ the files and not knowing whether anyone had looked.
   (the model loses on long SKUs in the Oct-Dec window specifically, not the window overall).
 
 - 2026-07-24: Saved the forecasting product owner's original dashboard requirements
-  (dashboard/REQUIREMENTS.md), which had only existed in chat history until now, and pointed
+  (docs/PLANNING_REQUIREMENTS.md), which had only existed in chat history until now, and pointed
   the derived build spec at it as the source of truth when the two disagree.
 
 - 2026-07-24: Built the Inventory Overview page (Step 4), replacing the placeholder home page.
@@ -535,7 +535,7 @@ the files and not knowing whether anyone had looked.
   reads that as demand falling. Recorded the data position for both: pre-order streams are
   already in orders_raw, stockout and restock event dates are not available anywhere.
 
-- 2026-07-27: Rebuilt the dashboard front end from the new plan. Wrote dashboard/PLAN.md,
+- 2026-07-27: Rebuilt the dashboard front end from the new plan. Wrote docs/PLANNING_PLAN.md,
   which starts from the decisions users actually make rather than from a screen list, records
   a verified inventory of which data is real, sample and missing, and maps four screens plus
   one deferred against those decisions. Validated the map with a worked walkthrough of one
@@ -1648,7 +1648,7 @@ the files and not knowing whether anyone had looked.
   builds 447 rows with real recommendations.
 
 2026-07-31  Audited the SKU Detail and Forecast Validation pages against the purchaser's questions in
-  dashboard/PLAN.md, and fixed the one defect the audit turned up.
+  docs/PLANNING_PLAN.md, and fixed the one defect the audit turned up.
   SKU Detail's header said "Trained through" and showed the first week of the forecast horizon, which is
   one week later than the training cutoff by construction. So the page reported 2026-07-27 where the
   Action List, reading the forecast file's own forecast_date, correctly reported 2026-07-20. Two screens
@@ -2018,7 +2018,7 @@ the files and not knowing whether anyone had looked.
   The non-forecast table's rows now link to the SKU detail page, which was the missing half of the previous
   entry: that page draws sales history for an intermittent SKU, and nothing linked to it, so it was reachable
   only by typing a URL.
-  Two corrections to earlier notes in this log and in dashboard/PLAN.md, both from assumptions that should
+  Two corrections to earlier notes in this log and in docs/PLANNING_PLAN.md, both from assumptions that should
   have been questions. Every purchase order is on a container, and the three container statuses the Sheet
   import sets are exhaustive, so there is no population of orders invisible to confirmed or draft inbound.
   And inventory has not been sample data since the export landed: inventory_source() reports "export".
@@ -3192,3 +3192,284 @@ the files and not knowing whether anyone had looked.
   screen.
 
 --- SUMMARY PRODUCED 2026-08-10 (covering the 2026-08-10 entries above) ---
+
+- 2026-08-11. Read Tuesday's cron output. Both database writes landed, 6,071 rows each, and
+  the leading-partial-week fix ran in production. BACKLOG 11 closed by observation.
+
+- 2026-08-11. Went after BACKLOG 2 and found the item's own proposed fix is wrong. Using a
+  stable launch week for eligibility admits 178 to 226 SKUs per window of which 93 to 95%
+  have no training rows at that cutoff; they would be scored as zero forecasts. Measured
+  before writing any code, which is the only reason it was caught.
+  Then measured that the failure the item predicts does not occur either: zero SKUs in any
+  window are scored with less than the minimum history. I concluded the item was a rounding
+  fix and recommended skipping it. That was wrong, and the user corrected it: the real defect
+  is that every promoted SKU is locked to exactly 13 weeks regardless of how much history it
+  actually has.
+
+- 2026-08-11. The promotion override assigned three constants: train_start to 13 weeks ago,
+  active_weeks to 13, history_length to "short". Measured: 190 SKUs promoted, 41% of the
+  smooth set, of which only 15 genuinely had 13 weeks. Median 34, maximum 111 which is the
+  whole series. 73 had 50+ weeks and were still labelled short, so they were routed to the
+  wrong model as well as starved. 4,615 SKU-weeks of usable history discarded.
+  The consequence is bigger than the truncation. That train_start sits in the future relative
+  to every backtest cutoff, so all 190 had negative history and were silently absent from
+  every figure ever recorded. Every number in the version log was measured on the easier 59%
+  of the catalogue and nothing said so.
+  Fixed by detecting each SKU's real smooth-history onset. Scored population went from
+  266/251/66 across the three windows to 356/327/103.
+
+- 2026-08-11. Measured where forecasting is actually worth doing, by demand band. The model
+  beats a trailing 12-week mean above 10 units a week and below 2, and is indistinguishable
+  from it everywhere between, with four of five middle bands favouring the trailing mean.
+  The 10+ band carries 71% of units, so the aggregate wins are real but concentrated.
+  Also measured that the project's own success metric cannot see improvements to the weak
+  band: fixing 2 to 10 units a week perfectly would move pooled WAPE by about 0.006 against
+  an adoption bar of 0.01 and a noise floor of 0.011. Anyone working on low-volume accuracy
+  has to change the criterion first or they will measure a real gain against a rule that
+  cannot detect it.
+
+- 2026-08-11. Raised the promotion bar from 2.0 to 3.0 to match the classification bar, on
+  the user's call. I argued against it on the grounds that the data cannot locate the
+  boundary, and the user's point stood: the data cannot locate it, but the two bars
+  contradicting each other was the bug, and choosing is a judgement rather than a finding.
+  I also had the burden of proof backwards. I kept asking whether the evidence showed those
+  SKUs were forecast badly and treating the absence of an answer as a reason to keep
+  forecasting them. Serving a forecast is a positive claim and needs evidence for it.
+  Recorded as a judgement with its cost measured: 127 SKUs lose their forecast, 6.8% of
+  covered demand, from SKUs selling 2.0 to 2.9 a week. Every accuracy cell improved, and the
+  improvement is partly mechanical because the hardest SKUs were removed, which is written
+  down next to it.
+
+- 2026-08-11. Built an integrity suite that proves the model is refitted for every evaluation
+  window, trained only on data at or before each cutoff, and independent of the order windows
+  are fitted in. Nine checks, all passing. Two of them were genuinely in doubt: refitting is
+  bit-identical, and reversing the fitting order changes nothing. Wired into CI and into the
+  re-baseline runner, which now aborts before re-deriving anything if the harness fails.
+
+- 2026-08-11. Audited the codebase. Found the three hyperparameter scripts have been silently
+  disarmed since a 2026-07-29 refactor: they set hyperparameters on a class attribute that
+  stopped being read. I first concluded this invalidated the whole v10 track, and the data
+  disproved it within a minute: 81 configurations produced 81 distinct scores, impossible if
+  the settings had not applied. The scripts ran eight days before the refactor. Fixed, with
+  an assertion so the same breakage would raise rather than produce a plausible number.
+  Also found our own profile change had broken the planning code: promoted SKUs were
+  identified by active_weeks == 13 and used to size safety stock, and onset detection
+  destroyed that signature, so 57 of 63 would have been silently under-sized. Fixed with an
+  explicit column.
+
+- 2026-08-11. Re-ran v10's hyperparameters against the model that actually exists, per arm,
+  as v18. Rejected on both. The short model gained four times the trees and moved by 0.0001
+  across three windows, so it is data-limited rather than capacity-limited. The long model's
+  only significant cell is a regression, in the window carrying v11's defining result.
+  That is the sixth perturbation to cost the long segment, after two seasonal blends, a
+  monthly-only blend, the week-boundary shift and the channel-mix feature. At 55 to 62 SKUs
+  that is a property of the sample, not six coincidences.
+
+- 2026-08-11. Corrected a claim I wrote yesterday. Section 4.31 said every cell moved by at
+  most 0.011 across the snapshot advance. The table it was drawn from omitted Oct-Dec
+  smooth/short, which moved 0.059 and flipped a comparison against V1. Same failure mode as
+  the stale figure that section documents.
+
+- 2026-08-11. Forced the weekly pipeline early so production picked up the profile change
+  tonight instead of next Tuesday. Serving 338 SKUs, down from 467. Both database writes
+  landed again.
+
+--- DAILY SUMMARY 2026-08-11 ---
+- Found and fixed a bug that had been hiding 41% of our products from every accuracy test we
+  have ever run, so the recorded results had only ever been measured on the easier half of
+  the range.
+- Deliberately narrowed what we forecast from 467 products to 338, because measurement showed
+  that for the ones removed, selling two to three units a week, our forecast was no better
+  than a simple recent average; they still appear on the planning screens with their actual
+  sales.
+- Built an automatic check that proves the model is being trained and tested correctly, which
+  now runs on every code change, and used a full review of the code to find and fix three
+  further faults before they could affect anything.
+- Closed out the last two open ideas by testing them properly, neither improved the forecast,
+  which leaves only the final validation run before the work is finished.
+
+--- SUMMARY PRODUCED 2026-08-11 (covering the 2026-08-11 entries above) ---
+
+- 2026-08-12. Replaced the unmeasured-error fallback used for safety stock. It gave promoted
+  SKUs a hardcoded 0.24 and everything else its segment median. Two things wrong with that:
+  the constant was a measurement frozen into source and went stale the moment promotion
+  changed, and "promoted" was only ever a proxy for low volume, which is what actually
+  predicts error (0.357 below 2 units a week against 0.134 above 10).
+  Now it takes the median measured error of SKUs in the same weekly-demand band, computed
+  every run from whichever SKUs currently have a measured error, so nothing can go stale and
+  it sharpens as backtest coverage grows.
+  My first version had a real flaw and the data caught it. A band needs five measurements to
+  be trusted, and the under-2-units band has four, so it fell through to the segment median
+  and handed its 33 SKUs LESS cushion than before, on the hardest band in the range. Changed
+  to borrow from the nearest trusted band instead, which keeps the fallback on the volume
+  axis. Fallbacks now run 0.269, 0.269, 0.234, 0.212, 0.132 from lowest band to highest,
+  decreasing with volume as the evidence says they should.
+  Aggregate effect is nil, 2,306 to 2,312 recommended units. The stock is redistributed
+  toward the SKUs that need it rather than increased.
+  A second flaw, caught by the user asking how we were forecasting anything under 2 units a
+  week when the demotion rule should have removed it. We were not. I was banding on a 4-week
+  rate while the band edges were measured on a 13-week mean and every classification
+  threshold is on 13 weeks too, so SKUs were being sorted into bands calibrated on a
+  different and noisier statistic. Fixed to band on recent_mean. The under-2 band is now
+  empty, which is what the demotion rule guarantees and is the check that the two rules
+  finally agree.
+  Also worth recording: my verification of all this ran against a local profile file from
+  2026-08-10, before the onset fix, so the first set of counts I reported described a
+  population that no longer exists. The logic was right and the numbers were stale.
+
+- 2026-08-12. Full codebase review, 26,457 lines. Ran static analysis over all of it and read
+  the production path properly; roughly 60% has not been read line by line and that is stated
+  rather than glossed.
+  Retired three dead files: src/pipeline.py, src/forecast.py, src/segment.py. pipeline.py was
+  imported by nothing, forecast.py and segment.py only by pipeline.py, and forecast.py's only
+  function raised NotImplementedError, so the chain would have crashed if anything had called
+  it. 51 lines. compileall, imports and ruff all clean afterwards.
+  Then retired the Streamlit dashboard and the intermittent policy on the user's call: the
+  dashboard was a prototype the Next.js Action List was ported from and will not be used
+  again, and the policy module will not be taken up. That is src/intermittent_policy.py, its
+  only consumer scripts/test_tsb_large_spike.py, which could not run anyway because the CSV
+  it reads is not generated by anything, and the Streamlit app itself.
+  Kept deliberately: data/inventory/inventory_snapshot.csv, which despite the folder name is
+  production data written by export_inventory_snapshot.py, shipped by push_data_to_server.sh
+  and listed in the API's readiness check; and docs/PLANNING_PLAN.md and REQUIREMENTS.md, the
+  specs the Next.js screens were built from and which BACKLOG item 3 cites by section. Also
+  kept src/ml/diagnostics.py, which looks unimported but is a runnable standalone tool.
+  The dashboard was never a second implementation of the planning logic. dashboard/lib
+  re-exported src.planning as aliases and said so, so lib.calc was src.planning.calc and the
+  two could not drift.
+  Total: 2,124 lines removed, 26,457 to 24,333. compileall, every live import and ruff all
+  clean afterwards, and the only surviving reference to any of it is the optional streamlit
+  import in src/planning/_cache.py, whose fallback branch is now the only one ever taken.
+  Then removed dashboard/ entirely, on the user's instruction that nothing under it should be
+  in use. Production data was relocated rather than deleted: inventory_snapshot.csv and its
+  example moved to data/inventory/, which joins data/snapshots and data/dev_seed as a tracked
+  directory, since data/ is not gitignored wholesale and readiness reports that file as
+  tracked. PLAN.md and REQUIREMENTS.md moved to docs/ as PLANNING_PLAN.md and
+  PLANNING_REQUIREMENTS.md; they are the specs the Next.js screens were built from and are
+  cited by section in the backlog.
+  Four production paths updated: src/planning/data.py (the path constant, renamed DASH_DATA to
+  INVENTORY_DIR because the old name described a folder that no longer exists),
+  export_inventory_snapshot.py, push_data_to_server.sh and seed_dev_data.py. Also fixed three
+  stale references to files deleted earlier: dashboard/README.md, dashboard/lib/data.py and
+  dashboard/lib/calc.py, none of which had existed for some time.
+  Total across both passes: 14 files removed, 26,457 lines of Python down to 24,344. No live
+  reference to dashboard/ remains except historical notes explaining the move and two pointing
+  at the Commerce repo's own api/planning/dashboard route, which is unrelated.
+
+- 2026-08-12. Backlog 15, the pipeline that could not be safely interrupted. ml_prepare_data
+  now stages every artifact in data/.staging_<pid> and moves them into place only after all
+  four steps succeed, so a cancel, a crash or a dropped connection leaves the previous run
+  intact and still being served. The lever is one environment variable read by
+  config.DATA_PROCESSED, because the pipeline spans processes and the subprocess has to read
+  the files the parent just wrote rather than the previous run's.
+  My first version was broken and looked finished. src/clean.py computed OUTPUT_PATH from
+  PROCESSED_DIR at import, so redirecting the directory moved the CSV and left the parquet
+  going straight into live data/processed. A kill mid-run would have replaced the live sales
+  file and not the profile, which is the corruption staging exists to prevent, with a staging
+  directory sitting beside it looking like protection. Every check I had thought to run
+  passed, because each confirmed the redirect reached a name rather than that the write landed
+  anywhere in particular.
+  scripts/_test_staged_pipeline.sh caught it on the first honest run. That test waits for the
+  staging directory to actually contain an artifact instead of guessing a time, then sends
+  SIGKILL, which cannot be deferred the way the SIGINT in my first attempt was. The first
+  attempt failed for its own reasons and reported a failure that was the test's, not the
+  code's.
+  Third instance this week of the same shape: a derived value stops tracking its source and
+  nothing says so. RatioLGBM.PARAMS against self.params, the transcribed v-base figures
+  against the recomputed ones, and now OUTPUT_PATH against PROCESSED_DIR. Each was found by
+  re-deriving a value rather than by reading the code.
+
+- 2026-08-12. Backlog 21. Found and closed a second route to the unmanaged uvicorn:
+  resolveServerDir() in the Commerce repo read FORECAST_SERVER_DIR before checking NODE_ENV,
+  so an explicit value won in production and the app would auto-start a competitor to systemd.
+  Its own docstring said the opposite. That is also the mistake DEPLOYMENT.md warns about and
+  the hardest to see, because .env.local overrides per variable and under pm2 the value need
+  not be in any file, which is why searching /opt found nothing on 2026-08-07.
+  The original unknown is still unknown, but it now identifies itself: server-diagnostics.yml
+  walks each uvicorn's parent chain to init and prints its cgroup, so systemd, a person over
+  ssh, pm2 and cron are told apart on sight.
+  Findings that stay open: there is no test suite at all for 26k lines, ml_38 being the only
+  automated check and only since 2026-08-11. api/main.py's _classify_sku is a second copy of
+  the bucket logic that omits the promote and demote overrides, so /forecast/{sku} and
+  /backtest/{sku} classify the 63 promoted SKUs differently from the batch; both are on the
+  legacy track BACKLOG 6 retires. bootstrap_delta divides by y.sum() with no guard, so a
+  segment with zero units yields nan rather than an error.
+  Static analysis: 152 findings, none critical. 46 zip() without strict, 37 f-strings with no
+  placeholder, 32 late-binding closures all confined to scripts/_debug_*, 28 unused imports.
+  No bare excepts, no mutable default arguments, no swallowed write failures, and serving
+  builds v11 identically to ml_22 including the filter that stops long SKUs being predicted
+  twice.
+
+2026-08-12  Fixed a stored forecast run replacing only the SKUs it repeated, not the whole
+  week. store.upsert wrote ON CONFLICT on (model_version, week_of, unique_id, ds), which can
+  update a row the new run also produces but cannot represent a SKU the new run no longer
+  produces. When the smooth set went 467 -> 338 on 2026-08-10 the 129 dropped SKUs kept their
+  previous week's values, so shipcore.ml_forward_forecasts held two segmentations at once and
+  the planning screens served all 467 with nothing indicating that a quarter were stale. The
+  write now deletes the (model_version, week_of) pair before inserting, both statements in one
+  transaction, matching what src.db.write_forward_forecasts already did on the legacy track.
+  Scoped to one model_version so a candidate version can be stored alongside v11 for the same
+  week. Assumes a run writes its week in one call, which both callers do; replace_run=False
+  keeps the old behaviour for a caller that needs to append.
+  Added scripts/test_store_replace_run.py, which drives the real upsert against SQLite and
+  reproduces the 467 -> 338 shrink. Confirmed it fails against the previous behaviour before
+  keeping it: 4 checks fail, with yhat holding a mix of stale and fresh values. Also covers
+  other weeks and other model_versions surviving a write, and a failed insert rolling the
+  delete back so a failure cannot empty a week.
+  Fixed scripts/ml_purge_history_run.py, which crashed with KeyError: 'week_of'. It was the
+  one direct parquet reader the 2026-08-12 rename missed; it now goes through the shared shim
+  in history rather than repeating the rename. With the write path fixed the purge is no
+  longer needed for the stale rows: re-running the forecast clears the week itself, with no
+  window in which the planning screens have nothing to serve.
+  Recorded the personal repository copy as BACKLOG 24, flagged in the index as the last item
+  and as a prerequisite for BACKLOG 6, which deletes the statsforecast implementation.
+  Confirmed this repository has never tracked .env or .claude/settings.local.json.
+
+2026-08-12  Guarded the database write against stale local inputs, after a laptop run came
+  one working connection away from overwriting the server's forecast. `ml_forward_forecast.py
+  --snapshot live` on the dev machine read data/processed as it stood: sales ending 2026-08-03
+  and an sku_profiles.csv with no `promoted` column, so written before the onset fix. It
+  rebuilt the old 467-SKU segmentation and reported success. Only a failed DB connection
+  stopped it being written. Under the old upsert that would merely have added rows; under the
+  run-replacing write it would have deleted the stored run for that week and replaced it. The
+  correctness fix made a pre-existing hazard destructive, so the guard belongs with it.
+  The script now compares the run's training week against weeks.last_complete_week() and, when
+  behind, skips both the forward write and the history append while still writing the parquet,
+  the model and the summary. --allow-stale for backfills. History is skipped entirely rather
+  than written locally: a run replaces its whole week, so appending a stale rebuild would
+  overwrite the real stored predictions and silently change every accuracy figure drawn from
+  them.
+  Also stopped the script asserting a cause it had not checked. store.upsert caught every
+  exception and returned -1, which was printed as "no DB credentials, or it could not be
+  reached" on a machine whose .env was complete and whose psycopg2 was installed. The cause is
+  now kept in store.LAST_ERROR and printed. Added scripts/ml_check_db.py, which walks driver,
+  environment, engine, connection, both tables and DELETE permission, and names the step that
+  fails. The DELETE check matters specifically because the new write path needs a permission
+  the old one did not.
+  Corrected BACKLOG 22, which named the FastAPI version as 0.141. It is 0.138.0, confirmed
+  against .venv metadata and against _IncludedRouter at fastapi/routing.py:1518 in that
+  install. The behaviour was reported accurately and the version was not, in the one entry
+  whose subject is not knowing which versions are deployed. The item still needs a pip freeze
+  from the server before the twelve unpinned service packages can be pinned, since pinning
+  from the laptop would assert a new production state rather than record the current one.
+
+2026-08-12  Closed BACKLOG 22 by pinning every dependency from pip freeze on the deploy host.
+  The two environments had drifted exactly as the item predicted: the server runs fastapi
+  0.141.1, uvicorn 0.52.0 and plotly 6.9.0 where this laptop had 0.138.0, 0.49.0 and 6.8.0.
+  The five ML pins matched on both, so no recorded model result is affected. Pinned from the
+  server rather than from PyPI so the file records production instead of proposing an upgrade
+  to it; installing it on the laptop now upgrades FastAPI, which is the intended direction.
+  Recorded a wrong correction rather than reverting it silently. Earlier in the day the
+  entry's "FastAPI 0.141" was changed to "0.138.0" on the strength of the laptop's .venv,
+  where _IncludedRouter does exist. Finding the class there proved only that it exists in both
+  versions, not that the entry named the wrong one. The original number was the server's and
+  was right. Local evidence, production claim, in the one item about not knowing which
+  versions run where.
+  Checked the live tables and corrected BACKLOG 23, which claimed the mixed-segmentation week
+  had already happened. It has not. Both stored runs in both ml_ tables are the 467-SKU
+  segmentation, so the 3.0 promotion threshold has never reached the server and the 129 stale
+  SKUs were inferred from local files rather than observed. The write bug is unchanged and is
+  demonstrated by the test; it fires on the next deploy rather than having already fired. Also
+  noted that the 2026-08-03 forward week stores 52 target weeks per SKU against 13 at
+  2026-08-10, so a --horizon 52 run sits there, and that aggregates cannot distinguish one
+  52-week run from a 13-week run written over it.

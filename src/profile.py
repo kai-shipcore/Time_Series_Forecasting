@@ -4,7 +4,13 @@ import pandas as pd
 from pathlib import Path
 from config import SHORT_HISTORY_WEEKS  # noqa: F401 — re-exported so importers don't break
 
-PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
+# Follows config so a staged run (FORECAST_PROCESSED_DIR, BACKLOG item 15) writes
+# where the rest of the pipeline is reading. Still a module-level name read at
+# call time: scripts/ml_36 and promoted_sku_accuracy.py reassign it to a temp
+# directory so an analysis cannot overwrite live data, and that must keep working.
+from config import DATA_PROCESSED as _DEFAULT_PROCESSED  # noqa: E402
+
+PROCESSED_DIR = _DEFAULT_PROCESSED
 
 ZERO_PCT_INTERMITTENT = 0.30   # SKUs with ≥30% zero weeks → intermittent (hard floor)
 CV_THRESHOLD = 1.5

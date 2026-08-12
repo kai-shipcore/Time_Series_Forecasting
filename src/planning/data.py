@@ -48,7 +48,18 @@ REPORTS = REPO_ROOT / "outputs" / "reports"
 # Named from the repo root rather than relative to this file. It used to be
 # `parents[1] / "data"`, which resolved correctly only while this module lived
 # under dashboard/lib and would have silently become src/data after the move.
-DASH_DATA = REPO_ROOT / "dashboard" / "data"
+#
+# Moved from dashboard/data/ to data/inventory/ on 2026-08-12, when the Streamlit
+# dashboard was retired. The file was never the dashboard's: it is written by
+# scripts/export_inventory_snapshot.py, shipped by scripts/push_data_to_server.sh
+# and listed in the API's readiness check, so leaving production data under the
+# name of a deleted prototype was an invitation to delete it by mistake.
+#
+# data/ is not gitignored wholesale; data/raw, data/processed and
+# data/history_backups are. data/inventory joins data/snapshots and data/dev_seed
+# as a tracked directory, which is what this file needs: readiness reports it as
+# "tracked in git; absent means a partial checkout".
+INVENTORY_DIR = REPO_ROOT / "data" / "inventory"
 
 FORWARD_FORECAST = PROCESSED / "ml_forward_forecasts.parquet"
 V1_FORWARD = PROCESSED / "v1_forward_forecasts.parquet"
@@ -58,7 +69,7 @@ SKU_PROFILES = PROCESSED / "sku_profiles.csv"
 ML_ACCURACY = REPORTS / "ml_accuracy.csv"
 ML_ACCURACY_BY_SKU = REPORTS / "ml_accuracy_by_sku.csv"
 BACKTEST_WEEKLY = REPORTS / "ml_backtest_weekly.csv"
-INVENTORY_SNAPSHOT = DASH_DATA / "inventory_snapshot.csv"
+INVENTORY_SNAPSHOT = INVENTORY_DIR / "inventory_snapshot.csv"
 
 # ---------------------------------------------------------------------------
 # Real data loaders.
@@ -77,7 +88,7 @@ def _read_sales() -> pd.DataFrame:
 
 
 def _read_forecasts() -> pd.DataFrame:
-    """LightGBM model forecast: unique_id, forecast_date, ds, yhat, bucket,
+    """LightGBM model forecast: unique_id, week_of, ds, yhat, bucket,
     history_length, segment, model_version, served_by, run_at.
 
     Prefers `shipcore.ml_forward_forecasts`, falling back to the parquet.
@@ -102,12 +113,16 @@ def _read_forecasts() -> pd.DataFrame:
 
     if df is None or df.empty:
         df = pd.read_parquet(FORWARD_FORECAST)
+        # Parquets written before the 2026-08-12 rename; the ML column always
+        # held the training week, only its name changed.
+        if "forecast_date" in df.columns and "week_of" not in df.columns:
+            df = df.rename(columns={"forecast_date": "week_of"})
 
     df["ds"] = pd.to_datetime(df["ds"])
-    df["forecast_date"] = pd.to_datetime(df["forecast_date"])
+    df["week_of"] = pd.to_datetime(df["week_of"])
     # Keep only the most recent training run's horizon.
-    latest = df["forecast_date"].max()
-    df = df[df["forecast_date"] == latest].copy()
+    latest = df["week_of"].max()
+    df = df[df["week_of"] == latest].copy()
     return df.reset_index(drop=True)
 
 
@@ -117,10 +132,15 @@ def _read_v1_forward() -> pd.DataFrame:
     docs/V1_AND_DASHBOARD_WIRING_TASK.md). SKUs absent from the latest
     velocity pull simply have no rows here."""
     if not V1_FORWARD.exists():
-        return pd.DataFrame(columns=["unique_id", "forecast_date", "ds", "v1_yhat"])
+        return pd.DataFrame(columns=["unique_id", "week_of", "ds", "v1_yhat"])
     df = pd.read_parquet(V1_FORWARD)
+    # Same shim as _read_forecasts: files written before 2026-08-12 call the
+    # training week `forecast_date`. Without this the coercion below raises a
+    # KeyError on any V1 parquet produced before the rename.
+    if "forecast_date" in df.columns and "week_of" not in df.columns:
+        df = df.rename(columns={"forecast_date": "week_of"})
     df["ds"] = pd.to_datetime(df["ds"])
-    df["forecast_date"] = pd.to_datetime(df["forecast_date"])
+    df["week_of"] = pd.to_datetime(df["week_of"])
     return df
 
 

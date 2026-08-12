@@ -1,5 +1,21 @@
 # Demand Forecasting: Project Write-Up
 
+> **FIGURES SUPERSEDED, 2026-08-12. Do not quote the accuracy table below.**
+>
+> Every number here was measured before 2026-08-11, when a defect was found in how
+> promoted SKUs were profiled: 41% of the forecastable catalogue had been silently absent
+> from every evaluation. Fixing it, and then aligning the two demand thresholds, changed
+> both the scored population and the figures.
+>
+> Two claims in this document are now false. It is **four of six** cells against the
+> spreadsheet, not five, and there are **two** exceptions rather than one: V1 now wins both
+> autumn cells, established and new products. The V1 column is further out than that; it
+> lists 0.789 for new-products-autumn where every measurement since puts V1 near 0.20.
+>
+> Current figures: `ML_FORECAST_DESIGN.md` Section 6, v11 entry, measured on snapshot
+> `2026-08-03-v2`. This document will be rewritten once the quarantined final test has run,
+> so that it is corrected once rather than twice.
+
 A narrative account of the project: the problem, the solution, how it was validated, and
 what it achieved. Written to be explained out loud to a non-technical audience or an
 interviewer. It is the story; the depth lives in two companion documents, referenced

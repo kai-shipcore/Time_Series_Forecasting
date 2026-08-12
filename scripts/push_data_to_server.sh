@@ -48,7 +48,7 @@ FILES=(
   outputs/reports/ml_accuracy.csv
   outputs/reports/ml_accuracy_by_sku.csv
   outputs/reports/ml_backtest_weekly.csv
-  dashboard/data/inventory_snapshot.csv
+  data/inventory/inventory_snapshot.csv
 )
 
 echo "Pushing forecast data to ${TARGET}:${FORECAST_DEPLOY_PATH}"
@@ -70,7 +70,7 @@ if [ ${#present[@]} -eq 0 ]; then
 fi
 
 # Directories first: rsync will not create intermediate paths on its own.
-"${SSH[@]}" "mkdir -p '${FORECAST_DEPLOY_PATH}'/{data/processed,outputs/reports,dashboard/data}"
+"${SSH[@]}" "mkdir -p '${FORECAST_DEPLOY_PATH}'/{data/processed,outputs/reports,data/inventory}"
 
 # --relative preserves each file's path under the destination root, so
 # data/processed/x.parquet lands at <path>/data/processed/x.parquet.

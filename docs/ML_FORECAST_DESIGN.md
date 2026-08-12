@@ -1690,6 +1690,55 @@ read this entry and the five before it first.
 
 Experiment: `scripts/ml_39_v18_tune_hybrid.py`.
 
+### 4.34 Final test: pre-registration
+
+**Written 2026-08-12, BEFORE the test was run. Nothing below was edited afterwards; the
+result is recorded in its own section so the two cannot be confused.**
+
+**What is being tested.** v11 as it stands, on snapshot `2026-08-03-v2`, against the
+quarantined window: cutoff 2026-05-04, test weeks 2026-05-11 to 2026-07-13. No model,
+threshold, feature or hyperparameter changes after this point.
+
+**Why now.** Every candidate is exhausted. v12 through v18 were tested and rejected, the
+last three of them this week. Six perturbations of the long model have each cost it half a
+point to a point. There is nothing left to try that has a defensible prior.
+
+**Run once.** Section 2.2 quarantines this window and its value comes from single use. The
+runner writes its result to `outputs/reports/final_test.json` and refuses to overwrite it,
+so a second run is a deliberate act with a visible trace rather than an accident.
+
+**Prior exposure, disclosed.** This window was evaluated once during development, on
+2026-08-11, by mistake: `scripts/ml_34_asof_bucket_audit.py` included it in its window list
+and fitted v11 on it. The figures seen were smooth/short 0.2093 and smooth/long 0.1353 under
+the then-current buckets. Nothing was tuned on them; it was one measurement, not a search,
+and the profiling has changed twice since so those numbers no longer correspond to the model
+being tested. It is recorded because a reader is entitled to know the window was not
+pristine.
+
+**Criteria, stated in advance.**
+
+1. **Primary, the go/no-go.** v11 beats the structural baseline on pooled WAPE for
+   smooth/long and for TOTAL. This is the claim the project exists to make: that a learned
+   model beats a trailing twelve-week mean with a seasonal round-trip.
+2. **Secondary, reported not decisive.** v11 against V1 and against the statistical
+   prototype, per segment.
+3. **Direction check.** The development windows put v11 ahead of the baseline on long in
+   Dec-Feb (−0.0782) and Oct-Dec (−0.0174) and level in Mar-May (+0.0039). The final window
+   is May to July, seasonally nearest Mar-May. **So the honest expectation is roughly level
+   on smooth/long and ahead on smooth/short**, not a repeat of the Dec-Feb margin. Writing
+   that down now means a level result cannot later be presented as a disappointment or a
+   strong one as a vindication of something it did not test.
+
+**What a failure means, decided before seeing the number.** If v11 does not beat the
+baseline, the recommendation is to serve the baseline. It is simpler, cheaper to run, easier
+to explain, and already implemented. A validation exercise that stops a more complex model
+shipping on the strength of development-window results has done its job. That outcome is
+reported as prominently as the alternative.
+
+**What no result changes.** Findings 1 through 10 in `docs/HANDOVER.md` stand either way.
+They concern the evaluation, the data and the pipeline rather than this model, and several
+of them matter more than which forecaster wins one ten-week window.
+
 ---
 
 ## 5. Feature Backlog & Open Questions

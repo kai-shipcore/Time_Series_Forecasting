@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure how accurately the model forecasts SKUs promoted from intermittent.
 
-Produces the number behind `PROMOTED_ERROR_FALLBACK` in dashboard/lib/calc.py,
+Produced the number behind the former PROMOTED_ERROR_FALLBACK in src/planning/calc.py,
 which is the safety-stock error assumed for a promoted SKU that has no measured
 error of its own.
 
@@ -90,7 +90,7 @@ def main() -> None:
     p, o = short[short["promoted"]], short[~short["promoted"].fillna(False)]
     print(f"{'ALL':<10}{len(p):>12}{pooled(p):>11.4f}{len(o):>10}{pooled(o):>10.4f}")
     print(f"\n  -> PROMOTED_ERROR_FALLBACK = {pooled(p):.4f}  "
-          f"(dashboard/lib/calc.py)")
+          f"(formerly src/planning/calc.py; removed 2026-08-12)")
     print(f"  promoted share of scored short-segment units: "
           f"{p['y_total'].sum() / short['y_total'].sum():.1%}")
     print(f"  median per-SKU WAPE: promoted {(p['ae'] / p['y_total']).median():.3f}, "

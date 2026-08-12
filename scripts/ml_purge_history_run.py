@@ -8,7 +8,7 @@ awkward -- explicit date, dry run by default, one run at a time.
 
 Why it exists. On 2026-08-05 a run was triggered mid-week while
 `clean()` still kept partial trailing buckets, so the model trained on a
-three-day "week" and the run was stored under `forecast_date = 2026-08-10`.
+three-day "week" and the run was stored under `week_of = 2026-08-10`.
 That row is not a forecast anyone made a decision on and it is not a fair
 record of the model: scored against actuals as those weeks close it will look
 far worse than v11 deserves, and it would sit permanently in the section of the
@@ -31,10 +31,10 @@ The table is the shared record, so a purge that only touched the file would be
 undone the next time anything read from the database.
 
     # see what would go
-    .venv/bin/python scripts/ml_purge_history_run.py --forecast-date 2026-08-10
+    .venv/bin/python scripts/ml_purge_history_run.py --week-of 2026-08-10
 
     # actually remove it
-    .venv/bin/python scripts/ml_purge_history_run.py --forecast-date 2026-08-10 --apply
+    .venv/bin/python scripts/ml_purge_history_run.py --week-of 2026-08-10 --apply
 """
 
 import argparse
@@ -73,15 +73,19 @@ def _summarise(df: pd.DataFrame, label: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--forecast-date", required=True,
+    ap.add_argument("--week-of", required=True,
                     help="the run's training cutoff, e.g. 2026-08-10")
     ap.add_argument("--version", default=None,
                     help="restrict to one model_version (default: every version on that date)")
+    ap.add_argument("--also-forward", action="store_true",
+                    help="also delete this week from ml_forward_forecasts. Only "
+                         "safe if you re-run the forecast straight afterwards: "
+                         "until you do, the planning screens have nothing to serve.")
     ap.add_argument("--apply", action="store_true",
                     help="actually delete; without this the script only reports")
     args = ap.parse_args()
 
-    target = pd.Timestamp(args.forecast_date).normalize()
+    target = pd.Timestamp(args.week_of).normalize()
 
     # ---- the parquet -------------------------------------------------------
     # Read the file directly rather than through history.load(), which prefers
@@ -89,14 +93,23 @@ def main() -> int:
     # is in order to rewrite it.
     local = pd.DataFrame()
     if history.HISTORY_PATH.exists():
-        local = pd.read_parquet(history.HISTORY_PATH)
-        local["forecast_date"] = pd.to_datetime(local["forecast_date"])
-        hit = local["forecast_date"] == target
+        # Through the shared shim: files written before the 2026-08-12 rename
+        # still call the training week `forecast_date`. Reusing
+        # history._legacy_column_names rather than repeating the rename here,
+        # because this script was the one direct parquet reader that the rename
+        # missed, and a second copy of the fix is a second thing to forget.
+        #
+        # Side effect worth knowing: the rewrite below saves the file under the
+        # new column name, so purging also migrates the local parquet. That is
+        # the right direction, and it is stated rather than silent.
+        local = history._legacy_column_names(pd.read_parquet(history.HISTORY_PATH))
+        local["week_of"] = pd.to_datetime(local["week_of"])
+        hit = local["week_of"] == target
         if args.version:
             hit &= local["model_version"] == args.version
         print(f"\nparquet  {_rel(history.HISTORY_PATH)}")
         print(f"  holds {len(local):,} rows across "
-              f"{local['forecast_date'].dt.date.nunique()} runs")
+              f"{local['week_of'].dt.date.nunique()} runs")
         _summarise(local[hit], "to remove")
     else:
         print(f"\nparquet  {_rel(history.HISTORY_PATH)} does not exist")
@@ -110,12 +123,12 @@ def main() -> int:
         print("  NOTE: the table is the shared record. Purging only the file "
               "leaves the bad run in place for anyone reading from the database.")
     else:
-        remote["forecast_date"] = pd.to_datetime(remote["forecast_date"])
-        rhit = remote["forecast_date"] == target
+        remote["week_of"] = pd.to_datetime(remote["week_of"])
+        rhit = remote["week_of"] == target
         if args.version:
             rhit &= remote["model_version"] == args.version
         print(f"  holds {len(remote):,} rows across "
-              f"{remote['forecast_date'].dt.date.nunique()} runs")
+              f"{remote['week_of'].dt.date.nunique()} runs")
         _summarise(remote[rhit], "to remove")
 
     if not args.apply:
@@ -146,7 +159,7 @@ def main() -> int:
     if remote is not None:
         from sqlalchemy import text
         eng = store.engine()
-        sql = f"DELETE FROM {store.TABLE} WHERE forecast_date = :d"
+        sql = f"DELETE FROM {store.TABLE} WHERE week_of = :d"
         params = {"d": target.date()}
         if args.version:
             sql += " AND model_version = :v"
@@ -154,6 +167,19 @@ def main() -> int:
         with eng.begin() as conn:
             deleted = conn.execute(text(sql), params).rowcount
         print(f"table:   removed {deleted:,} rows")
+
+        if args.also_forward:
+            # The forward table is the CURRENT horizon, not a record. Upsert
+            # replaces the SKUs a run produces and cannot remove rows for SKUs
+            # it no longer produces, so a week that spans a segmentation change
+            # ends up holding both sets. Deleting the week and re-running is the
+            # only way to make it describe one run again.
+            fsql = f"DELETE FROM {store.FORWARD_TABLE} WHERE week_of = :d"
+            with eng.begin() as conn:
+                fdel = conn.execute(text(fsql), params).rowcount
+            print(f"forward: removed {fdel:,} rows from {store.FORWARD_TABLE}")
+            print("         RE-RUN THE FORECAST NOW. Until you do, the planning "
+                  "screens have no current horizon to serve.")
 
     print("\nDone. Produce the replacement run separately, after the binning fix, "
           "so it is stored under the cutoff it actually used.")

@@ -1,5 +1,14 @@
 # Handover: findings and caveats
 
+> **FIGURES SUPERSEDED, 2026-08-12. The findings hold; the numbers are two snapshots old.**
+>
+> Written against the `2026-08-03-onset` run. Since then the promotion and classification
+> thresholds were matched at 3.0, moving the smooth set from 467 SKUs to 340 and changing
+> every accuracy figure. Current numbers: `ML_FORECAST_DESIGN.md` Sections 4.32 and 6.
+>
+> To be rewritten immediately before handover, deliberately once rather than after each
+> change.
+
 Written 2026-08-11. Read this before `ML_FORECAST_DESIGN.md`, which is long and
 assumes you already know what is contested.
 

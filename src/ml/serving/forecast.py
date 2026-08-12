@@ -22,7 +22,7 @@ from src.ml.evaluate import per_sku_totals, score
 from src.ml.serving.models import CURRENT_BEST, get_model
 
 FORWARD_COLUMNS = [
-    "unique_id", "forecast_date", "ds", "yhat", "bucket",
+    "unique_id", "week_of", "ds", "yhat", "bucket",
     "history_length", "segment", "model_version", "served_by", "run_at",
 ]
 
@@ -67,7 +67,7 @@ def forward_forecast(
     run_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     out = preds.copy()
-    out["forecast_date"] = pd.Timestamp(cutoff)
+    out["week_of"] = pd.Timestamp(cutoff)
     out["bucket"] = "smooth"
     out["history_length"] = out["unique_id"].map(asof).astype("object")
     out["segment"] = out["unique_id"].map(seg)

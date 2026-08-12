@@ -77,7 +77,7 @@ pattern of the existing `scripts/export_forecast_history.py`.
 
 ### Output contract
 
-Write `dashboard/data/inventory_snapshot.csv` with exactly these columns, which is the schema
+Write `data/inventory/inventory_snapshot.csv` with exactly these columns, which is the schema
 `dashboard/lib/data.py::inventory_columns()` already expects. Do not add columns and do not
 rename any.
 

@@ -302,9 +302,21 @@ with only two years of data, no SKU reaches 104 weeks at any cutoff, so the "ful
 does not appear in backtest windows.
 
 The `train_start` field both functions rely on is a stable per-SKU property (the SKU's
-launch or ramp-start week), which is why using it for an as-of calculation is valid. The
-`bucket` label (smooth versus intermittent) is not recomputed as of the cutoff; that is a
-documented limitation.
+launch or ramp-start week), which is why using it for an as-of calculation is valid.
+
+**That was untrue between roughly July 2026 and 2026-08-11, and the correction is worth
+knowing.** `src/profile.py` promoted an intermittent SKU by assigning `train_start` to the
+start of the trailing 13-week window, a date that advances every profiling run and sits in
+the future relative to every backtest cutoff. So for 190 SKUs, 41% of the smooth set, the
+field was neither stable nor a launch week, and those SKUs were silently absent from every
+recorded evaluation. `src/ml/dataset.py` still carries a CORRECTION block describing that
+state. Promotion now detects each SKU's real smooth-history onset, so the sentence above
+holds again. Design doc Section 4.32.
+
+The `bucket` label (smooth versus intermittent) is still not recomputed as of the cutoff.
+That is a documented limitation and a measured one: at the 2025-10-06 cutoff, 121 SKUs were
+classifiable as smooth from data available then against the 467 the harness scored, so the
+population is partly selected with hindsight. See `docs/HANDOVER.md` finding 6.
 
 ---
 

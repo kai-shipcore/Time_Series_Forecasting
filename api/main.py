@@ -80,6 +80,7 @@ class JobLogger:
 
 app = FastAPI(title="Coverland Forecast API")
 
+
 FORECAST_API_TOKEN = os.getenv("FORECAST_API_TOKEN")
 
 @app.middleware("http")
@@ -128,6 +129,7 @@ def _startup_jobs():
         print(f"Startup DB check failed: {exc}")
 
 _VALID_LEVELS = {40, 60, 70, 80, 90}
+
 
 @app.get("/forecast/{sku_id}")
 def get_forecast(
@@ -2995,7 +2997,11 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
     read from the same kind of source: forecasts that were served before the
     outcome was known, scored as their weeks complete. That page reads
     `shipcore.fc_forward_forecasts` across many `forecast_date`s; this reads
-    `ml_forecast_history.parquet`, which accumulates one entry per run.
+    `ml_forecast_history`, which accumulates one entry per `week_of`. The two
+    columns are named differently on purpose and mean different things: on the
+    legacy side `forecast_date` is the calendar date of the run, on the ML side
+    `week_of` is the training week. Both tables carry both concepts; only the
+    legacy one had them named apart before 2026-08-12.
 
     Not the backtest windows. Those are a different claim, already answered by
     the comparison grid: the model refit at a cutoff and predicted forward
@@ -3075,8 +3081,8 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
     forward_run_date = None
     fwd_skus: set = set()
     if not fc.empty:
-        latest = fc["forecast_date"].max()
-        fc = fc[fc["forecast_date"] == latest].copy()
+        latest = fc["week_of"].max()
+        fc = fc[fc["week_of"] == latest].copy()
         forward_run_date = latest.date().isoformat()
         fc["segment"] = seg_of(fc)
         fc = smooth_only(fc)
@@ -3099,7 +3105,7 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
 
     # Past predictions, per (week, lead), exactly as the old endpoint reports
     # them. Empty until the history store has runs whose weeks have closed.
-    predicted = pd.DataFrame(columns=["ds", "lead", "yhat", "n_skus", "forecast_date", "segment"])
+    predicted = pd.DataFrame(columns=["ds", "lead", "yhat", "n_skus", "week_of", "segment"])
     leads: list = []
     history_version = None
     if not scored.empty:
@@ -3113,7 +3119,7 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
             history_version = version
         else:
             history_version = (
-                scored.sort_values("forecast_date")["model_version"].iloc[-1]
+                scored.sort_values("week_of")["model_version"].iloc[-1]
             )
         scored = scored[scored["model_version"] == history_version].copy()
         scored["segment"] = seg_of(scored)
@@ -3129,7 +3135,7 @@ def planning_demand_vs_forecast(history_weeks: int = Query(default=26, ge=8, le=
             {
                 "yhat": ("yhat", "sum"),
                 "n_skus": ("unique_id", "nunique"),
-                "forecast_date": ("forecast_date", "max"),
+                "week_of": ("week_of", "max"),
             },
             extra_keys=["lead"],
         )

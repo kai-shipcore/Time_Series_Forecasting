@@ -4,8 +4,32 @@ from pathlib import Path
 
 from src.weeks import drop_incomplete_weeks, drop_leading_partial_week
 
-PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
-OUTPUT_PATH = PROCESSED_DIR / "sales_clean.parquet"
+# Follows config so a staged run (FORECAST_PROCESSED_DIR, BACKLOG item 15) writes
+# where the rest of the pipeline is reading. Still a module-level name read at
+# call time, because scripts/ml_36 and promoted_sku_accuracy.py reassign it to a
+# temp directory to keep an analysis from overwriting live data, and that has to
+# keep working.
+from config import DATA_PROCESSED as _DEFAULT_PROCESSED  # noqa: E402
+
+PROCESSED_DIR = _DEFAULT_PROCESSED
+
+# NOT a module constant. It used to be `OUTPUT_PATH = PROCESSED_DIR /
+# "sales_clean.parquet"`, computed once at import, so reassigning PROCESSED_DIR
+# left it pointing at wherever it had been at import time.
+#
+# That silently defeated the staged run in BACKLOG item 15: scripts/ml_prepare_data
+# redirected PROCESSED_DIR to a staging directory, the CSV followed because it is
+# built at call time, and the parquet went on being written straight into live
+# data/processed. A kill mid-run then left the live sales file replaced and the
+# profile file not, which is the exact corruption staging exists to prevent.
+# Caught by scripts/_test_staged_pipeline.sh on its first honest run.
+#
+# Same shape as the RatioLGBM.PARAMS regression in design doc Section 4.33: a
+# derived constant stops tracking the thing it was derived from, and nothing
+# says so. Resolve at call time and the redirect cannot be half-applied.
+def output_path() -> Path:
+    """Where the weekly sales file goes, resolved when it is written."""
+    return PROCESSED_DIR / "sales_clean.parquet"
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
@@ -113,9 +137,10 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     weekly = weekly.sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    weekly.to_parquet(OUTPUT_PATH, index=False)
+    out = output_path()
+    weekly.to_parquet(out, index=False)
     weekly.to_csv(PROCESSED_DIR / "sales_clean.csv", index=False)
-    print(f"Saved {len(weekly):,} rows to {OUTPUT_PATH}")
+    print(f"Saved {len(weekly):,} rows to {out}")
 
     return weekly
 

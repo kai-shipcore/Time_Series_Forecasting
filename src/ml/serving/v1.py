@@ -31,9 +31,9 @@ from src.ml.evaluate import per_sku_totals, score  # noqa: E402
 def v1_forward(grid: pd.DataFrame, refresh: bool = True) -> pd.DataFrame:
     """V1 forecast on the same (unique_id, ds) grid as the model forecast.
 
-    `grid` needs unique_id, ds, forecast_date (the model forward-forecast
+    `grid` needs unique_id, ds, week_of (the model forward-forecast
     table works directly). V1's daily rate is computed once per SKU, at
-    forecast_date - 1 day; each grid week gets that rate x 7 x that week's own
+    week_of - 1 day; each grid week gets that rate x 7 x that week's own
     seasonal modifier, since a 13-week horizon spans multiple months. SKUs
     absent from the velocity pull are dropped (no row), not zero-filled.
     """
@@ -41,8 +41,8 @@ def v1_forward(grid: pd.DataFrame, refresh: bool = True) -> pd.DataFrame:
     index = build_cumsum_index(raw)
     available = {uid for uid, _stream in index.keys()}
 
-    forecast_date = pd.Timestamp(grid["forecast_date"].iloc[0])
-    asof = forecast_date - pd.Timedelta(days=1)
+    week_of = pd.Timestamp(grid["week_of"].iloc[0])
+    asof = week_of - pd.Timedelta(days=1)
 
     rows = []
     for uid, uid_grid in grid.groupby("unique_id"):
@@ -54,11 +54,11 @@ def v1_forward(grid: pd.DataFrame, refresh: bool = True) -> pd.DataFrame:
             modifier = proportional_seasonal_modifier(ds - pd.Timedelta(days=6), ds)
             rows.append({
                 "unique_id": uid,
-                "forecast_date": forecast_date,
+                "week_of": week_of,
                 "ds": ds,
                 "v1_yhat": daily * 7 * modifier,
             })
-    return pd.DataFrame(rows, columns=["unique_id", "forecast_date", "ds", "v1_yhat"])
+    return pd.DataFrame(rows, columns=["unique_id", "week_of", "ds", "v1_yhat"])
 
 
 def validate_v1(n_windows: int = 3, weekly=None, profiles=None) -> pd.DataFrame:
