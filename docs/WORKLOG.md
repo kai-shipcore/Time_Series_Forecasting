@@ -3693,3 +3693,22 @@ the files and not knowing whether anyone had looked.
   Also worth recording: the user's local app was pointed at AI_SERVICE_URL=144.24.40.252:8000
   in both .env and .env.local, so the browser was talking to the deployed server while every
   check here ran against local code. The two were never testing the same thing.
+
+2026-08-13  Closed BACKLOG 6. Both screens deleted, the router unmounted, the weekly cron off
+  the statsforecast track, deployed to production and confirmed working in the browser. The
+  deployment took three attempts to land, and the reasons are worth recording because none of
+  them was the change itself. First the Action List still 500'd, because the browser was
+  pointed at the deployed API through AI_SERVICE_URL while every local check ran against local
+  code, so the two were never testing the same thing. Then Forecast Validation crashed on the
+  deployed app but not on localhost, because the Commerce fix had been committed and not
+  pushed. A production build was run locally to rule out a build failure and it succeeded,
+  which eliminated the hypothesis rather than confirming it.
+  Hardened the Commerce deploy while diagnosing that. appleboy/ssh-action does not stop on
+  error by default, so npm run build could fail and the next line would still restart pm2 on
+  the previous .next, with the workflow reporting success. Added script_stop and set -euo
+  pipefail, moved the build ahead of any restart so a failure leaves the working build
+  serving, and asserted .next/BUILD_ID exists afterwards with the build id and commit echoed.
+  That is BACKLOG 20's failure mode, which had been closed on the Python side and left open
+  on this one.
+  Remaining: 26 the final test, 27 the two document rewrites, 24 the personal copy, and 29
+  the optional cleanup.

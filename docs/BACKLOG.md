@@ -15,16 +15,14 @@ are three different things.
 
 | # | Item | Size |
 |---|---|---|
-| 6 | Retire the old Demand Forecast page, and SKU Planning's forecast tab with it | see the 2026-08-13 note in that section |
+| 26 | Run the final test, once | pre-registered, half a day |
+| 27 | Rewrite the three stale documents | a day |
+| 24 | Take the personal copy of this repository | last thing before handover, see below |
 | 29 | Codebase cleanup: dead scripts and stale files | explicitly last, only if there is time |
 
 Item 28 closed on 2026-08-13: the cron now calls `scripts/ml_prepare_data.py`, which never
 touched the statsforecast track, so no live path reaches it.
-| 26 | Run the final test, once | pre-registered, half a day |
-| 27 | Rewrite the three stale documents | a day |
-| 24 | Take the personal copy of this repository | last thing before handover, see below |
-
-Item 25 closed on 2026-08-13: the statsforecast endpoints are in `api/legacy.py` and its
+Item 25 closed on 2026-08-13: the statsforecast endpoints are in `api/legacy/` and its
 models in `src/legacy/`, with `scripts/check_route_parity.py` to prove the API still
 serves what it did. That was a move, so nothing was retired by it.
 
@@ -375,7 +373,19 @@ fixed in the same pass so the two files are consistent with each other.
 
 ## 6. Retiring the old Demand Forecast page
 
-**Status: decided 2026-08-13, scope widened, and the timing constraint below was
+**Status: DONE 2026-08-13. Deployed and verified in the browser.** Both screens are gone,
+the router is unmounted, the weekly cron no longer touches the statsforecast track, and
+Action List and Forecast Validation were confirmed working against the deployed API.
+
+Two bugs surfaced during the verification, neither caused by this work and both fixed:
+`forecast_snapshot_date()` reading a column renamed on 2026-08-12, which had both live
+pages returning 500 for a day, and the same rename unpropagated to three places in the
+Next.js validation components. See the WORKLOG entries for 2026-08-13 and
+`docs/VERIFICATION_2026-08-13.md`.
+
+The original entry, and the deliberate decisions taken on the way, follow.
+
+**Decided 2026-08-13, scope widened, and the timing constraint below was
 overruled deliberately.**
 
 **What changed.** SKU Planning's Demand Forecast tab is now in scope and is to be deleted
