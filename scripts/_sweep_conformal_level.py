@@ -12,10 +12,10 @@ from statsforecast import StatsForecast
 from statsforecast.utils import ConformalIntervals
 
 from config import FREQUENCY, TEST_WEEKS, TRIM_TRAILING_WEEKS
-from src.models import get_models
-from src.baselines import get_baselines
+from src.legacy.models import get_models
+from src.legacy.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
-from src.backtest import _trim_to_train_start
+from src.legacy.backtest import _trim_to_train_start
 
 PROC = ROOT / "data/processed"
 REP  = ROOT / "outputs/reports"

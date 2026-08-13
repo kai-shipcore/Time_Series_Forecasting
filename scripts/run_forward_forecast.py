@@ -24,10 +24,10 @@ from config import FREQUENCY, TEST_WEEKS, TRIM_TRAILING_WEEKS, USE_SEASONAL_ADJU
 from src.ingest import ingest
 from src.clean import clean
 from src.profile import profile
-from src.backtest import backtest, _trim_to_train_start
-from src.selector import select
-from src.models import get_models
-from src.baselines import get_baselines
+from src.legacy.backtest import backtest, _trim_to_train_start
+from src.legacy.selector import select
+from src.legacy.models import get_models
+from src.legacy.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
 from src.db import write_forward_forecasts, write_forecast_history
 from src.v1 import load_raw_for_v1, build_index, compute_v1_per_week

@@ -10,8 +10,8 @@ that decides adoption.
 
 Nothing here reimplements the prototype. It reuses the production pipeline:
 
-    src.backtest.backtest              phase 1, CV on training data
-    src.selector.select                phase 2, model choice per SKU
+    src.legacy.backtest.backtest              phase 1, CV on training data
+    src.legacy.selector.select                phase 2, model choice per SKU
     run_test_evaluation.refit_and_predict   phases 3+4, refit and forecast
 
 The only new logic is (a) restricting the frame per evaluation window and
@@ -41,8 +41,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import pandas as pd
 
-import src.backtest as bt
-import src.selector as sel
+import src.legacy.backtest as bt
+import src.legacy.selector as sel
 from run_test_evaluation import refit_and_predict
 from src.ml.dataset import (
     asof_history_length, dev_splits, eligible_skus, load_weekly,

@@ -16,10 +16,13 @@ are three different things.
 | # | Item | Size |
 |---|---|---|
 | 6 | Retire the old Demand Forecast page | waits on `ml_forecast_history` accumulating runs |
-| 25 | Extract the legacy statsforecast endpoints from `api/main.py` | a day, and it has failed once |
 | 26 | Run the final test, once | pre-registered, half a day |
 | 27 | Rewrite the three stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
+
+Item 25 closed on 2026-08-13: the statsforecast endpoints are in `api/legacy.py` and its
+models in `src/legacy/`, with `scripts/check_route_parity.py` to prove the API still
+serves what it did. That was a move, so nothing was retired by it.
 
 Item order in that table is not priority: 24 is last on purpose, and 26 should not wait,
 because a pre-registered test that sits unrun invites the pre-registration being revised to
@@ -1523,7 +1526,9 @@ account of the work than the changes that landed.
 
 ## 25. Extract the legacy statsforecast endpoints from `api/main.py`
 
-**Status: open. Attempted once on 2026-08-12 and reverted cleanly.**
+**Status: DONE 2026-08-13, on the second attempt.** What landed, and how it was
+verified, is at the end of this section. The original entry follows first, because the
+reason the first attempt failed is the reason the second one is trustworthy.
 
 `api/main.py` holds both tracks: the LightGBM serving endpoints and the older statsforecast
 ones that the current Demand Forecast page uses. The legacy half is roughly 1,700 lines and
@@ -1549,6 +1554,56 @@ than comparing `app.routes` lengths.
 
 **Ordering.** This is a move, not a deletion, so it can happen before BACKLOG 24. Deleting
 the code cannot.
+
+### What landed, 2026-08-13
+
+`api/main.py` went from 3,184 lines to 1,346. The sixteen statsforecast endpoints are in
+`api/legacy.py`; `src/models.py`, `selector.py`, `backtest.py` and `baselines.py` are in
+`src/legacy/`, moved with `git mv` so the history follows them. `JobLogger` is the only
+helper both tracks needed, so it went to `api/common.py` rather than being duplicated or
+imported across the two, which would have made them circular.
+
+`_parse_product_types`, `_data_version`, `_cached_response` and `_VALID_LEVELS` moved
+into `api/legacy.py` rather than into the shared module. They looked shared and were not:
+`_data_version` reads `fc_forward_forecasts`, and nothing on the ML side calls any of
+them. Putting them in the legacy module means retiring that track removes them too.
+
+**Both failure modes from the first attempt were addressed rather than avoided.**
+
+1. The imports were not guessed. `symtable` scope analysis on the extracted block listed
+   every name it referenced but did not define. All 52 resolved to the original
+   header, so the new import block was derived from the code rather than eyeballed.
+2. The verification exists now, as `scripts/check_route_parity.py`, and it took three
+   attempts to make it capable of failing. That history is worth keeping:
+   - Walking `app.routes` missed all sixteen legacy routes. FastAPI 0.141.1 stores an
+     included router as a `_IncludedRouter` with no `.path` and no `.routes`; its
+     contents are reachable only via `.original_router`. The walker now raises on a route
+     object it does not understand rather than skipping it.
+   - Sending real requests and treating 404 as "not routed" passed while testing nothing.
+     The token middleware answers 401 before routing, so a nonexistent path never
+     returned 404.
+   - Adding the token then produced false failures on `/planning/sku/{sku_id}`, whose
+     handler legitimately raises 404 for an unknown SKU. A status code cannot distinguish
+     "no route" from "route says not found".
+
+   It now calls `BaseRoute.matches()`, which is the app's own resolution logic, with no
+   middleware, handler or database in the way. A negative control runs on every
+   invocation: if a deliberately nonexistent path matches, the script reports that it is
+   blind instead of passing.
+
+**Result:** 34 routes, equal to the previous 35 minus `/chat`, no shadowing, and the
+probe confirms each one resolves. Verified with no database and no network.
+
+**`/chat` was deleted, not moved.** BACKLOG 6 already recorded that the assistant's tool
+calls had been failing silently for the whole life of the deployment, because
+`src/chat.py` addressed port 8001 where nothing listened. It is the one piece of this
+track that was genuinely unused, so it went, along with `src/chat.py` (477 lines). The
+Next.js side of it is a separate change in the Commerce repository.
+
+**What this does not do.** It does not retire anything. The legacy track still serves SKU
+Planning and still performs the weekly ingest that the LightGBM run depends on;
+`src/legacy/__init__.py` is now the authority on that and states what must be true before
+deletion is possible. The extraction makes BACKLOG 6 a smaller job, which was its purpose.
 
 ---
 

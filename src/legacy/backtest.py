@@ -14,8 +14,8 @@ from pathlib import Path
 from statsforecast import StatsForecast
 
 from config import FORECAST_HORIZON, FREQUENCY, N_CV_SPLITS, OUTPUTS_REPORTS, TRIM_TRAILING_WEEKS, TEST_WEEKS, USE_SEASONAL_ADJUSTMENT
-from src.models import get_models
-from src.baselines import get_baselines
+from src.legacy.models import get_models
+from src.legacy.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
 
 HORIZON_WEEKS = round(FORECAST_HORIZON / 7)  # 13 weeks — production forecast horizon

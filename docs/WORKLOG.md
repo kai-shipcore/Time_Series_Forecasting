@@ -3492,3 +3492,43 @@ the files and not knowing whether anyone had looked.
   The remaining open items are 6, 24, 25, 26 and 27, plus one verification queued for the next
   deploy. Item 20 stays closed with its cause unknown, which is recorded as a conclusion rather
   than an omission.
+
+2026-08-13  Separated the statsforecast track from the LightGBM one, closing BACKLOG 25 on
+  the second attempt. api/main.py went from 3,184 lines to 1,346: the sixteen statsforecast
+  endpoints are now api/legacy.py, and src/models.py, selector.py, backtest.py and
+  baselines.py are now src/legacy/, moved with git mv so history follows them. JobLogger was
+  the only helper both tracks used, so it went to api/common.py; importing it from one into
+  the other would have made the two modules circular.
+  Four helpers that looked shared were not. _parse_product_types, _data_version,
+  _cached_response and _VALID_LEVELS have no ML-side caller, and _data_version reads the
+  legacy fc_forward_forecasts table, so all four went into api/legacy.py. Retiring that
+  track now removes them with it instead of leaving them behind in a common module.
+  Derived the new import block instead of eyeballing it, since truncated multi-line imports
+  were half of why the 2026-08-12 attempt was reverted. symtable scope analysis on the
+  extracted block listed the 52 names it references but does not define, all of which
+  resolved to the original header.
+  The verification took three tries to become capable of failing, which is the part worth
+  recording. Walking app.routes missed all sixteen legacy routes, because FastAPI 0.141.1
+  stores an included router as a _IncludedRouter with no .path and no .routes, reachable
+  only through .original_router; that is the same opacity BACKLOG 22 and 25 both describe,
+  now confirmed against the pinned version. Switching to real requests and treating 404 as
+  "not routed" then passed while testing nothing, because the token middleware answers 401
+  before routing and a nonexistent path never reached a 404. Adding the token produced false
+  failures on /planning/sku/{sku_id}, whose handler raises 404 for an unknown SKU: a status
+  code cannot tell "no route" from "route says not found". scripts/check_route_parity.py now
+  calls BaseRoute.matches(), the app's own resolution logic, with no middleware, handler or
+  database involved, and runs a negative control on every invocation so that a probe which
+  has gone blind reports that rather than passing. Result: 34 routes, the previous 35 minus
+  /chat, no shadowing, every route confirmed to resolve, with no database and no network.
+  Deleted /chat and src/chat.py rather than moving them. BACKLOG 6 had already recorded that
+  its tool calls failed silently for the whole life of the deployment because src/chat.py
+  addressed port 8001 where nothing listened. It is the only part of this track that was
+  genuinely unused. The Next.js half is a separate change in the Commerce repository.
+  Wrote src/legacy/__init__.py as the authority on why the track is frozen rather than dead,
+  because "unused" would be false and the failure mode is expensive: the weekly cron runs the
+  legacy pipeline first for its ingest, and the LightGBM run reads the sales file it writes.
+  Deleting the legacy track without giving the ML pipeline its own ingest would stop the
+  LightGBM forecast getting fresh data silently, since it would still be served and would
+  simply stop moving. The same point is now in CODEBASE_GUIDE section 1.1 and at the call
+  site in run_forecast_cron.sh. Also corrected a comment in api/main.py claiming the Streamlit
+  dashboard renders src.planning directly; it was retired on 2026-08-12.

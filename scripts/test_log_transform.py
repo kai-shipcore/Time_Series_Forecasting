@@ -20,8 +20,8 @@ import pandas as pd
 from statsforecast import StatsForecast
 
 from config import FREQUENCY, N_CV_SPLITS, OUTPUTS_REPORTS, TRIM_TRAILING_WEEKS, TEST_WEEKS
-from src.models import get_models
-from src.baselines import get_baselines
+from src.legacy.models import get_models
+from src.legacy.baselines import get_baselines
 
 PROCESSED = ROOT / "data" / "processed"
 CV_METRICS = OUTPUTS_REPORTS / "cv_metrics.csv"

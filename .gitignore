@@ -39,6 +39,10 @@ outputs/reports/*
 !outputs/reports/ml_accuracy.csv
 !outputs/reports/ml_accuracy_by_sku.csv
 !outputs/reports/ml_backtest_weekly.csv
+# The route expectation is tracked on purpose: check_route_parity.py compares
+# against it, so an endpoint added or removed shows up as a diff in review rather
+# than as a check that quietly re-records whatever it just found.
+!outputs/reports/route_parity.json
 
 __pycache__/
 *.py[cod]

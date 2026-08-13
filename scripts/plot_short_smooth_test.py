@@ -20,8 +20,8 @@ import matplotlib.backends.backend_pdf as pdf_backend
 from statsforecast import StatsForecast
 
 from config import FREQUENCY, TEST_WEEKS, TRIM_TRAILING_WEEKS, OUTPUTS_REPORTS
-from src.models import get_models
-from src.backtest import _trim_to_train_start
+from src.legacy.models import get_models
+from src.legacy.backtest import _trim_to_train_start
 from compare_v1 import build_cumsum_index, v1_forecast
 
 PROCESSED_DIR = ROOT / "data/processed"

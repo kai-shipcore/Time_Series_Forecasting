@@ -56,6 +56,31 @@ Supporting scripts outside `src/ml/` that the track depends on:
 | `config.py` | Central configuration (paths, `TEST_WEEKS`, `TRIM_TRAILING_WEEKS`, segmentation thresholds, seasonal settings). The harness reads split-related settings from here. |
 | `src/deseasonalize.py` | Provides the production seasonal factors. The restart baseline (Design Section 4.10) will use these to deseasonalize the target. |
 
+### 1.1 The two tracks, and where each one lives
+
+The repository holds two forecasters. The LightGBM track above is the one the project
+recommends. The statsforecast track that preceded it is still in the tree, still running,
+and separated out as of 2026-08-13 so the boundary is visible rather than inferred.
+
+| File | Role |
+|---|---|
+| `api/main.py` | The LightGBM serving endpoints (`/planning/*`), plus `/health` and the shared job endpoints. |
+| `api/legacy.py` | The sixteen statsforecast endpoints. Frozen. Its docstring lists which consumer calls each one. |
+| `api/common.py` | The one helper both need (`JobLogger`). Deliberately tiny. |
+| `src/legacy/` | The statsforecast model menu, backtest, selector and baselines. Its `__init__.py` is the authority on why the track still exists. |
+| `scripts/check_route_parity.py` | Asserts the API serves the routes it is meant to. Run after any change to the API modules. |
+
+**The statsforecast track is frozen, not unused, and the difference matters.** Three
+things still depend on it: SKU Planning serves its per-SKU chart from
+`api/legacy.py`; the `shipcore.fc_*` tables are read by that page; and, least
+obviously, the weekly cron runs the legacy pipeline **first because it performs the
+ingest**. `scripts/run_forward_forecast.py` writes `sales_clean.parquet`, and the
+LightGBM run has no ingest of its own; it reads the file the legacy run just refreshed.
+Deleting the legacy track without first giving the ML pipeline its own ingest stops the
+LightGBM forecast receiving fresh data, and does so silently: the forecast is still
+served, it just stops moving. `src/legacy/__init__.py` states the conditions for
+deletion.
+
 ---
 
 ## 2. End-to-End Pipeline Flow
@@ -156,7 +181,7 @@ This removes the pre-launch weeks of SKUs that started partway through the data 
 each row it looks up that SKU's `train_start` and keeps the row only if its week is on or
 after that date. A SKU with no recorded `train_start` is kept in full (the `isna` check).
 Pre-launch weeks are zeros that are not real demand history, and any average or lag
-computed over them would be wrong. Both cleaning rules match `src/backtest.py` exactly, so
+computed over them would be wrong. Both cleaning rules match `src/legacy/backtest.py` exactly, so
 the LightGBM track and the statistical prototype always train on identical data.
 
 ### 3.2 The `Split` object

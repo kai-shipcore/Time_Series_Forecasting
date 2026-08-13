@@ -270,7 +270,7 @@ deliberate change that requires re-baselining recorded results, in the same way 
 advancing the window anchor. See the Decision Log, Section 4.21.
 
 Two preparation rules are applied on load, identical to the statistical prototype's
-backtest (`src/backtest.py`), so that both model families always see the same data:
+backtest (`src/legacy/backtest.py`), so that both model families always see the same data:
 
 1. **Ramp-up trimming.** For SKUs that launched partway through the data window, weeks
    before the SKU's `train_start` date are dropped. Pre-launch zeros are not demand

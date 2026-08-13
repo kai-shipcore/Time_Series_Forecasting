@@ -30,11 +30,11 @@ from config import (
     ROUTE_SHORT_SMOOTH_TO_V1,
     OUTPUTS_REPORTS,
 )
-from src.models import get_models
-from src.baselines import get_baselines
+from src.legacy.models import get_models
+from src.legacy.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
-from src.backtest import backtest, _trim_to_train_start
-from src.selector import select
+from src.legacy.backtest import backtest, _trim_to_train_start
+from src.legacy.selector import select
 
 PROCESSED_DIR = ROOT / "data" / "processed"
 
