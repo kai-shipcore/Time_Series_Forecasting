@@ -15,7 +15,9 @@ are three different things.
 
 | # | Item | Size |
 |---|---|---|
-| 6 | Retire the old Demand Forecast page | waits on `ml_forecast_history` accumulating runs |
+| 6 | Retire the old Demand Forecast page, and SKU Planning's forecast tab with it | see the 2026-08-13 note in that section |
+| 28 | Separate the ingest from the statsforecast run | required by 6, half a day |
+| 29 | Codebase cleanup: dead scripts and stale files | explicitly last, only if there is time |
 | 26 | Run the final test, once | pre-registered, half a day |
 | 27 | Rewrite the three stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
@@ -370,6 +372,30 @@ fixed in the same pass so the two files are consistent with each other.
 ---
 
 ## 6. Retiring the old Demand Forecast page
+
+**Status: decided 2026-08-13, scope widened, and the timing constraint below was
+overruled deliberately.**
+
+**What changed.** SKU Planning's Demand Forecast tab is now in scope and is to be deleted
+outright, not migrated. The original entry below kept it out of scope pending a wider
+website refactor. That reservation is withdrawn: the intent is that the statsforecast work
+is retained as a record of the process and is not reachable from any live code path, and
+leaving one page on it defeats that.
+
+**Consequence.** With both screens gone, all sixteen endpoints in `api/legacy/routes.py`
+lose their consumers and the router stops being mounted in `api/main.py`. The
+`shipcore.fc_*` tables stop being read. What remains entangled is the ingest, which is why
+BACKLOG 28 exists and has to land with this.
+
+**The timing constraint below is real and is being accepted, not solved.**
+`accuracy-trend.tsx` plots error per run from the legacy `fc_forecast_history`, which holds
+genuinely accumulated history. Its replacement reads `ml_forecast_history`, which held two
+stored runs as of 2026-08-12. Retiring now therefore trades a populated accuracy chart for
+a nearly empty one that fills at one run per week. Whoever does this should say so to the
+people who use that chart rather than let them discover it. It is a presentation loss, not
+a data loss: the underlying history keeps accumulating either way.
+
+### Original entry
 
 **Status:** decided, mostly unblocked.
 
@@ -1647,3 +1673,86 @@ and 2026-08-12 work changed. It needs a pass for the promotion threshold and the
 as concepts, not a figure sweep.
 
 The design doc and `CODEBASE_GUIDE.md` are current, having been updated alongside the work.
+
+---
+
+## 28. Separate the ingest from the statsforecast run
+
+**Status: open, and it became necessary rather than optional on 2026-08-13**, when the
+decision was taken to delete SKU Planning's forecast tab as well as the Demand Forecast
+page. Until then the statsforecast track had live consumers and the entanglement below was
+merely untidy.
+
+**The problem.** `scripts/run_forward_forecast.py` does two unrelated jobs in one script:
+
+```
+Step 0a  sync velocity snapshot          }
+Step 0   ingest from DB, clean           }  shared: the ML track needs these
+Step 1b  profile, write sku_profiles.csv }
+------------------------------------------------------------------
+Step 2   backtest (cross-validation)     }
+Step 3   select model per SKU            }  statsforecast only: no consumer
+Step 4   refit, forecast forward         }  once both pages are deleted
+Step 5   write shipcore.fc_* tables      }
+```
+
+The first three steps write `sales_clean.parquet` and `sku_profiles.csv`, which are the
+LightGBM run's only inputs. `scripts/ml_forward_forecast.py` has no ingest of its own and
+reads the files this script produces. That is why `run_forecast_cron.sh` runs the
+statsforecast pipeline first, and why deleting it silently freezes the ML forecast rather
+than breaking it.
+
+**The change.** Extract steps 0a to 1b into `scripts/run_ingest.py`. The cron then reads:
+
+```
+scripts/run_ingest.py            # shared, owns sales_clean.parquet and sku_profiles.csv
+scripts/ml_forward_forecast.py --snapshot live
+```
+
+`run_forward_forecast.py` keeps only the statsforecast half and moves to the archive with
+the rest of that track, at which point no in-use code path touches `src/legacy/`.
+
+**Why it is worth doing rather than leaving.** The stated goal is that the statsforecast
+work is retained as a record and is not part of any live path. That is not true while the
+weekly production run depends on a script belonging to it. It also removes the trap: today
+someone who deletes the legacy track gets a forecast that keeps serving and stops moving,
+with nothing erroring.
+
+**Verification.** The extraction is behaviour-preserving if `sales_clean.parquet` and
+`sku_profiles.csv` are byte-identical before and after for the same input week. Compare
+checksums across the split rather than assuming, since the profiling has already been the
+source of one silent population change (Section 4.32 of the design doc).
+
+---
+
+## 29. Codebase cleanup: dead scripts and stale files
+
+**Status: open, lowest priority, explicitly last.** Do this only if there is time after
+everything else. Nothing depends on it and it carries a real risk of deleting something
+whose only caller is a document.
+
+`scripts/` holds roughly 96 entries, most of them one-off experiments from the model
+development arc: `_debug_*`, `_sweep_*`, `experiment_*`, `plot_*`, and the numbered
+`ml_NN_*` series. Fourteen dead files were already removed on 2026-08-12, so this is the
+long tail rather than an untouched mess.
+
+**What makes this less trivial than it looks.** The numbered `ml_NN_*` scripts are cited by
+number throughout `ML_FORECAST_DESIGN.md` as the evidence for individual decisions, and the
+rebaseline logs under `docs/rebaseline_2026-08-03-v2/` are named after them. A script that
+looks abandoned may be the only reproducible route to a figure the design document asserts.
+Deleting it does not break code; it breaks the audit trail, which is worse and quieter.
+
+**Suggested approach, if it happens at all.**
+
+1. Anything referenced by name in `docs/` stays, however scruffy.
+2. Anything importable from `src/` stays.
+3. For the remainder, check `git log` for the last touch and whether its output is committed
+   under `outputs/reports/` or `docs/rebaseline_*`. Keep the ones whose output is cited.
+4. Move rather than delete, into `scripts/archive/`, so the recovery is a `git mv` and not a
+   revert.
+
+Other candidates noted while working: `scratch_introspect_fc_products.js` and
+`scratch_list_objects.js` in the Commerce repository root, `Archive.zip` in the same place,
+and `docs/CUTOVER_TASK.md`, `DEPLOY_TASK.md`, `INVENTORY_EXPORT_TASK.md` and
+`V1_AND_DASHBOARD_WIRING_TASK.md`, which are completed task briefs rather than reference
+documents and could move to `docs/tasks_completed/`.
