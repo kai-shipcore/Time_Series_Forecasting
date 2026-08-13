@@ -9,9 +9,12 @@ and why. This document records where the code lives and how it runs. When a desi
 is referenced here, it is cited by its number (for example, Design Section 4.10).
 
 **Status:** the harness files (`dataset.py`, `evaluate.py`) are stable and documented in
-full below. The model files (`model.py`, `features.py`) are being restructured for the
-restart baseline (Design Section 4.10) and will be documented in full once that work
-lands. Their current role is summarized in the file inventory.
+full below. `model.py` is documented by its file-inventory entry and by the design
+document rather than here.
+
+Two earlier sentences here described `src/ml/features.py` as being restructured alongside
+`model.py`. There is no such file: the restart folded the feature building into
+`model.py:build_matrix`, and the separate module was never created. Corrected 2026-08-13.
 
 ---
 
@@ -496,11 +499,11 @@ WAPE. This is the side-by-side view printed at the end of an experiment.
 
 ## 5. Model Files and Experiment Scripts
 
-`src/ml/model.py` and `src/ml/features.py` are being restructured for the restart baseline
-(Design Section 4.10), which changes the target definition and removes the seasonal
-features. They will be documented here in full once that work is complete, to avoid
-describing code that is about to change. Until then, the design document (Sections 4.5
-through 4.10) describes their intended behavior.
+`src/ml/model.py` holds the model code. The restart (Design Section 4.10) changed the
+target definition and moved the seasonal handling out of the features and into a structural
+round-trip, and feature building lives in `build_matrix` in that same file rather than in a
+separate module. The design document, Sections 4.5 through 4.10 and 4.27, describes the
+behaviour; this section covers the shape of the experiment scripts around it.
 
 The experiment scripts (`scripts/ml_00`, `ml_01`, `ml_02`) each follow the same shape: load
 the data, build the development splits, run one or more models, and print the per-segment

@@ -73,7 +73,7 @@ fi
 "${SSH[@]}" "mkdir -p '${FORECAST_DEPLOY_PATH}'/{data/processed,outputs/reports,data/inventory}"
 
 # --relative preserves each file's path under the destination root, so
-# data/processed/x.parquet lands at <path>/data/processed/x.parquet.
+# a file at data/processed/<name> lands at <path>/data/processed/<name>.
 # No --delete: this script is not the authority on what else lives there.
 rsync -az --relative --checksum \
   -e "ssh ${SSH_OPTS[*]}" \

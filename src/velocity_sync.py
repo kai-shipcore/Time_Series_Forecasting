@@ -1,6 +1,7 @@
 """Ask the app to refresh its velocity snapshot before a forecast run.
 
-Extracted from scripts/run_forward_forecast.py so both pipelines can call it.
+Extracted from what is now scripts/legacy/run_forward_forecast.py so both
+pipelines could call it. Only the ML pipeline calls it now.
 It lived there because that script was the only thing that ran weekly; the
 on-demand ML pipeline needs the same call, and importing it from the legacy
 runner would have pulled statsforecast, the model menu and the conformal

@@ -3,7 +3,7 @@
 WHY THIS EXISTS
 ---------------
 The statsforecast endpoints were extracted from `api/main.py` into
-`api/legacy.py` on 2026-08-13. An earlier attempt at the same extraction, on
+`api/legacy/` on 2026-08-13. An earlier attempt at the same extraction, on
 2026-08-12, was reverted because it could not be verified: FastAPI registers an
 included router as a single opaque object rather than copying its routes into
 `app.routes`, so the obvious check --

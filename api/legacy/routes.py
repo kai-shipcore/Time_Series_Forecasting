@@ -39,7 +39,7 @@ polls them. Moving them here would have broken the ML track's job polling.
 
 The `/chat` endpoint was deleted rather than moved. It addressed port 8001,
 where nothing has ever listened, so its tool calls failed silently for the whole
-life of the deployment. Nobody used it. `src/chat.py` went with it.
+life of the deployment. Nobody used it. `src/chat.py` was deleted with it.
 
 HOW IT WOULD BE MOUNTED AGAIN
 ----------------------------
@@ -692,7 +692,7 @@ def _run_segment_simulation(
         return _empty()
 
     bucket     = "smooth"
-    # short included since Jul 2026 — keep in sync with run_forward_forecast.py
+    # short included since Jul 2026 — kept in sync with scripts/legacy/run_forward_forecast.py
     use_deseas = USE_SEASONAL_ADJUSTMENT
     model_min  = 20
 

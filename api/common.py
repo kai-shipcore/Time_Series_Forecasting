@@ -1,15 +1,15 @@
 """Helpers shared by both API tracks.
 
 This module exists for one reason: `api/main.py` (the LightGBM serving
-endpoints) and `api/legacy.py` (the frozen statsforecast endpoints) both need
+endpoints) and `api/legacy/` (the retired statsforecast endpoints) both need
 `JobLogger`, and importing it from one into the other would make the two modules
 circular. Anything genuinely common to both tracks belongs here; anything used
 by only one belongs in that one.
 
 Keep this module small. It is not a dumping ground for utilities: a helper that
-only the legacy track uses should live in `api/legacy.py`, so that retiring that
+only the legacy track uses should live in `api/legacy/`, so that retiring that
 track removes it. `_parse_product_types`, `_cached_response` and `_data_version`
-were moved into `api/legacy.py` for exactly that reason, having turned out to
+were moved into `api/legacy/` for exactly that reason, having turned out to
 have no ML-side callers.
 """
 

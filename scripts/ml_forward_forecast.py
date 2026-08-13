@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Train the current-best ML model on all available history and write a per-SKU
 forward forecast for the dashboard. The LightGBM-track counterpart to
-scripts/run_forward_forecast.py.
+scripts/legacy/run_forward_forecast.py.
 
 Examples:
   .venv/bin/python scripts/ml_forward_forecast.py

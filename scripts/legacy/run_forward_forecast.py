@@ -5,9 +5,12 @@ Forward forecast job.
 Full pipeline on every run:
   ingest → clean → profile → backtest (CV) → select → refit on ALL data → predict forward → write to DB
 
-Run whenever new data arrives (weekly cron or manually):
-  python3 scripts/run_forward_forecast.py           # pulls fresh data from DB
-  python3 scripts/run_forward_forecast.py --skip-ingest  # reuse existing sales_clean.parquet
+RETIRED 2026-08-13. Nothing calls this. It is kept as a record of the
+statsforecast pipeline; see scripts/legacy/README.md before running it, because
+without --skip-ingest it rewrites sku_profiles.csv and moves segmentation
+underneath a LightGBM forecast that did not change.
+
+  .venv/bin/python scripts/legacy/run_forward_forecast.py --skip-ingest
 """
 import sys, time, copy, argparse
 from datetime import date, datetime, timezone
@@ -31,7 +34,7 @@ from src.legacy.baselines import get_baselines
 from src.deseasonalize import deseasonalize, reseasonalize
 from src.db import write_forward_forecasts, write_forecast_history
 from src.v1 import load_raw_for_v1, build_index, compute_v1_per_week
-# Moved to src/velocity_sync so scripts/ml_run_pipeline.py can call the same
+# Moved to src/velocity_sync so the ML pipeline can call the same
 # implementation without importing this module and everything it loads.
 from src.velocity_sync import sync_velocity_snapshot
 

@@ -4,7 +4,7 @@
 # - SAME inputs as the statistical pipeline (sales_clean.parquet +
 #   sku_profiles.csv). We never re-ingest or re-aggregate — if the two model
 #   families ever disagree, it must be the model, not the data.
-# - SAME split conventions as src/backtest.py:
+# - SAME split conventions as src/legacy/backtest.py:
 #     * drop TRIM_TRAILING_WEEKS from the tail (noisy pending orders)
 #     * hold out the last TEST_WEEKS complete weeks as the test window
 #     * trim ramp-up SKUs to their train_start (pre-launch zeros are not
