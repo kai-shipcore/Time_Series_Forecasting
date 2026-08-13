@@ -1798,11 +1798,21 @@ Both intervals exclude zero by a wide margin. On TOTAL, 0.1784 against 0.3059: v
 is 42% smaller than the spreadsheet's. The direction check in 4.34 predicted v11 would win
 both segments comfortably, and it did.
 
-**Calibration is the larger practical difference.** V1 under-forecasts by 28% overall on
-this window and by 34.9% on short SKUs. v11's total bias is 0.0%. For an ordering system
-that is a bigger deal than the WAPE gap: a method that is systematically 28% low does not
-produce forecast error so much as a standing stockout risk that someone has to correct by
-hand.
+**Calibration, with the caveat that matters.** On this window V1 under-forecasts by 28%
+overall and 34.9% on short SKUs, against v11's 0.0%. That is a large operational difference
+here: a forecast a quarter low across a quarter is a stockout risk somebody absorbs by hand.
+
+It is not evidence that V1 is systematically low, and this document has been wrong about
+that before. Section 1.1 records the correction: V1's bias flips sign across windows, from
+−31.6% in Mar-May to +12.9% in Dec-Feb. So the right claim is that V1 has large,
+season-dependent calibration error and was badly low in this particular quarter, while v11
+was near-neutral. Whether v11's calibration advantage holds across seasons is not
+established by one window.
+
+**The bias difference was not significance-tested.** The bootstrap in this section covers
+pooled WAPE only, which is what the criteria in 4.34 were written against. The 0.0% against
+−28.0% gap is large enough that noise is an implausible explanation on 303 SKUs, but that is
+an argument rather than a measurement, and it is labelled as one here.
 
 **Secondary, reported not decisive: v11 against the structural baseline is a tie.**
 

@@ -180,8 +180,10 @@ weeks 2026-05-11 to 2026-07-13, 303 SKUs):
 | TOTAL | 0.1784 | 0.3059 |
 
 v11's error is 42% smaller than the spreadsheet's overall, and both segment differences are
-statistically significant. Calibration matters more day to day: V1 under-forecasts by 28%
-overall, v11 by 0.0%.
+statistically significant. On calibration, V1 came in 28% low over this window against v11's
+0.0%, which for ordering is the difference between absorbing a shortfall by hand and not.
+Note that V1's bias is season-dependent rather than always low: it ran 12.9% high in the
+post-holiday window.
 
 **The honest caveat.** On the same window v11 only ties a plain twelve-week moving average
 with a seasonal adjustment (+0.0048 and +0.0042, both inside the noise). The model is
