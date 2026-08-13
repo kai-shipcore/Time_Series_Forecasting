@@ -328,9 +328,24 @@ def sku_backtest_weekly(unique_id: str, version: str | None = None) -> pd.DataFr
 
 
 def forecast_snapshot_date() -> pd.Timestamp | None:
-    """Training date of the forecast horizon currently loaded."""
+    """Training date of the forecast horizon currently loaded.
+
+    Reads `week_of`, not `forecast_date`. This was missed when the column was
+    renamed on 2026-08-12 and it broke every caller: `_read_forecasts` normalises
+    the name, renaming `forecast_date` to `week_of` on older parquets and doing
+    nothing for the table, so the frame this receives never carries the old name
+    under any code path. `fc["forecast_date"]` therefore raised KeyError every
+    time rather than intermittently.
+
+    The three callers are `/planning/action-list`, `/planning/sku/{sku_id}` and
+    `/planning/validation`, which is to say the Action List page and the Forecast
+    Validation page in full. Both returned 500 from 2026-08-12 until this was
+    found on 2026-08-13. Nothing caught it because the rename was verified
+    against the writer and the loader, and this is a reader two calls away from
+    either.
+    """
     fc = load_forecasts()
-    return None if fc.empty else fc["forecast_date"].max()
+    return None if fc.empty else fc["week_of"].max()
 
 
 # ---------------------------------------------------------------------------

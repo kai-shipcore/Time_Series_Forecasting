@@ -57,6 +57,17 @@ Expect eight `ok` lines and `All checks passed`. What each one rules out:
 | weekly cron is valid | a syntax error, or a `$VAR` that `set -u` would abort on |
 | no imports of moved modules | anything still importing `src.models` and friends |
 
+```bash
+.venv/bin/python scripts/smoke_planning_api.py
+```
+
+Expect all eight endpoints at 200, the four retired ones at 404, and
+`All planning endpoints healthy`. This is the check that actually answers "do the
+Action List and Forecast Validation pages work": it calls every endpoint they
+depend on, in-process, with no server to start and no token to supply.
+
+**It found a real bug the static checks could not.** See "What this found" below.
+
 Then the Commerce side:
 
 ```bash
@@ -72,6 +83,36 @@ the sandbox's `node_modules` holds another platform's native bindings. `tsc` and
 both pass, and no test references any deleted path (the suite covers `src/lib/`, and the
 deletions are confined to `src/app/` and `src/components/`), but that is an argument, not a
 test result. Run both before pushing.
+
+---
+
+## What this found
+
+Running the checks was not a formality. Two problems surfaced, one of them serious.
+
+**`/health`'s remediation hints pointed at scripts that do not exist.** When a required
+file is missing, `/health` tells the operator which script produces it. Two of those named
+`scripts/ml_evaluate.py` and `scripts/v1_forward.py`; the real producers are
+`ml_accuracy_report.py` and `ml_forward_forecast.py`. Pre-existing, and the one message
+somebody reads at their least patient moment.
+
+**The Action List and Forecast Validation pages were both returning 500, and had been
+since 2026-08-12.** Not caused by the retirement. On that date the `forecast_date` column
+was renamed to `week_of`; the writer and the loader were both updated and
+`forecast_snapshot_date()` was not, so it asked a normalised frame for a column that no
+longer existed under any code path. It raised `KeyError` every time rather than
+intermittently, and its three callers are `/planning/action-list`, `/planning/sku/{sku_id}`
+and `/planning/validation`, which is those two pages in full.
+
+This was confirmed rather than assumed: the pre-change commit `e25fec9` was checked out in
+a git worktree, pointed at the same `data/processed/`, and produced the identical three
+500s with the identical `KeyError`. The bug predates this week's work by a day.
+
+Every static check passed throughout. The import graph was fine, the routes were
+registered, and the column was spelled consistently everywhere it was spelled. Only calling
+the endpoint finds this, which is why `scripts/smoke_planning_api.py` now exists and why it
+runs a negative control: reintroducing the bug makes it fail with exactly those three
+endpoints, verified.
 
 ---
 

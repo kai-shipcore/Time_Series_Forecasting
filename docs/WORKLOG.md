@@ -3646,3 +3646,27 @@ the files and not knowing whether anyone had looked.
   default question.
   Also corrected CODEBASE_GUIDE's claim that src/ml/features.py is being restructured. No such
   file exists; the restart folded feature building into model.py:build_matrix.
+
+2026-08-13  Found and fixed a bug that had the Action List and Forecast Validation pages
+  returning 500 since 2026-08-12, while looking for damage from the retirement and finding
+  none. src/planning/data.py:forecast_snapshot_date read fc["forecast_date"], but
+  _read_forecasts normalises that column to week_of on every path, renaming it on older
+  parquets and doing nothing for the table. So the frame it received never carried the old
+  name and the lookup raised KeyError every time, not intermittently. Its three callers are
+  /planning/action-list, /planning/sku/{sku_id} and /planning/validation, which is both pages
+  in full. Missed on 2026-08-12 because the rename was checked against the writer and the
+  loader, and this is a reader two calls away from either.
+  Established that it was not mine before fixing it, rather than after. Checked out e25fec9
+  in a git worktree, pointed it at the same data/processed, and got the identical three 500s
+  with the identical KeyError, while the same four endpoints returned 200 on both. Then fixed
+  it and confirmed all eight return 200 with real payloads: 467 action-list rows, 3,058
+  not-forecast, trained_through 2026-08-03, model v11.
+  Wrote scripts/smoke_planning_api.py so this class of bug cannot recur silently. It calls
+  every endpoint the two pages need, in-process through TestClient, and asserts 200 with a
+  non-empty body, plus 404 on the four retired endpoints so an accidental remount fails too.
+  Its first run reported twelve failures because I had again forgotten that the token
+  middleware answers 401 before routing; that is the third check today to be misled by it, so
+  the header is now taken from the app's own loaded value and the reason is written at the
+  call site rather than fixed silently.
+  Verified the checker can fail by reintroducing the bug and confirming exactly the three
+  affected endpoints go red, restoring the file byte-identical afterwards.
