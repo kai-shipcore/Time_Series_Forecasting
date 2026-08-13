@@ -84,16 +84,24 @@ def _raw_path() -> pathlib.Path:
 def v1_predictions(index: dict, split, skus: list[str]) -> "pd.DataFrame":
     """One row per SKU: yhat = V1's 70-day total, ds = first test week.
 
-    Lifted from scripts/ml_02_v1_benchmark.py so the primary criterion is scored
-    by the same production V1 implementation every other comparison uses.
+    As-of is the cutoff itself, because a week labelled `ds` covers Tuesday
+    `ds-6` through Monday `ds` (src/clean.py uses closed="right", label="right").
+    So a cutoff label of 2026-05-04 means training history ends ON Monday
+    2026-05-04, and the test span is Tuesday 2026-05-05 through Monday
+    2026-07-13. v1_forecast treats its argument as the last day of available
+    history and forecasts the following HORIZON_DAYS, so passing the cutoff
+    aligns V1's 70 days exactly with the 70 days being scored.
 
-    As-of is `cutoff - 1 day`, NOT the cutoff. Under W-MON a week labelled `ds`
-    covers [ds-7, ds-1], so a cutoff label of 2026-05-04 means training ends
-    Sunday 2026-05-03. v1_forecast treats its date argument as the last day of
-    available history, so passing the cutoff label would read one day of the test
-    period as history and shift the whole 70-day span a day late.
+    This read `cutoff - 1 day` until 2026-08-13, which was correct under the
+    Monday-to-Sunday convention where a label covered [ds-7, ds-1]. That
+    convention was reverted on 2026-08-06 (Section 4.30, BACKLOG 16) and this
+    was not updated with it, so V1 was discarding one real day of history and
+    forecasting a span shifted one day early. Measured on the development
+    windows, the fix moves V1 by -0.011 to +0.017 pooled WAPE depending on
+    segment and window, improving it in Mar-May and Dec-Feb and costing it in
+    Oct-Dec. It had been systematically handicapping V1 in two windows of three.
     """
-    asof = split.cutoff - pd.Timedelta(days=1)
+    asof = split.cutoff
     first_week = split.test["ds"].min()
     return pd.DataFrame([
         {"unique_id": uid, "ds": first_week, "yhat": v1_forecast(index, uid, asof)}

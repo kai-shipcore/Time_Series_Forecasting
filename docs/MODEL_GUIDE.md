@@ -148,12 +148,12 @@ Pooled WAPE on snapshot `2026-08-03-v2`. Lower is better.
 
 | Segment and window | v11 | prototype | V1 (spreadsheet) |
 |---|---|---|---|
-| short, Mar-May | 0.1926 | 0.2028 | 0.3275 |
-| short, Dec-Feb | 0.1994 | 0.2904 | 0.2518 |
-| short, Oct-Dec (reference) | 0.2473 | 0.4137 | 0.2037 |
-| long, Mar-May | 0.1350 | 0.1437 | 0.2884 |
-| long, Dec-Feb | 0.1389 | 0.2690 | 0.4007 |
-| long, Oct-Dec | 0.1040 | 0.0918 | 0.0841 |
+| short, Mar-May | 0.1926 | 0.2028 | 0.3351 |
+| short, Dec-Feb | 0.1994 | 0.2904 | 0.2240 |
+| short, Oct-Dec (reference) | 0.2473 | 0.4137 | 0.2210 |
+| long, Mar-May | 0.1350 | 0.1437 | 0.2776 |
+| long, Dec-Feb | 0.1389 | 0.2690 | 0.3928 |
+| long, Oct-Dec | 0.1040 | 0.0918 | 0.0851 |
 
 **Source of these figures.** `docs/rebaseline_2026-08-03-v2/ml_22_v11_hybrid.log` and
 `ml_02_v1_benchmark.log`, which are the raw output of the runs, rather than a table

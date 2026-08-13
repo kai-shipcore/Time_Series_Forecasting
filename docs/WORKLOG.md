@@ -3741,3 +3741,30 @@ the files and not knowing whether anyone had looked.
   fix changed the scored population. Added a paragraph to 4.34 reconciling it with 1.6, since
   1.6 keeps the prototype as the bar for calling v11 the proposed method while 4.34 decides
   shipping on V1, and a reader meeting both without explanation would think they disagree.
+
+2026-08-13  Fixed an as-of off-by-one in the V1 comparison, found while wiring V1 into the
+  final test as its new primary criterion. v1_predictions passed cutoff - 1 day, which was
+  correct under the Monday-to-Sunday week convention and wrong from the moment that was
+  reverted to Tuesday-to-Monday on 2026-08-06. Nobody updated it with the revert. V1 was
+  therefore discarding one real day of history and forecasting a 70-day span shifted a day
+  early against the 70 days being scored. Fixed in scripts/ml_02_v1_benchmark.py and in the
+  final test runner, which had inherited it by copy.
+  It mattered in the direction that flatters the model: the fix improves V1 by 0.005 to 0.011
+  in Mar-May and Dec-Feb and costs it up to 0.017 in Oct-Dec, so the recorded margins over V1
+  were systematically overstated in two windows of three, including the one seasonally
+  nearest the final test window. At the noise floor individually, but systematic rather than
+  random, and it sat on the criterion that now decides whether v11 ships.
+  Re-measured V1 on the three development windows and corrected the column everywhere it is
+  quoted: Section 1.1's table and the prose reading off it, Section 6's v11 entry, Section
+  4.34's direction check, OPERATIONS.md and MODEL_GUIDE.md. The verdict does not move, still
+  four of six cells to v11 and the same two lost, but the margins do.
+  Attributed the change rather than reporting one number, because two things moved at once.
+  On smooth/long it is entirely the fix: old and new order files give an identical 0.2884
+  under the old alignment. On smooth/short both the fix and a larger orders_raw.parquet
+  contribute, that file having grown from 337 to 340 smooth SKUs since the rebaseline, and
+  new SKUs are short-history by definition.
+  Left Section 4.31's three historical V1 figures as measured and annotated them instead.
+  Their point is about movement across snapshots rather than level, and rewriting numbers in
+  a passage about how numbers moved would destroy the thing it records.
+  Also pointed ml_02 at the pinned orders_raw.parquet, so the benchmark no longer drifts with
+  the weekly ingest while everything it is compared against stays pinned.

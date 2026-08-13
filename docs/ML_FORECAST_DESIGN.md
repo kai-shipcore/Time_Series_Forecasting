@@ -22,8 +22,13 @@ and accessories) to drive inventory planning. Two forecasting systems exist toda
 
   | V1 | Mar-May | Dec-Feb | Oct-Dec |
   |---|---|---|---|
-  | smooth/short | 0.4198 (−39.8%) | 0.3017 (+5.0%) | 0.7893 (+6.1%) |
-  | smooth/long | 0.3195 (−30.5%) | 0.4044 (+38.7%) | 0.0847 (−1.0%) |
+  | smooth/short | 0.3351 (−31.6%) | 0.2240 (+12.9%) | 0.2210 (−7.1%) |
+  | smooth/long | 0.2776 (−27.5%) | 0.3928 (+36.9%) | 0.0851 (−0.1%) |
+
+  Re-measured 2026-08-13 on snapshot `2026-08-03-v2` with a pinned `orders_raw.parquet`,
+  after fixing an as-of off-by-one described below. The figures this table held before were
+  from the July snapshot and predate the 2026-08-11 profiling fix, so they described a
+  different scored population as well as a differently aligned V1.
 
   The structural baseline of Section 3 beats V1 in five of these six cells, usually by a
   wide margin. The exception is long-history SKUs in the Q4 window, where V1 is the more
@@ -35,7 +40,7 @@ and accessories) to drive inventory planning. Two forecasting systems exist toda
   as underforecasting chronically by −33 to −39%, and attributed it to trailing velocity
   averages being unable to anticipate growth. The table above shows the direction is not
   constant: V1 underforecasts the spring window heavily, over-forecasts the post-holiday
-  window by +38.7% on long SKUs, and is close to unbiased in Q4. The growth explanation
+  window by +36.9% on long SKUs, and is close to unbiased in Q4. The growth explanation
   accounts for the spring result and not the others, so V1 is better described as having
   large, season-dependent error than as a uniform underforecast.
 - **The statistical prototype (phase 1 of this project):** per-SKU models from the
@@ -1438,6 +1443,12 @@ snapshots, while v11 scored 0.1783, 0.2376 and 0.2473. The model changed in none
 runs; only the population did. V1 is close to invariant to that and v11 is not, which is the
 Section 4.30 and v16 fragility finding appearing in a third place.
 
+Those three V1 figures are left as measured, because the point they make is about movement
+across snapshots rather than about the level. They predate the 2026-08-13 as-of fix and so
+sit on the old one-day-early alignment; that cell reads 0.2210 under the corrected one. The
+observation survives the correction, since the fix shifts all three by a similar amount and
+does not make V1 any less invariant to the population change.
+
 The rest of the original claim stands: 95% to 97% of scored SKUs are shared at every window,
 no shared SKU changed segment label, and the long counts move by at most two. Windows
 themselves cannot move, being anchored to `ML_FINAL_TEST_CUTOFF` by date.
@@ -1719,8 +1730,8 @@ than an accident.
    than disqualifying.
 3. **Direction check.** On the development windows v11 beats V1 in four of six cells and
    loses both Oct-Dec cells. The final window is May to July, seasonally nearest Mar-May,
-   where v11 leads V1 by a wide margin on both segments: short 0.1926 against 0.3275, long
-   0.1350 against 0.2884. **So the honest expectation is that v11 wins both segments
+   where v11 leads V1 by a wide margin on both segments: short 0.1926 against 0.3351, long
+   0.1350 against 0.2776. **So the honest expectation is that v11 wins both segments
    comfortably.** Writing that down now means a comfortable win cannot later be presented as
    a surprise, and a narrow one or a loss is the result that would actually be informative.
 
@@ -2565,12 +2576,24 @@ Re-measured on snapshot **2026-08-03-v2** (Section 4.32). Raw output:
 
 | Pooled WAPE | v11 | v9 | v-base | prototype | V1 | v11 vs v-base |
 |---|---|---|---|---|---|---|
-| short, Mar-May | 0.1926 | 0.1926 | 0.2141 | 0.2028 | 0.3275 | −0.0215 |
-| short, Dec-Feb | 0.1994 | 0.1994 | 0.1923 | 0.2904 | 0.2518 | +0.0070 |
-| short, Oct-Dec (ref) | 0.2473 | 0.2473 | 0.4605 | 0.4137 | 0.2037 | −0.2132, significant |
-| long, Mar-May | 0.1350 | 0.1413 | 0.1311 | 0.1437 | 0.2884 | +0.0039, tie |
-| long, Dec-Feb | **0.1389** | 0.2321 | 0.2171 | 0.2690 | 0.4007 | −0.0782, significant |
-| long, Oct-Dec | 0.1040 | 0.0937 | 0.1215 | 0.0918 | 0.0841 | −0.0174, tie |
+| short, Mar-May | 0.1926 | 0.1926 | 0.2141 | 0.2028 | 0.3351 | −0.0215 |
+| short, Dec-Feb | 0.1994 | 0.1994 | 0.1923 | 0.2904 | 0.2240 | +0.0070 |
+| short, Oct-Dec (ref) | 0.2473 | 0.2473 | 0.4605 | 0.4137 | 0.2210 | −0.2132, significant |
+| long, Mar-May | 0.1350 | 0.1413 | 0.1311 | 0.1437 | 0.2776 | +0.0039, tie |
+| long, Dec-Feb | **0.1389** | 0.2321 | 0.2171 | 0.2690 | 0.3928 | −0.0782, significant |
+| long, Oct-Dec | 0.1040 | 0.0937 | 0.1215 | 0.0918 | 0.0851 | −0.0174, tie |
+
+**V1 column re-measured 2026-08-13**, after fixing an as-of off-by-one in
+`scripts/ml_02_v1_benchmark.py`. It passed `cutoff - 1 day`, correct under the
+Monday-to-Sunday week convention but wrong since that was reverted to Tuesday-to-Monday on
+2026-08-06 (Section 4.30). V1 was therefore discarding one real day of history and
+forecasting a 70-day span shifted one day early against the 70 days being scored. The
+verdict is unchanged, four of six cells to v11 and the same two lost, but the margins move.
+Attribution, because two things changed at once: on smooth/long the shift is entirely the
+fix, since the old and new order files give the identical 0.2884 under the old alignment.
+On smooth/short both the fix and a larger `orders_raw.parquet` contribute, the file having
+grown from 337 to 340 smooth SKUs since the rebaseline; new SKUs are short-history by
+definition.
 
 **Prototype column corrected 2026-08-13.** Five of its six cells disagreed with
 `docs/rebaseline_2026-08-03-v2/ml_22_v11_hybrid.log`, which this section already names as
