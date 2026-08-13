@@ -253,21 +253,24 @@ def eligible_skus(
     intermittent) is still taken from the present-day snapshot; recomputing
     it per window is a separate, deeper change (see design doc).
 
-    CORRECTION (July 2026): the stability claim above does NOT hold for SKUs
-    promoted from intermittent to smooth/short. `src/profile.py` overwrites
-    their `train_start` with the first of the trailing RECENT_WEEKS weeks, so
-    the value moves forward with every profiling run rather than marking a
-    launch. Measured against the pinned development windows, those SKUs show
-    negative history at every cutoff and are therefore never eligible, and
-    never will be: the field advances weekly while the cutoffs stay fixed.
-    On the current snapshot that is 187 of the 447 served SKUs.
+    CORRECTION (July 2026), NOW RESOLVED (2026-08-11): the stability claim above
+    did not hold for SKUs promoted from intermittent to smooth/short.
+    `src/profile.py` overwrote their `train_start` with the first of the trailing
+    RECENT_WEEKS weeks, so the value moved forward with every profiling run
+    rather than marking a launch. Those SKUs showed negative history at every
+    fixed cutoff and were therefore never eligible and never would be, which was
+    187 of the 447 served SKUs at the time. That is the defect the onset fix
+    addressed; it is why 41% of the smooth catalogue had been absent from every
+    evaluation.
 
-    Excluding them is defensible, since a promoted SKU has only its recent
-    smooth history and grading it on an older window would score a period when
-    it behaved differently. What is not safe is reading this function as though
-    every served SKU is merely unvalidated-so-far; a large minority cannot be
-    validated under this design at all. Splitting the field into a stable
-    launch week and a separate training-start is the fix. See docs/BACKLOG.md.
+    Verified on 2026-08-13 against the pinned 2026-08-03-v2 snapshot and the
+    final-test cutoff: of the 37 smooth SKUs excluded there, `train_start` sits
+    at the SKU's first real sale week in every case (maximum difference 0 weeks),
+    none has 26 or more weeks of real sales before the cutoff, and the median has
+    2. They are genuinely new SKUs, correctly excluded, not old SKUs with a
+    drifting field. The paragraph is kept rather than deleted so that anyone
+    reading an older figure, or the BACKLOG entry that raised it, can see it was
+    fixed rather than wonder whether it still bites.
     """
     cutoff = pd.Timestamp(cutoff)
     ts = pd.to_datetime(profiles.set_index("unique_id")["train_start"])

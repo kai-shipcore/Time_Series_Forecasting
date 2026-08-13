@@ -3768,3 +3768,26 @@ the files and not knowing whether anyone had looked.
   a passage about how numbers moved would destroy the thing it records.
   Also pointed ml_02 at the pinned orders_raw.parquet, so the benchmark no longer drifts with
   the weekly ingest while everything it is compared against stays pinned.
+
+2026-08-13  Audited the final test end to end before running it, at the user's request, and
+  recorded two things it surfaced.
+  Corrected the eligible_skus docstring, which still warned that promoted SKUs can never be
+  eligible because train_start moves forward weekly, and put the figure at 187 of 447. The
+  onset fix on 2026-08-11 resolved that. Verified rather than assumed: of the 37 smooth SKUs
+  excluded at the final-test cutoff, train_start sits at the SKU's first real sale in every
+  case, none has 26 or more weeks of real sales before the cutoff, and the median has 2.
+  They are genuinely new SKUs. Kept the paragraph and marked it resolved rather than deleting
+  it, so a reader meeting the older figure elsewhere can see what happened to it.
+  Added two limitations to Section 2.2. The evaluated horizon is 10 weeks while production
+  serves 13, so weeks 11 to 13 of every served forecast are scored by no window at all and
+  every recorded figure is a lower bound on the error of the horizon actually used for
+  ordering. And three weeks of the snapshot sit after the final test window unused, because
+  the anchor was pinned when the data ended at 2026-07-13; that is the pin working, but it
+  means the test ends three weeks short of the freshest data.
+  The audit itself found nothing wrong with the comparison. score() sums yhat per SKU, so
+  v11's ten weekly rows and V1's single 70-day total both reduce to one total and are
+  directly comparable; both are filtered by the same eligibility rule and labelled with the
+  same as-of segments; V1 covers all 303 scored SKUs with no NaN and no negatives; the hybrid
+  assembly covers every eligible SKU with no duplicate (sku, week) rows, verified on a
+  development window; and bootstrap_delta's sign convention matches how the runner reports it.
+  Preflight is green with zero blockers.
