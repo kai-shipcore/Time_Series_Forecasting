@@ -75,6 +75,31 @@ def main() -> int:
     print(f"probe SKU: {sku}")
     print(f"token: {'sent' if headers else 'not set, so not sent'}\n")
 
+    # Field names the Next.js UI reads out of these payloads, by JSON path.
+    #
+    # This is a contract check, and it exists because renaming a field is
+    # invisible to everything else. TypeScript declares these interfaces but the
+    # payload is parsed as JSON and never structurally validated, so the compiler
+    # checks the declarations against nothing at all.
+    #
+    # That is not hypothetical either. The same 2026-08-12 `forecast_date` to
+    # `week_of` rename that broke the API also went unpropagated to the UI, and
+    # sat undetected because the endpoint was returning 500 anyway. The moment the
+    # server side was fixed, Forecast Validation crashed with
+    # "Cannot read properties of undefined (reading 'slice')". One rename, three
+    # separate failures, on three different days.
+    #
+    # Keep this list in step with the interfaces in
+    # src/components/planning/{validation,action-list}/types.ts.
+    contracts = [
+        ("/planning/validation", "over_time.runs[]",
+         {"model_version", "week_of", "n_skus", "n_weeks", "forecast_units"}),
+        ("/planning/validation", "over_time.performance[]",
+         {"model_version", "week_of", "segment", "weeks_scored", "pooled_wape", "bias_pct"}),
+        ("/planning/demand-vs-forecast", "predicted[]",
+         {"ds", "segment", "yhat", "lead", "n_skus", "week_of"}),
+    ]
+
     # (label, method, path, body). Grouped by the page that breaks without them.
     checks = [
         ("Action List", "GET", "/planning/action-list", None),
@@ -118,6 +143,33 @@ def main() -> int:
                     failures.append(f"{method} {path} returned 200 with an empty body")
                     note = "  <-- empty"
             print(f"  {path:44s} {r.status_code}  {size:>9,} bytes{note}")
+
+        print("-- field contracts the UI depends on --")
+        for path, where, required in contracts:
+            r = client.get(path, headers=headers)
+            if r.status_code != 200:
+                print(f"  {where:34s} skipped, {path} returned {r.status_code}")
+                continue
+            node = r.json()
+            for part in where.split("."):
+                if part.endswith("[]"):
+                    node = node.get(part[:-2]) if isinstance(node, dict) else None
+                    node = node[0] if isinstance(node, list) and node else None
+                else:
+                    node = node.get(part) if isinstance(node, dict) else None
+                if node is None:
+                    break
+            if node is None:
+                # An empty array is not a contract breach: a store with no runs
+                # yet is a documented state, and the UI renders a placeholder.
+                print(f"  {where:34s} no rows to check")
+                continue
+            missing = sorted(required - set(node))
+            if missing:
+                failures.append(f"{where} is missing {missing}; the UI reads these by name")
+                print(f"  {where:34s} MISSING {missing}  <-- FAIL")
+            else:
+                print(f"  {where:34s} ok")
 
         # The retired statsforecast endpoints must NOT be served. A remount would
         # widen public surface area on a host with no packet filtering.

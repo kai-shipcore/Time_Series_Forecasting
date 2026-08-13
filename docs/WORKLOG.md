@@ -3670,3 +3670,26 @@ the files and not knowing whether anyone had looked.
   call site rather than fixed silently.
   Verified the checker can fail by reintroducing the bug and confirming exactly the three
   affected endpoints go red, restoring the file byte-identical afterwards.
+
+2026-08-13  Fixed the third failure from the same 2026-08-12 rename, found when the user
+  opened Forecast Validation after the API fix. over-time-section.tsx read r.forecast_date
+  and crashed on .slice() of undefined; the API sends week_of. Two more sites: types.ts
+  declared forecast_date on RunRow, PerformanceRow and TrendPredicted, and
+  demand-vs-forecast-section.tsx used String(p.forecast_date ?? ""), which did not crash and
+  instead rendered an empty forecast date in the chart hover, which is worse.
+  TypeScript could not catch any of it. The payload is parsed as JSON and never structurally
+  validated, so the compiler was checking those interfaces against nothing.
+  One rename produced three failures on three days: the API 500 on 08-12, the UI crash on
+  08-13 once the 500 stopped masking it, and the silent empty hover that nobody had noticed
+  at all. So the smoke test now carries a field contract: the names the UI reads out of
+  over_time.runs, over_time.performance and predicted, asserted against the live payload.
+  Verified it fails by requiring the old name and watching it report the missing field.
+  Swept for others rather than assuming this was the last. Collected 181 keys from eight live
+  payloads and compared them against every snake_case field the validation and action-list
+  types declare. Three gaps remain and all three are fine: y_total, yhat_total and ae_units
+  sit in backtest.windows and backtest.weekly, empty locally because the seed fixture is
+  v11-SAMPLE against a served v11. The two SQL references to forecast_date in lib/sku-master
+  and lib/forecast-metrics query shipcore.fc_* tables, which the rename never touched.
+  Also worth recording: the user's local app was pointed at AI_SERVICE_URL=144.24.40.252:8000
+  in both .env and .env.local, so the browser was talking to the deployed server while every
+  check here ran against local code. The two were never testing the same thing.
