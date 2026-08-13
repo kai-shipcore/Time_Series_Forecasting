@@ -16,7 +16,14 @@ are three different things.
 | # | Item | Size |
 |---|---|---|
 | 6 | Retire the old Demand Forecast page | waits on `ml_forecast_history` accumulating runs |
+| 25 | Extract the legacy statsforecast endpoints from `api/main.py` | a day, and it has failed once |
+| 26 | Run the final test, once | pre-registered, half a day |
+| 27 | Rewrite the three stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
+
+Item order in that table is not priority: 24 is last on purpose, and 26 should not wait,
+because a pre-registered test that sits unrun invites the pre-registration being revised to
+suit whatever is convenient later.
 
 > **24 is last, and it has to happen before anything else is deleted.** The statsforecast
 > half of `api/main.py`, plus `src/models.py`, `selector.py`, `backtest.py` and
@@ -119,7 +126,9 @@ That answer decides whether this is the full fix or a forward-only version.
 
 ## 22. The service dependencies are unpinned while the model's are exact
 
-**Status: identified 2026-08-12, not fixed.**
+**Status: DONE 2026-08-12.** All 18 packages pinned from `pip freeze` on the deploy host.
+See the resolution at the end of this section; the problem statement below is as written
+before it was fixed.
 
 `requirements.txt` pins five packages exactly (`pandas`, `numpy`, `scikit-learn`,
 `lightgbm`, `statsforecast`) and leaves twelve unpinned, including every one that serves the
@@ -325,8 +334,13 @@ flows into every number the dashboard shows.
 
 ## 5. The Action List CSV export ships the wire format, not the screen
 
-**Status:** identified, deferred. Nobody is using the export yet, which is the only reason
-this is not urgent.
+**Status: DONE 2026-08-10.** Both CSV exports now build a fixed list of 19 columns with
+human headers, a UTF-8 BOM so Excel reads accented characters, and RFC 4180 escaping.
+`src/components/planning/action-list/csv-export.ts` in the Commerce app.
+
+The problem statement below is kept as written, because it is the reason the column list is
+fixed rather than derived from the row object, and a future change that reintroduces
+`Object.keys` would undo it silently.
 
 **The problem.** `exportCsv` in `action-list-content.tsx` builds its header from
 `Object.keys(view[0])`, so the file contains every field on the row in whatever order the API
@@ -1504,3 +1518,77 @@ The 4.5 MB that makes this possible is `data/dev_seed/`, the four snapshots unde
 **Worth including.** The design doc's decision log and version log, including the
 rejections. Six perturbations that each cost the long segment 0.005 to 0.012 is a better
 account of the work than the changes that landed.
+
+---
+
+## 25. Extract the legacy statsforecast endpoints from `api/main.py`
+
+**Status: open. Attempted once on 2026-08-12 and reverted cleanly.**
+
+`api/main.py` holds both tracks: the LightGBM serving endpoints and the older statsforecast
+ones that the current Demand Forecast page uses. The legacy half is roughly 1,700 lines and
+depends on `src/models.py`, `src/selector.py`, `src/backtest.py` and `src/baselines.py`.
+
+Moving it into `api/legacy.py` makes BACKLOG 6 a deletion of one file and one import rather
+than surgery on a 4,000-line module.
+
+**Why the first attempt was reverted, so the next one does not repeat it.** Two problems,
+in order:
+
+1. The extraction truncated multi-line parenthesised imports, so the moved module did not
+   import what it needed.
+2. More importantly, the result could not be verified. FastAPI registers an included router
+   as a single opaque object rather than copying its routes into `app.routes`, so the
+   obvious check, comparing route lists before and after, compares nothing. The revert was
+   verified instead: 35 routes, identical.
+
+**What changes for the next attempt.** BACKLOG 22 pinned FastAPI at the server's 0.141.1,
+so the verification difficulty can at least be reproduced against a known version. Compare
+resolved paths by walking the router tree, or drive both versions with real requests, rather
+than comparing `app.routes` lengths.
+
+**Ordering.** This is a move, not a deletion, so it can happen before BACKLOG 24. Deleting
+the code cannot.
+
+---
+
+## 26. Run the final test, once
+
+**Status: open. Pre-registered 2026-08-12 in `ML_FORECAST_DESIGN.md` section 4.34.**
+
+The final test window is quarantined by `ML_FINAL_TEST_CUTOFF` and has never been evaluated
+against during development, which is the only thing that makes it a test rather than another
+development window.
+
+    .venv/bin/python scripts/ml_41_final_test.py
+
+The runner writes `outputs/reports/final_test.json` and refuses to overwrite it, so a second
+run is a deliberate act with a visible trace. It also refuses to run against a dirty tree,
+so commit first.
+
+**Read section 4.34 before running it, not after.** It states what result would count as a
+pass and what would count as a failure, written before the numbers were known. The value of
+the whole exercise is that those criteria were fixed in advance; reading them afterwards and
+deciding they were roughly what you meant is how a pre-registration becomes decoration.
+
+**Whatever it returns, it gets recorded.** A result worse than the development windows is a
+real finding about generalisation, not a reason to look for a better window.
+
+---
+
+## 27. Rewrite the three stale documents
+
+**Status: open.**
+
+| document | state |
+|---|---|
+| `PROJECT_WRITEUP.md` | carries a SUPERSEDED banner. July figures, and a five-of-six claim that is four-of-six now |
+| `HANDOVER.md` | carries a SUPERSEDED banner. Rewrite last, at actual handover, so it describes the state being handed over |
+| `LEARNING_NOTES.md` | no banner, and largely fine. It is conceptual and does not repeat the numbers that moved |
+
+`LEARNING_NOTES.md` is listed to record that it was checked rather than assumed: it was
+described as stale earlier, and on inspection it contains none of the figures the 2026-08-11
+and 2026-08-12 work changed. It needs a pass for the promotion threshold and the onset fix
+as concepts, not a figure sweep.
+
+The design doc and `CODEBASE_GUIDE.md` are current, having been updated alongside the work.

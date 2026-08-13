@@ -3473,3 +3473,22 @@ the files and not knowing whether anyone had looked.
   noted that the 2026-08-03 forward week stores 52 target weeks per SKU against 13 at
   2026-08-10, so a --horizon 52 run sits there, and that aggregates cannot distinguish one
   52-week run from a 13-week run written over it.
+
+2026-08-12  Audited whether the remaining work would survive into a new session, since the
+  rest of it is being finished in separate chats. Two of four items were carried and two were
+  not. BACKLOG's open list held only items 6 and 24, so the final test existed solely as
+  section 4.34 at line 1693 of a 2,900-line design doc, and the statsforecast extraction
+  existed only as a failure note inside BACKLOG 22 rather than as intended work. Added items
+  25, 26 and 27 to the index for those and for the document rewrites, and made section 4.34
+  name scripts/ml_41_final_test.py, which it did not.
+  Checked rather than assumed the staleness banners: PROJECT_WRITEUP.md and HANDOVER.md carry
+  SUPERSEDED, LEARNING_NOTES.md does not and does not need one. It had been described as stale
+  earlier in the day; it is conceptual and contains none of the figures that moved. Recorded in
+  item 27 so it is not re-checked from scratch.
+  Then checked every section's status line against the index rather than trusting the index,
+  and found two disagreeing with it. Item 5 still read "identified, deferred" although the CSV
+  export was rebuilt on 2026-08-10, and item 22 still read "identified, not fixed" after being
+  fixed earlier the same day. Both status lines corrected, problem statements left in place.
+  The remaining open items are 6, 24, 25, 26 and 27, plus one verification queued for the next
+  deploy. Item 20 stays closed with its cause unknown, which is recorded as a conclusion rather
+  than an omission.

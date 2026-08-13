@@ -1704,7 +1704,8 @@ last three of them this week. Six perturbations of the long model have each cost
 point to a point. There is nothing left to try that has a defensible prior.
 
 **Run once.** Section 2.2 quarantines this window and its value comes from single use. The
-runner writes its result to `outputs/reports/final_test.json` and refuses to overwrite it,
+runner, `scripts/ml_41_final_test.py`, writes its result to `outputs/reports/final_test.json`
+and refuses to overwrite it,
 so a second run is a deliberate act with a visible trace rather than an accident.
 
 **Prior exposure, disclosed.** This window was evaluated once during development, on
