@@ -1792,6 +1792,13 @@ Deleting it does not break code; it breaks the audit trail, which is worse and q
 4. Move rather than delete, into `scripts/archive/`, so the recovery is a `git mv` and not a
    revert.
 
+**One known orphan, left deliberately.** `SkuForecastsService.getForecastBounds()` in the
+Commerce repository lost its only caller when `/api/forecast/bounds` was deleted on
+2026-08-13. It still has a passing test, so it is dead code that looks maintained, which is
+the worst kind. Removing it means removing the service method, the repository method beneath
+it and two tests, which was more than that day's change justified. It is a five-minute job
+for whoever picks this item up.
+
 Other candidates noted while working: `scratch_introspect_fc_products.js` and
 `scratch_list_objects.js` in the Commerce repository root, `Archive.zip` in the same place,
 and `docs/CUTOVER_TASK.md`, `DEPLOY_TASK.md`, `INVENTORY_EXPORT_TASK.md` and
