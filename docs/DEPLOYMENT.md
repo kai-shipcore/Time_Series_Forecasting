@@ -82,7 +82,8 @@ security list already permitted 8000. No firewall change was made or needed.
 security list is the only network control this server has. `FORECAST_API_TOKEN`
 is what protects the API, and it is load-bearing: `api/main.py` enforces it on
 every path except `/health`, and only when the variable is set. If it is ever
-unset, `POST /chat` and `POST /run-forecast` are open to the internet.
+unset, `POST /run-forecast` and the six other POST endpoints are open to the
+internet.
 
 The earlier mistake in this section is left recorded below, because the lesson
 still holds. On 2026-07-31 a developer machine appeared to be talking to the
@@ -248,21 +249,23 @@ COMMERCE_DB_NAME=...
 COMMERCE_DB_USER=...
 COMMERCE_DB_PASSWORD=...
 
-# The AI assistant on the Demand Forecast page. Without these, /chat returns
-# 503 and that feature stops working, while everything else carries on.
-LLM_API_KEY=...
-LLM_BASE_URL=...
-LLM_MODEL=...
-
-# Where the chat's tool loop calls back into this service. It must match the
-# port in ExecStart below, or the assistant answers without ever reading the
-# data it is being asked about.
-FORECAST_SELF_URL=http://127.0.0.1:8000
 ```
 
-Fifteen values. An earlier version of this document listed eleven and omitted
-the three `LLM_*` ones, which is enough to start the service and lose the chat
-feature without anything saying so.
+Eleven values, as of 2026-08-13.
+
+**The four `LLM_*` and `FORECAST_SELF_URL` values are gone.** They configured the
+AI assistant on the Demand Forecast page, which was deleted along with `/chat`
+and `src/chat.py` when the statsforecast track was separated out. It had never
+worked: `src/chat.py` addressed port 8001, where nothing has ever listened, so
+its tool calls failed silently for the whole life of the deployment. Setting
+them now does nothing. Remove them from the server's `.env` at the next
+opportunity rather than leaving values that appear to configure something.
+
+The history is worth one line, because this list has been wrong in both
+directions. An earlier version of this document listed eleven values and omitted
+the three `LLM_*` ones, which was enough to start the service and lose the chat
+feature with nothing saying so. It is back to eleven for a different reason: the
+feature those values fed no longer exists.
 
 Both prefixes are required, not one. `src/planning/inventory.py` opens `DB_*`
 and `COMMERCE_DB_*` together and returns nothing if either is missing, so a
@@ -540,7 +543,10 @@ documentation used to claim.
 The host does no packet filtering: `iptables` INPUT policy is ACCEPT with no
 REJECT, and firewalld and ufw are both inactive. The Oracle VCN security list is
 the only network control, and `FORECAST_API_TOKEN` is the only application
-control. `/health` sits outside the token check by design, and eight POST
-endpoints sit behind it, including `/chat` (an LLM call, so somebody else's
-traffic on your bill) and `/run-forecast`. If the token is ever unset, those are
-open to the internet. The hourly check tests for exactly that.
+control. `/health` sits outside the token check by design, and seven POST
+endpoints sit behind it, including `/run-forecast` and `/planning/run-forecast`,
+which each spawn a pipeline run. If the token is ever unset, those are open to
+the internet. The hourly check tests for exactly that.
+
+It was eight until 2026-08-13. `/chat` was the eighth, and it was the worst of
+them, being an LLM call on somebody else's bill. It is gone.

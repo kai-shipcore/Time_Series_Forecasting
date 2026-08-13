@@ -2566,12 +2566,19 @@ Re-measured on snapshot **2026-08-03-v2** (Section 4.32). Raw output:
 
 | Pooled WAPE | v11 | v9 | v-base | prototype | V1 | v11 vs v-base |
 |---|---|---|---|---|---|---|
-| short, Mar-May | 0.1926 | 0.1926 | 0.2141 | 0.2053 | 0.3275 | −0.0215 |
-| short, Dec-Feb | 0.1994 | 0.1994 | 0.1923 | 0.2912 | 0.2518 | +0.0070 |
-| short, Oct-Dec (ref) | 0.2473 | 0.2473 | 0.4605 | 0.3972 | 0.2037 | −0.2132, significant |
-| long, Mar-May | 0.1350 | 0.1413 | 0.1311 | 0.1435 | 0.2884 | +0.0039, tie |
-| long, Dec-Feb | **0.1389** | 0.2321 | 0.2171 | 0.2685 | 0.4007 | −0.0782, significant |
+| short, Mar-May | 0.1926 | 0.1926 | 0.2141 | 0.2028 | 0.3275 | −0.0215 |
+| short, Dec-Feb | 0.1994 | 0.1994 | 0.1923 | 0.2904 | 0.2518 | +0.0070 |
+| short, Oct-Dec (ref) | 0.2473 | 0.2473 | 0.4605 | 0.4137 | 0.2037 | −0.2132, significant |
+| long, Mar-May | 0.1350 | 0.1413 | 0.1311 | 0.1437 | 0.2884 | +0.0039, tie |
+| long, Dec-Feb | **0.1389** | 0.2321 | 0.2171 | 0.2690 | 0.4007 | −0.0782, significant |
 | long, Oct-Dec | 0.1040 | 0.0937 | 0.1215 | 0.0918 | 0.0841 | −0.0174, tie |
+
+**Prototype column corrected 2026-08-13.** Five of its six cells disagreed with
+`docs/rebaseline_2026-08-03-v2/ml_22_v11_hybrid.log`, which this section already names as
+authoritative where the two differ. The largest gap was short/Oct-Dec, recorded as 0.3972
+against the log's 0.4137. The v11, v-base and V1 columns were checked against the same logs
+and were correct, so the error was confined to the column carried over by hand. No verdict
+changes: v11 still beats the prototype in five of six cells and loses long/Oct-Dec.
 
 **Status: all three criteria still met.** Short is identical to v9 by construction, verified
 at exactly 0.0000 in all three windows. Dec-Feb long improves significantly against v-base

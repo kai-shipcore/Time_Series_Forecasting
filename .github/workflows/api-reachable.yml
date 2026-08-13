@@ -105,8 +105,9 @@ jobs:
         run: |
           set -uo pipefail
           # 401 is the pass. A 200 here would mean the token stopped being
-          # applied and POST /chat and POST /run-forecast are open to the
-          # internet, which is worse than the port being down.
+          # applied and the seven POST endpoints, /run-forecast and
+          # /planning/run-forecast among them, are open to the internet, which
+          # is worse than the port being down.
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
                  http://144.24.40.252:8000/segmentation || echo 000)
           if [ "$code" = "200" ]; then

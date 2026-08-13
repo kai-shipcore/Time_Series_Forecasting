@@ -3532,3 +3532,30 @@ the files and not knowing whether anyone had looked.
   simply stop moving. The same point is now in CODEBASE_GUIDE section 1.1 and at the call
   site in run_forecast_cron.sh. Also corrected a comment in api/main.py claiming the Streamlit
   dashboard renders src.planning directly; it was retired on 2026-08-12.
+
+2026-08-13  Wrote the two handover documents and removed the deleted chat feature's traces.
+  docs/OPERATIONS.md is the operator runbook, written for someone who keeps this running and
+  is assumed to know no machine learning: what the system forecasts and what it deliberately
+  does not, the two pipelines and why the frozen one is not optional, every input and output
+  with its granularity, the weekly cron and why it is Tuesday, how to tell whether it is
+  working, a symptom-to-cause table, and a maintenance calendar. docs/MODEL_GUIDE.md is the
+  technical handover for whoever picks up the modelling: the architecture and why structure
+  is imposed rather than learned, the v11 hybrid, the evaluation protocol and its measured
+  noise floor, the four most expensive traps, what to try next and what not to retry.
+  Kept both short by pointing at the existing records rather than restating them, since a
+  second copy of a figure is a second thing that can go stale, which is the failure this day
+  was mostly spent correcting.
+  Corrected the v11 prototype column in the design doc. Five of its six cells disagreed with
+  docs/rebaseline_2026-08-03-v2/ml_22_v11_hybrid.log, which the same section already names as
+  authoritative where the two differ; short/Oct-Dec read 0.3972 against the log's 0.4137. The
+  v11, v-base and V1 columns were checked against the same logs and were right, so the error
+  was confined to the one column carried across by hand. No verdict moves: v11 still beats the
+  prototype in five of six cells and still loses long/Oct-Dec. Both new documents take their
+  figures from the logs rather than from any table, and say so.
+  Removed the chat feature's configuration from the places that still described it as working.
+  DEPLOYMENT.md listed fifteen environment values including three LLM_* and FORECAST_SELF_URL;
+  it is eleven now, with the removal explained rather than the lines quietly deleted, because
+  that list has already been wrong in the other direction once. Also corrected "eight POST
+  endpoints" to seven in DEPLOYMENT.md and in the hourly reachability workflow's comment, and
+  replaced the .env.example block with a note saying the values do nothing, so anyone copying
+  an older .env learns why they vanished rather than assuming an omission.
