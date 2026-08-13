@@ -339,6 +339,17 @@ Two protocol notes:
   reason, the Oct-Dec window is excluded from short-segment decisions (Sections 1.5 and
   4.16); its short results are still printed for reference. Evaluating the short segment across seasons is inherently
   limited by how little history recent SKUs have.
+- **Known limitation: the evaluated horizon is 10 weeks; production serves 13.**
+  `TEST_WEEKS = 10` while `FORECAST_HORIZON = 90` days, so weeks 11 to 13 of every served
+  forecast are scored by no window, development or final. Error grows with lead time, so
+  every figure recorded in this document is a lower bound on the error of the horizon
+  actually used for ordering, and nothing here says how much worse those three weeks are.
+- **Known limitation: three snapshot weeks sit after the final test window, unused.** The
+  snapshot runs to 2026-08-03 while the quarantined window ends 2026-07-13, because
+  `ML_FINAL_TEST_CUTOFF` was pinned when the data ended there. That is the pin working as
+  designed rather than an oversight: moving it to consume those weeks would re-baseline
+  every recorded figure here. The cost is that the final test is scored on a window ending
+  three weeks before the freshest data available.
 
 ### 2.3 Internal validation (model fitting only)
 
