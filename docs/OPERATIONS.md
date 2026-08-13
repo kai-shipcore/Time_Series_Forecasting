@@ -55,32 +55,45 @@ actually costs. Section 4 of this document gives the current figures.
 
 ---
 
-## 2. The two pipelines, and why both still exist
+## 2. One pipeline now, and the one that used to be here
 
-This repository contains **two** forecasting systems. This surprises people, so it is the
-first thing to understand.
+The repository contains **two** forecasting systems, and only one of them runs.
 
-**The LightGBM track** is the current one. It produces the forecast the Action List and
-Forecast Validation pages serve. It is the outcome of the project and it is what
-`PROJECT_WRITEUP.md` is about.
+**The LightGBM track** is the live one. It produces the forecast the Action List and
+Forecast Validation pages serve, and it is what `PROJECT_WRITEUP.md` is about.
 
-**The statsforecast track** came first. It was the prototype, and it is now **frozen**:
-nobody develops it, but it still runs every week and it is not optional. Three things
-depend on it.
+**The statsforecast track** came first and was retired on 2026-08-13. Its code is still in
+the tree, under `api/legacy/`, `src/legacy/` and `scripts/legacy/`, kept as a record of the
+work rather than as running code: it is the accuracy bar every figure in the design
+document is compared against. Nothing calls it. Its API router is not mounted and its
+pipeline is not scheduled.
 
-1. **The SKU Planning page** (`/planning/sku-forecasts/[sku]`) draws its per-SKU chart,
-   backtest panel and sales history from the statsforecast endpoints in `api/legacy.py`.
-   That page was deliberately left alone, pending a wider website refactor.
-2. **The `shipcore.fc_*` database tables** are written by that run and read by that page.
-3. **The LightGBM run depends on it for data.** This is the one that catches people out.
-   The weekly job runs the statsforecast pipeline **first**, because that pipeline is what
-   pulls fresh orders from the database and writes the weekly sales file. The LightGBM run
-   has no ingest of its own: it reads the file the first run just produced.
+**Three things went at the same time, and it is worth knowing what they were**, because
+someone will find references to them:
 
-Consequence, stated plainly: **if you delete or disable the statsforecast run, the LightGBM
-forecast stops receiving fresh data, and it does so silently.** The forecast keeps being
-served and simply stops moving. Nothing errors. `src/legacy/__init__.py` records the
-conditions that must be met before that code can safely be removed.
+| Deleted | Was at |
+|---|---|
+| The Demand Forecast page | `/planning/demand-forecast` |
+| SKU Planning's Demand Forecast tab | `/planning/sku-forecasts/[sku]?tab=forecast` |
+| Fourteen Next.js proxy routes | `/api/forecast/*` |
+
+`?tab=forecast` still resolves rather than 404ing; it lands on Sales Analysis. The per-SKU
+view of the served model is at `/planning/action-list/[sku]`.
+
+### The trap that used to be here, now closed
+
+Until that date the weekly cron ran the statsforecast pipeline **first**, because it was the
+only thing that produced `sales_clean.parquet`, and the LightGBM run has no ingest of its
+own. Production ran a full cross-validation and model selection every week in order to get
+two files.
+
+That made deleting the old track dangerous in a way nothing announced: it would not have
+raised an error. The forecast would have carried on being served and simply stopped moving.
+
+The fix needed no new code. `scripts/ml_prepare_data.py` had performed the whole ML-only
+sequence for weeks, for the Action List's Run Forecast button, and the cron had never been
+pointed at it. It now is. The `shipcore.fc_*` tables are no longer written by anything, so
+the last statsforecast forecast sits there frozen at the date the track stopped running.
 
 ---
 
@@ -111,8 +124,8 @@ preorders can dominate their short history.
 |---|---|---|
 | `shipcore.ml_forward_forecasts` | The current thirteen-week forecast | One row per SKU per future week |
 | `shipcore.ml_forecast_history` | Every forecast ever served, accumulating | One row per SKU per target week per run |
-| `shipcore.fc_forward_forecasts` | The statsforecast track's current forecast, for SKU Planning | One row per SKU per future week |
-| `shipcore.fc_forecast_history` | The statsforecast track's stored predictions | One row per SKU per run |
+| `shipcore.fc_forward_forecasts` | The statsforecast track's last forecast. **No longer written.** Frozen at the date that track was retired | One row per SKU per future week |
+| `shipcore.fc_forecast_history` | The statsforecast track's stored predictions. **No longer written** | One row per SKU per run |
 | `data/processed/ml_forecast_history.parquet` | File copy of the accumulating history | Same as the table |
 | `data/history_backups/` | Dated copies of the above, last 12 kept | Weekly |
 
@@ -185,22 +198,25 @@ matters.
 
 ### What the run does, in order
 
-1. **Statsforecast run** (`run_forward_forecast.py`). Pulls fresh orders from the database,
-   writes `sales_clean.parquet` and `sku_profiles.csv`, produces the statsforecast forecast,
-   writes the `shipcore.fc_*` tables.
-2. **LightGBM run** (`ml_forward_forecast.py --snapshot live`). Reads the sales file the
-   first step just wrote, produces the forecast, writes the `shipcore.ml_*` tables.
-3. **Readiness check.** Calls `/health` and confirms the service reports `ready: true`.
-4. **History backup.** Copies the accumulating history file into `data/history_backups/`,
+1. **The pipeline** (`ml_prepare_data.py --force`), which internally is four steps: sync the
+   velocity snapshot, ingest and clean into `sales_clean.parquet`, profile into
+   `sku_profiles.csv`, then forecast and write the `shipcore.ml_*` tables.
+2. **Readiness check.** Calls `/health` and confirms the service reports `ready: true`.
+3. **History backup.** Copies the accumulating history file into `data/history_backups/`,
    keeping the last twelve.
 
-If step 1 fails, step 2 still runs, and the log says so: the two serve different screens,
-and a failure in the statsforecast backtest says nothing about whether the ML forecast can
-be produced. The caveat recorded in that case is that the ML forecast may be built on older
-demand.
+**A failed run is safe, and this is the useful property.** Every artifact is written into a
+staging directory beside `data/processed/` and moved into place with `os.replace` only after
+the forecast has succeeded. A crash, a failed step or a dropped SSH session therefore leaves
+last week's files intact and still being served. What you get is a forecast that is a week
+old, not a half-updated set where segmentation describes one week and sales describe
+another. The script exits non-zero, so cron mails on the Tuesday it breaks.
 
-The script exits non-zero if either pipeline failed, so cron mails a failure on the Tuesday
-it breaks rather than staying quiet.
+Until 2026-08-13 the job ran two scripts writing directly into `data/processed/`, and had
+none of that protection. It was the one path that never benefited from the staging work.
+
+**`--force` is required** because the pipeline refuses to overwrite live files by default,
+which is the right default everywhere except here.
 
 **`--snapshot live` is load-bearing.** Without it the ML script defaults to the pinned
 snapshot that exists so recorded evaluation figures cannot drift. A weekly run against a
@@ -250,7 +266,7 @@ time.
 ```
 
 This confirms the API still serves the routes it is meant to. It needs no database and no
-network. It exists because the statsforecast endpoints were split into their own module,
+network. It exists because the statsforecast endpoints were moved into their own package,
 and the obvious way to verify that split does not work: FastAPI stores an included router as
 a single opaque object, so comparing route counts compares nothing. The script walks the
 router tree and drives the app's real matching logic instead, and it runs a negative control
@@ -268,7 +284,7 @@ version:
 | Planning pages report they cannot reach the forecast server | Service down, or `AI_SERVICE_URL` pointing somewhere wrong | `curl` `/health` from a machine with **no local server running** |
 | `/health` answers but `ready` is false | The weekly cron did not run or failed | `crontab -l \| grep run_forecast_cron`, then `logs/forecast_cron.log` |
 | Every planning page 500s | Same as above; no data to serve | `missing_required` in the `/health` body |
-| The forecast is not moving week to week | The cron ran against the pinned snapshot instead of live data, or the statsforecast ingest failed | `logs/forecast_cron.log` for the `--snapshot live` line and the ingest step |
+| The forecast is not moving week to week | The cron did not run, or it failed before committing. A failed run leaves the previous week's files in place by design, so a stale forecast looks identical to a healthy one from the outside | `logs/forecast_cron.log`, and `trained_through` on the Action List against the calendar |
 | `commit` in `/health` is not the tip of `main` | A push that failed to deploy, or a stale process holding the port | The GitHub Actions run for that push |
 | The Action List shows "SAMPLE inventory data" | A database credential is wrong | Both `DB_*` and `COMMERCE_DB_*` must be set; a partial set degrades silently rather than erroring |
 
@@ -333,8 +349,11 @@ something quietly.
   each evaluation window covers; the snapshot fixes the values inside those weeks. Both are
   required for a recorded result to reproduce. Advancing either re-baselines every number in
   the design document.
-- **The statsforecast run and the LightGBM run.** The first is the second's ingest. See
-  section 2.
+- **`ml_prepare_data.py` and the weekly cron.** The cron's only job is to call it. If you
+  change what that script does, you have changed the weekly run, and it is also what the
+  Action List's Run Forecast button calls. One script, two triggers, no second copy of the
+  sequence. That is deliberate: the two used to differ, and the difference was invisible
+  from either screen.
 - **`FORECAST_API_TOKEN` on both sides.** The Python service and the Next.js app must agree,
   or every request except `/health` returns 401.
 

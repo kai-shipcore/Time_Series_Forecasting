@@ -82,8 +82,8 @@ security list already permitted 8000. No firewall change was made or needed.
 security list is the only network control this server has. `FORECAST_API_TOKEN`
 is what protects the API, and it is load-bearing: `api/main.py` enforces it on
 every path except `/health`, and only when the variable is set. If it is ever
-unset, `POST /run-forecast` and the six other POST endpoints are open to the
-internet.
+unset, the four POST endpoints are open to the internet, two of which spawn a
+pipeline subprocess.
 
 The earlier mistake in this section is left recorded below, because the lesson
 still holds. On 2026-07-31 a developer machine appeared to be talking to the
@@ -348,15 +348,23 @@ It runs **two** pipelines, then asks the service whether it can still serve and
 exits non-zero if not, so cron mails a failure on the Tuesday it breaks rather
 than leaving a colleague to find a stale page on Thursday.
 
-The order is load-bearing:
+Since 2026-08-13 it is one script, `scripts/ml_prepare_data.py --force`:
+velocity sync, ingest, clean, profile, then `ml_forward_forecast.py --snapshot
+live`. It writes `ml_forward_forecasts` and appends a row per SKU to
+`ml_forecast_history`, which is what the Action List and Forecast Validation
+serve.
 
-1. `run_forward_forecast.py`, the legacy statsforecast run. It performs the
-   ingest, pulling fresh order lines and rewriting `sales_clean.parquet`, and
-   writes the `shipcore.fc_*` tables that SKU Planning still reads.
-2. `ml_forward_forecast.py --snapshot live`, which has no ingest of its own. It
-   reads the sales file the first run just refreshed, writes
-   `ml_forward_forecasts`, and appends a row per SKU to `ml_forecast_history`.
-   That table is what the Action List and Forecast Validation serve.
+It was two scripts until then, and the order was load-bearing for a bad reason:
+`run_forward_forecast.py`, the statsforecast run, went first because it was the
+only thing that performed the ingest, so the weekly job ran a full
+cross-validation to obtain `sales_clean.parquet` and the ML run read what it
+left behind. Deleting the statsforecast track would not have errored; the
+forecast would have kept being served and stopped moving. That track is now
+retired and `ml_prepare_data.py`, which never touched it, does the whole job.
+
+The single script is also safer than the pair was. It stages every artifact
+beside `data/processed/` and commits with `os.replace` only after the forecast
+succeeds, so an interrupted run leaves last week's files intact and served.
 
 `--snapshot live` is not optional. Without it the script defaults to
 `config.ML_DATA_SNAPSHOT`, the pinned copy that exists so recorded evaluation
@@ -543,10 +551,11 @@ documentation used to claim.
 The host does no packet filtering: `iptables` INPUT policy is ACCEPT with no
 REJECT, and firewalld and ufw are both inactive. The Oracle VCN security list is
 the only network control, and `FORECAST_API_TOKEN` is the only application
-control. `/health` sits outside the token check by design, and seven POST
-endpoints sit behind it, including `/run-forecast` and `/planning/run-forecast`,
-which each spawn a pipeline run. If the token is ever unset, those are open to
-the internet. The hourly check tests for exactly that.
+control. `/health` sits outside the token check by design, and four POST
+endpoints sit behind it, `/planning/run-forecast` and `/planning/prepare-data`
+among them, which each spawn a pipeline run. If the token is ever unset, those
+are open to the internet. The hourly check tests for exactly that.
 
-It was eight until 2026-08-13. `/chat` was the eighth, and it was the worst of
-them, being an LLM call on somebody else's bill. It is gone.
+It was eight before 2026-08-13. `/chat` went first, and it was the worst of them,
+being an LLM call on somebody else's bill. The statsforecast router went with the
+pages it served, taking three more.

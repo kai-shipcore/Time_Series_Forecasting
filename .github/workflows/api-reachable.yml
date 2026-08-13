@@ -104,20 +104,37 @@ jobs:
       - name: auth is still enforced
         run: |
           set -uo pipefail
-          # 401 is the pass. A 200 here would mean the token stopped being
-          # applied and the seven POST endpoints, /run-forecast and
-          # /planning/run-forecast among them, are open to the internet, which
-          # is worse than the port being down.
+          # 401 is the pass. Anything else means the token stopped being applied
+          # and the four POST endpoints, /planning/run-forecast and
+          # /planning/prepare-data among them, are open to the internet, which is
+          # worse than the port being down.
+          #
+          # PROBE A ROUTE THAT EXISTS. This checked /segmentation until
+          # 2026-08-13, when the statsforecast router was unmounted. The middleware
+          # runs before routing, so an unmounted path still answers 401 while the
+          # token is set, and the check went on passing. It would have failed to
+          # do its job in the one case it exists for: with the token unset, the
+          # request reaches routing and a deleted path returns 404, not 200, so
+          # the "unauthenticated on a public port" branch below would never have
+          # fired. A security check that cannot detect the thing it watches for is
+          # worse than none, because it reports success.
+          #
+          # /planning/demand-patterns is on the live track and returns 200 with a
+          # valid token, so an unauthenticated 200 here is unambiguous.
+          PROBE=/planning/demand-patterns
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
-                 http://144.24.40.252:8000/segmentation || echo 000)
-          if [ "$code" = "200" ]; then
-            echo "::error::/segmentation returned 200 with NO token. The API is"
-            echo "unauthenticated on a public port. Check FORECAST_API_TOKEN in"
-            echo "the server's .env and restart the service."
+                 "http://144.24.40.252:8000${PROBE}" || echo 000)
+          if [ "$code" = "401" ]; then
+            echo "401 as expected, token enforced"
+            exit 0
+          fi
+          if [ "$code" = "404" ]; then
+            echo "::error::${PROBE} returned 404 with no token. Either the route was"
+            echo "removed and this check needs repointing at a live one, or the token"
+            echo "is unset and the request reached routing. Both need a human."
             exit 1
           fi
-          if [ "$code" != "401" ]; then
-            echo "::warning::expected 401, got '$code'"
-          else
-            echo "401 as expected, token enforced"
-          fi
+          echo "::error::${PROBE} returned '$code' with NO token, expected 401."
+          echo "If this is 200 the API is unauthenticated on a public port. Check"
+          echo "FORECAST_API_TOKEN in the server's .env and restart the service."
+          exit 1

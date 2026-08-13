@@ -58,28 +58,34 @@ Supporting scripts outside `src/ml/` that the track depends on:
 
 ### 1.1 The two tracks, and where each one lives
 
-The repository holds two forecasters. The LightGBM track above is the one the project
-recommends. The statsforecast track that preceded it is still in the tree, still running,
-and separated out as of 2026-08-13 so the boundary is visible rather than inferred.
+The repository holds two forecasters. The LightGBM track above is the one that runs. The
+statsforecast track that preceded it was retired on 2026-08-13 and is kept as a record of
+the work rather than as running code.
 
 | File | Role |
 |---|---|
-| `api/main.py` | The LightGBM serving endpoints (`/planning/*`), plus `/health` and the shared job endpoints. |
-| `api/legacy.py` | The sixteen statsforecast endpoints. Frozen. Its docstring lists which consumer calls each one. |
-| `api/common.py` | The one helper both need (`JobLogger`). Deliberately tiny. |
-| `src/legacy/` | The statsforecast model menu, backtest, selector and baselines. Its `__init__.py` is the authority on why the track still exists. |
+| `api/main.py` | The forecast API. Every endpoint it serves is on the LightGBM track. |
+| `api/legacy/` | The seventeen statsforecast endpoints. Present, not mounted. |
+| `api/common.py` | The one helper both needed (`JobLogger`). Deliberately tiny. |
+| `src/legacy/` | The statsforecast model menu, backtest, selector and baselines. |
+| `scripts/legacy/` | Its pipeline entry point, `run_forward_forecast.py`. |
+| `scripts/ml_prepare_data.py` | The whole live pipeline: sync, ingest, clean, profile, forecast. The weekly cron and the Action List's Run Forecast button both call it. |
 | `scripts/check_route_parity.py` | Asserts the API serves the routes it is meant to. Run after any change to the API modules. |
 
-**The statsforecast track is frozen, not unused, and the difference matters.** Three
-things still depend on it: SKU Planning serves its per-SKU chart from
-`api/legacy.py`; the `shipcore.fc_*` tables are read by that page; and, least
-obviously, the weekly cron runs the legacy pipeline **first because it performs the
-ingest**. `scripts/run_forward_forecast.py` writes `sales_clean.parquet`, and the
-LightGBM run has no ingest of its own; it reads the file the legacy run just refreshed.
-Deleting the legacy track without first giving the ML pipeline its own ingest stops the
-LightGBM forecast receiving fresh data, and does so silently: the forecast is still
-served, it just stops moving. `src/legacy/__init__.py` states the conditions for
-deletion.
+**Why the statsforecast code is kept.** It is the accuracy bar. Every table in
+`ML_FORECAST_DESIGN.md` has a "prototype" column and that column is this code, so a reader
+checking a claim needs to be able to see what produced the number being compared against.
+It is also a substantial part of what the project did, and a repository recording only the
+surviving approach misrepresents how the conclusion was reached.
+
+**How it was entangled, which is the part worth remembering.** Until 2026-08-13 the weekly
+cron ran the statsforecast pipeline first, because it was the only thing that wrote
+`sales_clean.parquet`, and the LightGBM run has no ingest of its own. Production therefore
+ran a full cross-validation and model selection every Tuesday to obtain two files, and
+deleting the statsforecast track would not have errored: the LightGBM forecast would have
+carried on being served and quietly stopped moving. The fix needed no new code, because
+`ml_prepare_data.py` had done the ML-only sequence for weeks and the cron had simply never
+been pointed at it. See `BACKLOG.md` items 6 and 28.
 
 ---
 

@@ -3591,3 +3591,34 @@ the files and not knowing whether anyone had looked.
   Earlier the same day, moved api/legacy.py into api/legacy/ as routes.py with an __init__.py
   exporting the router, at the user's request, so the superseded work reads as a section of
   the repository rather than a stray module. Route parity held at 34 throughout.
+
+2026-08-13  Retired the statsforecast track from the live system, closing BACKLOG 6. Deleted
+  the Demand Forecast page (4 routes, 13 components, 5,265 lines), SKU Planning's forecast
+  tab, and 14 of the 15 Next.js proxy routes under /api/forecast/. Kept /api/forecast/status:
+  it proxies generic job machinery that the Action List's Run Forecast button and
+  planning-error.tsx both poll, and knows nothing about which pipeline produced a job.
+  Two of the deletions were already half-done and nobody had finished them. SKU Planning's
+  Demand Forecast tab had been removed from the tab strip in August with a comment explaining
+  why, leaving demand-forecast-tab.tsx orphaned with no importer. The nav entry for the old
+  page was already hidden: true with a comment saying deletion was the follow-up "once the
+  new screens have run a few weeks". This was that follow-up.
+  Unmounted the legacy router from api/main.py rather than deleting it, leaving the two
+  include lines commented with what re-recording route_parity.json would then require. The
+  API is 17 routes now, from 35 this morning, and every one is on the ML track.
+  Moved /forecast-last-run into api/legacy/routes.py. It had been grouped with the shared job
+  endpoints on the strength of its name; it reads shipcore.fc_forecast_history, which only the
+  statsforecast pipeline ever wrote and nothing writes now. Left mounted it would have kept
+  answering with a run_date that silently aged, which is worse than being absent.
+  Found and fixed a security check that would have stopped working. The hourly
+  api-reachable workflow asserted that /segmentation returns 401 without a token. That route
+  is now unmounted, and because the token middleware runs before routing, it still answers 401
+  while the token is set, so the check would have gone on passing. In the one case it exists
+  for, the token being unset, the request reaches routing and a deleted path returns 404
+  rather than 200, so its "unauthenticated on a public port" branch would never have fired. It
+  now probes /planning/demand-patterns, which is on the live track, and treats 404 as an error
+  naming both possible causes. Same repoint in server-diagnostics.yml.
+  Corrected every document written earlier today that described the track as frozen but live
+  with three dependencies, which was true when written and false six hours later:
+  src/legacy/__init__.py, api/legacy/routes.py, CODEBASE_GUIDE 1.1, OPERATIONS sections 2, 3,
+  5 and 10, MODEL_GUIDE section 8, and DEPLOYMENT's weekly-run section and POST endpoint
+  counts, which went from eight to four across the day.

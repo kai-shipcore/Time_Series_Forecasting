@@ -1,43 +1,11 @@
 [
  [
   "GET",
-  "/accuracy-history"
- ],
- [
-  "GET",
-  "/all-skus"
- ],
- [
-  "GET",
-  "/backtest-cycles"
- ],
- [
-  "GET",
-  "/backtest/{sku_id}"
- ],
- [
-  "GET",
-  "/demand-trend"
- ],
- [
-  "GET",
-  "/forecast-last-run"
- ],
- [
-  "GET",
   "/forecast-status/{job_id}"
  ],
  [
   "GET",
-  "/forecast/{sku_id}"
- ],
- [
-  "GET",
   "/health"
- ],
- [
-  "GET",
-  "/history/{sku_id}"
  ],
  [
   "GET",
@@ -68,30 +36,6 @@
   "/planning/validation"
  ],
  [
-  "GET",
-  "/segment-detail/{segment}"
- ],
- [
-  "GET",
-  "/segment-simulate-result/{job_id}"
- ],
- [
-  "GET",
-  "/segment-simulate/{segment}"
- ],
- [
-  "GET",
-  "/segmentation"
- ],
- [
-  "GET",
-  "/segments"
- ],
- [
-  "GET",
-  "/sku-search"
- ],
- [
   "GET,HEAD",
   "/docs"
  ],
@@ -113,10 +57,6 @@
  ],
  [
   "POST",
-  "/cancel-simulation/{job_id}"
- ],
- [
-  "POST",
   "/planning/demand-trend"
  ],
  [
@@ -126,13 +66,5 @@
  [
   "POST",
   "/planning/run-forecast"
- ],
- [
-  "POST",
-  "/run-forecast"
- ],
- [
-  "POST",
-  "/segment-simulate-job/{segment}"
  ]
 ]

@@ -269,12 +269,15 @@ interpreted at all, and the window is spent either way.
 
 ## 8. The other forecaster in this repository
 
-`src/legacy/` and `api/legacy.py` hold the statsforecast prototype: per-SKU AutoARIMA,
-AutoETS and moving averages selected by cross-validation. It is **frozen, not dead.** It
-still serves the SKU Planning page, and the weekly cron runs it first because it performs
-the ingest that produces the sales file the LightGBM run reads.
+`src/legacy/`, `api/legacy/` and `scripts/legacy/` hold the statsforecast prototype:
+per-SKU AutoARIMA, AutoETS and moving averages selected by cross-validation. It was
+retired on 2026-08-13. Nothing runs it and its API router is not mounted.
 
 For modelling purposes it matters for one reason: **it is the accuracy bar.** The success
-criterion is not beating a moving average, it is beating the prototype, per segment. See
-`src/legacy/__init__.py` for the dependency detail and the conditions under which the code
-could be removed.
+criterion was never beating a moving average, it was beating this, per segment. It still
+wins one cell, smooth/long in Oct-Dec, at 0.0918 against 0.1040, and why is not understood.
+
+It has also never been run through the shared harness, which is the gap named in section 4.
+Its figures come from its own stored evaluation output. If you close one thing from this
+document, close that: the bar the project is judged against has been measured with
+different code from everything it is compared to.

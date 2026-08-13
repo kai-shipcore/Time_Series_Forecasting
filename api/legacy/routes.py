@@ -1,29 +1,33 @@
-"""The statsforecast API surface: frozen, still serving two consumers.
+"""The statsforecast API surface: retained as a record, not mounted.
 
-These are the sixteen endpoints of the original statistical forecasting track.
+These are the seventeen endpoints of the original statistical forecasting track.
 They were the whole API before the LightGBM work; `api/main.py` now holds that
-newer track and this module holds what came before. Splitting them apart is not
-a prelude to deleting this one tomorrow: see `src/legacy/__init__.py` for the
-three live dependencies and the conditions under which they can actually go.
+newer track and this module holds what came before. It is kept rather than
+deleted because this track is the accuracy bar the LightGBM work is measured
+against, and the "prototype" column in every table in the design document is
+this code. See `src/legacy/__init__.py`.
 
-WHO CALLS WHAT, so a reader can tell the still-needed from the soon-to-go
----------------------------------------------------------------------------
-Serving SKU Planning (`/planning/sku-forecasts/[sku]`), which is deliberately
-NOT being retired and has no replacement scheduled:
+NOBODY CALLS THESE, AS OF 2026-08-13
+------------------------------------
+`api/main.py` no longer includes this router. The two screens these endpoints
+served were deleted on the same day:
 
-    GET  /forecast/{sku_id}          the per-SKU forward curve and bands
-    GET  /backtest/{sku_id}          the backtest panel
-    GET  /history/{sku_id}           sales history for intermittent SKUs
+    the Demand Forecast page          /planning/demand-forecast
+    SKU Planning's forecast tab       /planning/sku-forecasts/[sku]?tab=forecast
 
-Serving only the old Demand Forecast page (`/planning/demand-forecast`), which
-BACKLOG item 6 retires. These go when that page goes, and not before:
+Which endpoint served which is still worth knowing if this is ever revived:
 
-    GET  /segmentation  /segments  /segment-detail/{segment}
-    GET  /all-skus  /demand-trend  /accuracy-history  /backtest-cycles
-    GET  /sku-search
-    POST /run-forecast
-    POST /segment-simulate-job/{segment}   GET /segment-simulate-result/{job_id}
-    POST /cancel-simulation/{job_id}       GET /segment-simulate/{segment}
+    SKU Planning       /forecast/{sku_id}  /backtest/{sku_id}  /history/{sku_id}
+    Demand Forecast    /segmentation  /segments  /segment-detail/{segment}
+                       /all-skus  /demand-trend  /accuracy-history
+                       /backtest-cycles  /sku-search  /run-forecast
+                       /segment-simulate-job/{segment}
+                       /segment-simulate-result/{job_id}
+                       /cancel-simulation/{job_id}  /segment-simulate/{segment}
+    neither, added later
+                       /forecast-last-run, moved here from api/main.py once it
+                       became clear it reads fc_forecast_history, a table
+                       nothing writes any more
 
 WHAT IS NOT HERE
 ----------------
@@ -37,14 +41,19 @@ The `/chat` endpoint was deleted rather than moved. It addressed port 8001,
 where nothing has ever listened, so its tool calls failed silently for the whole
 life of the deployment. Nobody used it. `src/chat.py` went with it.
 
-HOW THIS IS MOUNTED
--------------------
-`api/main.py` does `app.include_router(legacy_router)`. Note that FastAPI stores
-an included router as a single opaque object rather than copying its routes into
-`app.routes`, so comparing `len(app.routes)` before and after a change like this
-compares nothing and will happily report success. An earlier attempt at this
-extraction was reverted for that reason. `scripts/check_route_parity.py` walks
-the router tree and compares resolved paths, which does work.
+HOW IT WOULD BE MOUNTED AGAIN
+----------------------------
+`api/main.py` holds the two commented lines that would do it. Re-recording
+`outputs/reports/route_parity.json` is then required, which is deliberate: it
+makes remounting seventeen endpoints appear as a diff in review.
+
+A warning for whoever does that. FastAPI stores an included router as a single
+opaque object rather than copying its routes into `app.routes`, so comparing
+`len(app.routes)` before and after compares nothing and will report success on a
+broken mount. An earlier attempt at this extraction was reverted for exactly that
+reason. `scripts/check_route_parity.py` walks the router tree and drives the app's
+own matching logic, which does work, and runs a negative control every time so a
+check that has gone blind says so.
 """
 
 import os
@@ -1886,3 +1895,24 @@ def run_forecast(horizon: int = Query(default=13, ge=1, le=104)):
 
     threading.Thread(target=_run, daemon=True).start()
     return {"job_id": job_id}
+
+
+@router.get("/forecast-last-run")
+def forecast_last_run():
+    """Return the most recent run_date and horizon from fc_forecast_history.
+
+    Moved here from api/main.py on 2026-08-13. Its table is written by the
+    statsforecast pipeline, which no longer runs, so this reports the date of the
+    last run before that track was retired and will not advance again.
+    """
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT run_date, horizon_weeks
+            FROM shipcore.fc_forecast_history
+            ORDER BY run_date DESC
+            LIMIT 1
+        """)).fetchone()
+    if not row:
+        return {"run_date": None, "horizon_weeks": None}
+    return {"run_date": str(row[0]), "horizon_weeks": int(row[1])}

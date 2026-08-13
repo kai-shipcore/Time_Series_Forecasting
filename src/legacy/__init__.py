@@ -1,52 +1,58 @@
-"""The statsforecast prototype: frozen, not dead.
+"""The statsforecast prototype: retained as a record, no longer run.
 
 This package holds the four modules that make up the original statistical
 forecasting track: the per-SKU model menu, the cross-validation backtest, the
 selector that picks a winner per SKU, and the reference baselines. It was the
 first working forecaster in this project and the thing the LightGBM track was
-built to beat. It is kept, and kept running, rather than deleted.
+built to beat.
 
-WHY IT IS STILL HERE, which is not the same as still being developed
----------------------------------------------------------------------
-Three things depend on this code today. Read all three before removing any of
-it; the second is the one that surprises people.
-
-1. SKU Planning (`/planning/sku-forecasts/[sku]`) serves its per-SKU chart,
-   backtest panel and sales history from the legacy API endpoints in
-   `api/legacy.py`, which import this package. That page is deliberately out of
-   scope for retirement, pending a wider website refactor. See BACKLOG item 6.
-
-2. The weekly cron runs the legacy pipeline FIRST, because it performs the
-   ingest. `scripts/run_forward_forecast.py` pulls fresh order lines from the
-   database and writes `data/processed/sales_clean.parquet`. The LightGBM run
-   has no ingest of its own: it reads the file the legacy run just refreshed.
-   Deleting this track without first giving the ML pipeline its own ingest stops
-   the LightGBM forecast getting fresh data, and it does so silently: the
-   forecast keeps being served, it just stops moving. See
-   `scripts/run_forecast_cron.sh`, which says the same thing at the call site.
-
-3. The `shipcore.fc_*` tables are written by that run and read by SKU Planning.
-
-WHAT "FROZEN" MEANS HERE
+STATUS, AS OF 2026-08-13
 ------------------------
-No new work goes into this package. It is not the forecaster the project
-recommends; that is the LightGBM track in `src/ml/`, evaluated in
-`docs/ML_FORECAST_DESIGN.md`. Bug fixes to keep the two live consumers working
-are in scope. Model changes, new candidate models and tuning are not: any
-comparison this code was used for has already been recorded, and changing it now
-would invalidate those records without producing anything anyone reads.
+Nothing calls this code. On that date the two screens it served were deleted,
+the router in `api/legacy/` was unmounted, and the weekly cron was pointed at
+`scripts/ml_prepare_data.py`, which never touched this track. No live path
+reaches any module here.
 
-WHEN IT CAN ACTUALLY BE DELETED
--------------------------------
-All three of these have to be true, in this order:
+Earlier the same day this file said the opposite, and the history is worth one
+paragraph because it is the interesting part. This package was genuinely
+load-bearing until that afternoon, and not for the reason anyone expected: the
+weekly cron ran the statsforecast pipeline FIRST because it was the only thing
+that produced `data/processed/sales_clean.parquet`, and the LightGBM run has no
+ingest of its own. So production ran a full cross-validation and model selection
+every Tuesday in order to obtain two files, and deleting this track would not
+have raised an error. The LightGBM forecast would have carried on being served
+and quietly stopped moving. That dependency is gone; the replacement script had
+existed for weeks and the cron had simply never been pointed at it.
 
-  a. SKU Planning is migrated off the legacy endpoints, closing dependency 1.
-  b. The ML pipeline owns its own ingest, closing dependency 2. Until then the
-     legacy run is load-bearing regardless of who reads its forecasts.
-  c. The old Demand Forecast page is retired (BACKLOG 6), which additionally
-     needs `ml_forecast_history` to hold several settled runs, or its accuracy
-     chart is replaced by an empty one.
+WHY IT IS KEPT
+--------------
+Because it is the accuracy bar. Every table in `docs/ML_FORECAST_DESIGN.md` has
+a "prototype" column, and that column is this code. The success criterion for the
+whole LightGBM project was never "beat a moving average", it was "beat this",
+per segment. A reader checking a claim needs to be able to see what produced the
+number it is compared against.
 
-Only then does this package become genuinely unreferenced. Anything short of
-that is a deletion with a live caller.
+It is also a substantial part of what the project did. The model selection, the
+cross-validation backtest and the conformal intervals were real work, and a
+repository that records only the surviving approach misrepresents how the
+conclusion was reached.
+
+WHAT NOT TO DO WITH IT
+----------------------
+Do not develop it. Do not tune it. Any comparison it was used for is already
+recorded, and changing it now would invalidate those records without producing
+anything anyone reads.
+
+Do not run `scripts/legacy/run_forward_forecast.py` casually on the machine that
+serves production. Without `--skip-ingest` it rewrites `sku_profiles.csv`, which
+moves segmentation underneath a LightGBM forecast that did not change. See
+`scripts/legacy/README.md`.
+
+RELATED
+-------
+- `api/legacy/` holds the sixteen API endpoints that served this track's output.
+- `scripts/legacy/` holds its pipeline entry point.
+- `docs/ML_FORECAST_DESIGN.md` records what it was measured against, and where it
+  won and lost. It still wins one cell: smooth/long in the Oct-Dec window, where
+  it scores 0.0918 against the LightGBM model's 0.1040. Why is not understood.
 """

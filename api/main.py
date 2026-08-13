@@ -1,12 +1,14 @@
-"""The LightGBM serving API, plus the endpoints both tracks share.
+"""The forecast API. Every endpoint here serves the LightGBM track.
 
-The statsforecast endpoints that used to live in this file are now in
-`api/legacy.py`, mounted below. See that module's docstring for which consumer
-calls what, and `src/legacy/__init__.py` for why that track still exists.
+This file used to hold both forecasters. The statsforecast endpoints moved to
+`api/legacy/` on 2026-08-13 and are no longer mounted, because the two screens
+that called them were deleted the same day. That package is kept as a record of
+the work; `api/legacy/__init__.py` explains what it was and
+`src/legacy/__init__.py` covers its model half.
 
-The imports here were pruned to what remains after that extraction. If something
-looks conspicuously absent -- plotly, the conformal-interval constants, the V1
-helpers -- it is because only the legacy endpoints used it, and it moved.
+The imports here were pruned twice, so if something looks conspicuously absent
+-- plotly, the conformal-interval constants, the V1 helpers, sqlalchemy -- it is
+because only the legacy endpoints used it and it went with them.
 """
 
 import sys
@@ -22,10 +24,9 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
 
 from src.db import (
-    get_engine, create_job, touch_job, set_job_pgid, finish_job, get_job,
+    create_job, touch_job, set_job_pgid, finish_job, get_job,
     job_cancel_requested, request_job_cancel, recover_orphaned_jobs, cleanup_old_jobs,
     ensure_jobs_table, ensure_indexes,
 )
@@ -46,13 +47,23 @@ async def _token_auth(request, call_next):
     return await call_next(request)
 
 
-# The statsforecast track, mounted from api/legacy.py. Included here, before this
-# module's own routes are declared, so the resolved route order matches what a
-# single-file api/main.py produced. None of the paths across the two modules
-# overlap, so order is not load-bearing; it is preserved to keep the extraction
-# a pure move. scripts/check_route_parity.py asserts that.
-from api.legacy import router as legacy_router  # noqa: E402
-app.include_router(legacy_router)
+# The statsforecast router is NOT mounted, as of 2026-08-13.
+#
+# api/legacy/ still holds its sixteen endpoints and they still work. Nothing
+# calls them: the two screens they served, the Demand Forecast page and SKU
+# Planning's forecast tab, were deleted from the Next.js app on the same day.
+# Serving endpoints nobody calls is not free here, because every one of them
+# sits behind FORECAST_API_TOKEN on a host with no packet filtering, and two of
+# them spawn a pipeline subprocess.
+#
+# The code is kept as a record of the work rather than deleted; see
+# api/legacy/__init__.py. To bring it back, uncomment these two lines. The route
+# expectation in outputs/reports/route_parity.json would then need re-recording
+# with `scripts/check_route_parity.py --write`, which is deliberate friction: it
+# makes remounting eighteen endpoints show up as a diff in review.
+#
+# from api.legacy import router as legacy_router  # noqa: E402
+# app.include_router(legacy_router)
 
 
 @app.on_event("startup")
@@ -146,13 +157,14 @@ def planning_run_forecast(horizon: int = Query(default=13, ge=13, le=104)):
     profile, forward forecast. The same script the empty-machine path uses,
     with --force because here the files exist and rebuilding them is the point.
 
-    Deliberately not the weekly cron. That runs the legacy statsforecast
-    pipeline first, which cross-validates a model menu per SKU and writes the
-    shipcore.fc_* tables SKU Planning reads. None of that reaches the Action
-    List or Forecast Validation, and it is most of the runtime, so a button
-    that ran it would be minutes slower for no visible change. The consequence
-    is worth stating where a reader will meet it: after this run, SKU Planning
-    still shows the forecast from the last weekly cron. The panel says so.
+    This is now the same script the weekly cron runs. Until 2026-08-13 it was
+    not: the cron ran the legacy statsforecast pipeline first, because that was
+    the only thing that wrote sales_clean.parquet, and this button deliberately
+    skipped it to avoid spending most of its runtime on a forecast no screen
+    read. The cron now calls ml_prepare_data.py too, so the button and the
+    weekly run finally do the same work, and the caveat that used to belong here
+    -- that SKU Planning would still show the older forecast afterwards -- is
+    gone with the page it was about.
 
     Profiling is in the pipeline rather than skipped alongside the model
     selection it sits next to. It writes sku_profiles.csv, which the planning
@@ -160,10 +172,11 @@ def planning_run_forecast(horizon: int = Query(default=13, ge=13, le=104)):
     without it leaves segmentation describing last week while the forecast
     describes this week, which is the drift `demoted_since_forecast` counts.
 
-    Async, returning a job_id to poll. Shares the "forecast" job type with the
-    legacy run and with prepare-data, so create_job refuses when any of the
-    three is already going: they write the same files, and two at once is a
-    corrupted parquet rather than a slow afternoon.
+    Async, returning a job_id to poll. Shares the "forecast" job type with
+    prepare-data, so create_job refuses when either is already going: they write
+    the same files, and two at once is a corrupted parquet rather than a slow
+    afternoon. The legacy run was the third holder of that job type until it was
+    retired on 2026-08-13.
 
     Horizon floors at 13 in the signature rather than in the script. Each run
     REPLACES the stored forecast for its training week, so a shorter one would
@@ -231,12 +244,16 @@ def planning_run_forecast(horizon: int = Query(default=13, ge=13, le=104)):
 def planning_prepare_data(horizon: int = Query(default=13, ge=1, le=104)):
     """Build the ML data files from the database, for a machine that has none.
 
-    The counterpart to /run-forecast, and deliberately a separate endpoint
-    rather than a flag on it. That one runs the legacy statsforecast pipeline,
-    which regenerates sku_profiles.csv while writing its forecasts to
-    shipcore.fc_forward_forecasts, leaving the ML artifacts untouched. Using it
-    to repair missing ML data would move segmentation underneath an unchanged ML
-    forecast, which is the failure docs/BACKLOG.md item 7 describes.
+    The counterpart to /planning/run-forecast, and a separate endpoint rather
+    than a flag on it because the two differ in intent rather than mechanics:
+    this one builds files that are missing, that one rebuilds files that exist.
+    Both now run scripts/ml_prepare_data.py, the second with --force.
+
+    This paragraph used to warn against repairing missing ML data with the
+    legacy /run-forecast endpoint, which regenerated sku_profiles.csv while
+    writing its forecasts to shipcore.fc_forward_forecasts, moving segmentation
+    underneath an unchanged ML forecast (docs/BACKLOG.md item 7). That endpoint
+    was unmounted on 2026-08-13, so the trap is closed rather than avoided.
 
     Async, returning a job_id to poll, because this is minutes of work and a
     request cannot wait for it. Reuses the same job machinery the Run Forecast
@@ -340,20 +357,13 @@ def forecast_status(job_id: str):
     }
 
 
-@app.get("/forecast-last-run")
-def forecast_last_run():
-    """Return the most recent run_date and horizon from fc_forecast_history."""
-    engine = get_engine()
-    with engine.connect() as conn:
-        row = conn.execute(text("""
-            SELECT run_date, horizon_weeks
-            FROM shipcore.fc_forecast_history
-            ORDER BY run_date DESC
-            LIMIT 1
-        """)).fetchone()
-    if not row:
-        return {"run_date": None, "horizon_weeks": None}
-    return {"run_date": str(row[0]), "horizon_weeks": int(row[1])}
+# /forecast-last-run moved to api/legacy/routes.py on 2026-08-13.
+#
+# It was grouped with the shared job endpoints when the tracks were split, on the
+# strength of its name. That was wrong: it reads shipcore.fc_forecast_history,
+# which only the statsforecast pipeline ever wrote and which nothing writes now.
+# Left mounted it would have kept answering, with a run_date that silently aged,
+# which is worse than the endpoint being absent.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -366,10 +376,10 @@ def forecast_last_run():
 # was retired on 2026-08-12, which removed a renderer rather than a calculation,
 # as intended.
 #
-# Unlike the legacy endpoints in api/legacy.py, these read a mixture. The v11 forward forecast now
-# lives in shipcore.ml_forward_forecasts, separate from the legacy
-# shipcore.fc_forward_forecasts which still holds the statsforecast output, and
-# falls back to a parquet when the database is unreachable. Inventory is a live
+# These read a mixture. The v11 forward forecast lives in
+# shipcore.ml_forward_forecasts, and falls back to a parquet when the database is
+# unreachable. The older shipcore.fc_forward_forecasts still holds the last
+# statsforecast output, frozen at the date that track stopped running. Inventory is a live
 # query with a CSV fallback. Sales and the SKU profiles are still files only,
 # and are what remains before this API could be deployed away from this repo.
 # ─────────────────────────────────────────────────────────────────────────────
