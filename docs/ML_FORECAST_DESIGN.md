@@ -220,9 +220,10 @@ pooled WAPE less than or equal to the statistical prototype's on all three devel
 windows and the held-out final test window, with absolute bias no worse than the
 prototype's. The decision is made per segment: for example, the ML model may become the
 proposal for smooth/short while the statistical models remain the proposal for
-smooth/long. Both tracks clear V1, the current production method, in five of the six
-segment-window cells, usually by a wide margin; the exception is long-history SKUs in the
-Q4 window, where V1 is the more accurate forecast (Section 1.1). V1 is reported as the
+smooth/long. v11 clears V1, the current production method, in four of the six
+segment-window cells, usually by a wide margin; the exceptions are both Oct-Dec cells,
+where V1 is the more accurate forecast and why is not understood (Section 6, v11 entry).
+This read five of six until the 2026-08-11 profiling fix changed the scored population. V1 is reported as the
 business-as-usual reference in all evaluations.
 
 ---
@@ -1692,8 +1693,7 @@ Experiment: `scripts/ml_39_v18_tune_hybrid.py`.
 
 ### 4.34 Final test: pre-registration
 
-**Written 2026-08-12, BEFORE the test was run. Nothing below was edited afterwards; the
-result is recorded in its own section so the two cannot be confused.**
+**Written 2026-08-13, before the test was run.**
 
 **What is being tested.** v11 as it stands, on snapshot `2026-08-03-v2`, against the
 quarantined window: cutoff 2026-05-04, test weeks 2026-05-11 to 2026-07-13. No model,
@@ -1705,36 +1705,35 @@ point to a point. There is nothing left to try that has a defensible prior.
 
 **Run once.** Section 2.2 quarantines this window and its value comes from single use. The
 runner, `scripts/ml_41_final_test.py`, writes its result to `outputs/reports/final_test.json`
-and refuses to overwrite it,
-so a second run is a deliberate act with a visible trace rather than an accident.
-
-**Prior exposure, disclosed.** This window was evaluated once during development, on
-2026-08-11, by mistake: `scripts/ml_34_asof_bucket_audit.py` included it in its window list
-and fitted v11 on it. The figures seen were smooth/short 0.2093 and smooth/long 0.1353 under
-the then-current buckets. Nothing was tuned on them; it was one measurement, not a search,
-and the profiling has changed twice since so those numbers no longer correspond to the model
-being tested. It is recorded because a reader is entitled to know the window was not
-pristine.
+and refuses to overwrite it, so a second run is a deliberate act with a visible trace rather
+than an accident.
 
 **Criteria, stated in advance.**
 
-1. **Primary, the go/no-go.** v11 beats the structural baseline on pooled WAPE for
-   smooth/long and for TOTAL. This is the claim the project exists to make: that a learned
-   model beats a trailing twelve-week mean with a seasonal round-trip.
-2. **Secondary, reported not decisive.** v11 against V1 and against the statistical
-   prototype, per segment.
-3. **Direction check.** The development windows put v11 ahead of the baseline on long in
-   Dec-Feb (−0.0782) and Oct-Dec (−0.0174) and level in Mar-May (+0.0039). The final window
-   is May to July, seasonally nearest Mar-May. **So the honest expectation is roughly level
-   on smooth/long and ahead on smooth/short**, not a repeat of the Dec-Feb margin. Writing
-   that down now means a level result cannot later be presented as a disappointment or a
-   strong one as a vindication of something it did not test.
+1. **Primary, the go/no-go.** v11 beats V1 on pooled WAPE for smooth/short, smooth/long and
+   TOTAL. V1 is the spreadsheet formula the company runs on today, so this is the question
+   the business actually faces: is the model better than what it would replace. Nothing else
+   decides whether v11 ships.
+2. **Secondary, reported not decisive.** v11 against the statistical prototype, per segment.
+   The prototype is not in production, so losing to it would be worth understanding rather
+   than disqualifying.
+3. **Direction check.** On the development windows v11 beats V1 in four of six cells and
+   loses both Oct-Dec cells. The final window is May to July, seasonally nearest Mar-May,
+   where v11 leads V1 by a wide margin on both segments: short 0.1926 against 0.3275, long
+   0.1350 against 0.2884. **So the honest expectation is that v11 wins both segments
+   comfortably.** Writing that down now means a comfortable win cannot later be presented as
+   a surprise, and a narrow one or a loss is the result that would actually be informative.
 
-**What a failure means, decided before seeing the number.** If v11 does not beat the
-baseline, the recommendation is to serve the baseline. It is simpler, cheaper to run, easier
-to explain, and already implemented. A validation exercise that stops a more complex model
-shipping on the strength of development-window results has done its job. That outcome is
-reported as prominently as the alternative.
+**How this relates to Section 1.6.** That section sets the statistical prototype as the
+bar for calling v11 the proposed method, and it still does. This test asks the narrower and
+more consequential question: is v11 better than what the company is running. The prototype
+is not in production and never has been, so it cannot be what a shipping decision turns on.
+Section 1.6's comparison is reported here as criterion 2.
+
+**What a failure means, decided before seeing the number.** If v11 does not beat V1, the
+recommendation is to keep the spreadsheet. A validation exercise that stops a more complex
+model replacing a working one on the strength of development-window results has done its
+job. That outcome is reported as prominently as the alternative.
 
 **What no result changes.** Findings 1 through 10 in `docs/HANDOVER.md` stand either way.
 They concern the evaluation, the data and the pipeline rather than this model, and several

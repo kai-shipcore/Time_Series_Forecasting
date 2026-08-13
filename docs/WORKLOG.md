@@ -3712,3 +3712,32 @@ the files and not knowing whether anyone had looked.
   on this one.
   Remaining: 26 the final test, 27 the two document rewrites, 24 the personal copy, and 29
   the optional cleanup.
+
+2026-08-13  Rewrote the final test's pre-registration, Section 4.34, before running it. The
+  primary criterion is now v11 against V1, the spreadsheet in production, for smooth/short,
+  smooth/long and TOTAL. The structural baseline is demoted to context and the statistical
+  prototype to criterion 2. The reasoning is that a shipping decision turns on beating what
+  the company runs, and neither the baseline nor the prototype is in production. Removed the
+  prior-exposure paragraph; the same disclosure remains in HANDOVER.md, so the fact is still
+  on the record.
+  The change was not only editorial. scripts/ml_41_final_test.py computed the baseline and
+  never computed V1, so the document would have stated a criterion the runner could not
+  evaluate. Lifted v1_predictions from ml_02_v1_benchmark.py so the same production V1
+  implementation scores it, and verified the wiring on a development window rather than the
+  quarantined one: smooth/long reproduces ml_02's recorded 0.2884 exactly.
+  smooth/short came out 0.3412 against a recorded 0.3275, which turned out to be the more
+  important finding. V1 reads orders_raw.parquet, which lived only in data/processed and is
+  rewritten by the weekly ingest, so the final test's new primary comparator was unpinned
+  while v11's inputs were pinned. The index covered 340 SKUs against the rebaseline log's
+  337. A one-shot test whose primary comparator drifts is not reproducible, which is the
+  thing Section 2.2's two pins exist to prevent.
+  Froze a copy beside the pinned inputs and made the runner prefer it, falling back to
+  data/processed with a warning. Deliberately did not add it to manifest.json: snapshots are
+  written read-only and are meant to be immutable, so rewriting a manifest after the fact
+  would undermine the guarantee it exists to give. The file's md5 is recorded in
+  final_test.json instead, which is where it matters for this run.
+  Also corrected Section 1.6, which still claimed both tracks clear V1 in five of six cells.
+  It is four of six with both Oct-Dec cells lost, and has been since the 2026-08-11 profiling
+  fix changed the scored population. Added a paragraph to 4.34 reconciling it with 1.6, since
+  1.6 keeps the prototype as the bar for calling v11 the proposed method while 4.34 decides
+  shipping on V1, and a reader meeting both without explanation would think they disagree.

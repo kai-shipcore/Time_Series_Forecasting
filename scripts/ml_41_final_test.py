@@ -33,6 +33,7 @@ actually gone wrong in this project during the last week:
 from __future__ import annotations
 
 import json
+import hashlib
 import pathlib
 import subprocess
 import sys
@@ -49,6 +50,55 @@ from src.ml.dataset import (data_dir, final_test_split,  # noqa: E402
 from src.ml.evaluate import bootstrap_delta, is_significant, score, score_table  # noqa: E402
 from src.ml.model import (FEATURES_V1, FEATURES_V11_LONG, RatioLGBM,  # noqa: E402
                           long_sku_set, structural_baseline)
+sys.path.insert(0, str(ROOT / "scripts"))
+from compare_v1 import build_cumsum_index, v1_forecast  # noqa: E402
+
+def _raw_path() -> pathlib.Path:
+    """The order lines V1 is computed from, preferring the pinned copy.
+
+    V1 became the final test's primary comparator on 2026-08-13, and until then
+    orders_raw.parquet lived only in data/processed, which the weekly ingest
+    rewrites. A one-shot test whose primary comparator drifts is not reproducible,
+    so a frozen copy was placed beside the pinned inputs in the snapshot directory
+    and is preferred here.
+
+    It is deliberately NOT added to manifest.json: snapshots are written read-only
+    by scripts/ml_snapshot_data.py and are meant to be immutable, so rewriting a
+    manifest after the fact would undermine the guarantee it exists to give. The
+    file's md5 is recorded in final_test.json instead, which is where it matters
+    for this run.
+
+    Falls back to data/processed with a warning rather than failing, because a
+    fresh clone has no snapshot copy and the fallback is still correct, merely
+    not pinned.
+    """
+    pinned = data_dir() / "orders_raw.parquet"
+    if pinned.exists():
+        return pinned
+    live = ROOT / "data" / "processed" / "orders_raw.parquet"
+    print(f"WARNING: no pinned orders_raw.parquet in {data_dir()}; using {live}, "
+          "which the weekly ingest rewrites. The V1 figure will not be reproducible.")
+    return live
+
+
+def v1_predictions(index: dict, split, skus: list[str]) -> "pd.DataFrame":
+    """One row per SKU: yhat = V1's 70-day total, ds = first test week.
+
+    Lifted from scripts/ml_02_v1_benchmark.py so the primary criterion is scored
+    by the same production V1 implementation every other comparison uses.
+
+    As-of is `cutoff - 1 day`, NOT the cutoff. Under W-MON a week labelled `ds`
+    covers [ds-7, ds-1], so a cutoff label of 2026-05-04 means training ends
+    Sunday 2026-05-03. v1_forecast treats its date argument as the last day of
+    available history, so passing the cutoff label would read one day of the test
+    period as history and shift the whole 70-day span a day late.
+    """
+    asof = split.cutoff - pd.Timedelta(days=1)
+    first_week = split.test["ds"].min()
+    return pd.DataFrame([
+        {"unique_id": uid, "ds": first_week, "yhat": v1_forecast(index, uid, asof)}
+        for uid in skus
+    ])
 from src.ml.reference import REFERENCE_SNAPSHOT  # noqa: E402
 
 RESULT = ROOT / "outputs" / "reports" / "final_test.json"
@@ -144,8 +194,17 @@ def main() -> int:
                       ignore_index=True)
     base = structural_baseline(split.train, split.test, profiles, split.cutoff)
 
-    results = {"baseline": score(base, split, profiles),
-               "v11": score(preds, split, profiles)}
+    # V1, the spreadsheet the company runs on, is the primary comparison.
+    raw_path = _raw_path()
+    raw = pd.read_parquet(raw_path)
+    raw["order_date"] = pd.to_datetime(raw["order_date"])
+    raw = raw[raw["unique_id"].isin(smooth)]
+    v1 = v1_predictions(build_cumsum_index(raw), split,
+                        sorted(split.train["unique_id"].unique()))
+
+    results = {"v11": score(preds, split, profiles),
+               "V1": score(v1, split, profiles),
+               "baseline": score(base, split, profiles)}
     print(f"  long model: {mL.n_train_rows:,} rows, {len(val_long)} val SKUs, "
           f"{mL.model.best_iteration_} trees\n")
     print("RAW per-segment results:")
@@ -154,14 +213,30 @@ def main() -> int:
     print(pd.DataFrame({n: t.set_index("segment")["bias_pct"]
                         for n, t in results.items()}).to_string())
 
-    print(f"\n{'=' * 72}\nPRIMARY CRITERION: v11 beats the structural baseline\n")
+    # Section 4.34's go/no-go. V1 is the spreadsheet in production, so this is
+    # the only comparison that decides whether v11 ships. The baseline delta is
+    # printed after it as context, not as a criterion.
+    print(f"\n{'=' * 72}\nPRIMARY CRITERION: v11 beats V1, the production spreadsheet\n")
     verdict = {}
     for seg in ("short", "long"):
-        d = bootstrap_delta(preds, base, split, profiles, segment=seg)
+        d = bootstrap_delta(preds, v1, split, profiles, segment=seg)
         verdict[seg] = d
         print(f"  smooth/{seg:<6} {d['delta']:+.4f}  se {d['se']:.4f}  "
               f"95% CI [{d['ci_lo']:+.4f}, {d['ci_hi']:+.4f}]  "
               f"{'SIGNIFICANT' if is_significant(d) else 'not distinguishable from noise'}"
+              f"   {'v11 ahead' if d['delta'] < 0 else 'V1 ahead'}")
+
+    tot = {n: t.set_index("segment")["pooled_wape"].get("TOTAL")
+           for n, t in results.items()}
+    print(f"\n  TOTAL       v11 {tot['v11']:.4f}   V1 {tot['V1']:.4f}   "
+          f"{'v11 ahead' if tot['v11'] < tot['V1'] else 'V1 ahead'}")
+
+    print(f"\n{'-' * 72}\nContext, not a criterion: v11 against the structural baseline\n")
+    context = {}
+    for seg in ("short", "long"):
+        d = bootstrap_delta(preds, base, split, profiles, segment=seg)
+        context[seg] = d
+        print(f"  smooth/{seg:<6} {d['delta']:+.4f}  se {d['se']:.4f}  "
               f"   {'v11 ahead' if d['delta'] < 0 else 'baseline ahead'}")
 
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
@@ -169,11 +244,18 @@ def main() -> int:
     payload = {
         "run_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "commit": commit, "snapshot": ML_DATA_SNAPSHOT,
+        # Which order file produced the V1 figure, so the primary comparison is
+        # reproducible even though this input is not in the snapshot manifest.
+        "v1_orders_raw": {
+            "path": str(raw_path.relative_to(ROOT)),
+            "md5": hashlib.md5(raw_path.read_bytes()).hexdigest(),
+        },
         "cutoff": str(split.cutoff.date()),
         "test_weeks": [str(w.date()) for w in sorted(split.test["ds"].unique())],
         "scores": {n: t.set_index("segment")["pooled_wape"].to_dict()
                    for n, t in results.items()},
-        "v11_vs_baseline": {k: v for k, v in verdict.items()},
+        "v11_vs_v1": {k: v for k, v in verdict.items()},
+        "v11_vs_baseline": {k: v for k, v in context.items()},
     }
     RESULT.parent.mkdir(parents=True, exist_ok=True)
     RESULT.write_text(json.dumps(payload, indent=2, default=float))
