@@ -3791,3 +3791,27 @@ the files and not knowing whether anyone had looked.
   assembly covers every eligible SKU with no duplicate (sku, week) rows, verified on a
   development window; and bootstrap_delta's sign convention matches how the runner reports it.
   Preflight is green with zero blockers.
+
+2026-08-13  Ran the final test, once, and wrote it up as Section 4.35. Commit 4a19ca1,
+  snapshot 2026-08-03-v2, quarantined window cutoff 2026-05-04 with test weeks 2026-05-11 to
+  2026-07-13, 303 SKUs scored.
+  The primary criterion passed. v11 beat V1 on smooth/short by 0.1711 and smooth/long by
+  0.0548, both significant with intervals well clear of zero, and on TOTAL 0.1784 against
+  0.3059, an error 42% smaller than the spreadsheet's. The calibration gap is the bigger
+  practical difference: V1 under-forecasts by 28% overall and 34.9% on short SKUs, v11 by
+  0.0%. A method that is systematically a quarter low is not really a forecast error, it is a
+  standing stockout risk somebody corrects by hand.
+  v11 tied the structural baseline: +0.0048 on short and +0.0042 on long, both smaller than
+  one standard error, both intervals straddling zero. Nominally the moving average is ahead
+  in both segments. Section 4.35 leads with that alongside the V1 headline rather than
+  burying it, because it is the result's honest centre of gravity: the model is clearly
+  better than what it replaced, and it has not shown it earns its complexity over a twelve
+  week moving average with a seasonal round-trip. Across four windows it now beats that
+  baseline only in the post-holiday trough. The direction check written before the run
+  predicted a tie here, the final window being seasonally nearest Mar-May where v11 was
+  already level, so this is the predicted outcome rather than a surprise.
+  Recommended next step recorded as running the statistical prototype through this harness,
+  Section 5.4 item 1, so the three-way comparison finally uses one scoring path. That is
+  worth more than another feature.
+  Updated the version log's v11 entry and index row, OPERATIONS section 4 and MODEL_GUIDE
+  section 4 with the result and the caveat, and closed BACKLOG 26.

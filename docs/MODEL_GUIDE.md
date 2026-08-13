@@ -161,6 +161,17 @@ transcribed from them. The design doc's own v11 table had five of six prototype 
 transcribed wrong until 2026-08-13; if a number here ever disagrees with a table
 elsewhere, the logs win.
 
+**The final test has been run**, once, on 2026-08-13. On the quarantined window v11 beat V1
+on both segments and TOTAL, all significant: short 0.2061 against 0.3772, long 0.1324
+against 0.1872, TOTAL 0.1784 against 0.3059, with v11's total bias at 0.0% against V1's
+−28.0%. It **tied the structural baseline**, +0.0048 short and +0.0042 long, both inside one
+standard error. Section 4.35 of the design doc has the full entry. Read 4.34 first; the
+criteria were fixed before the run.
+
+That tie is the finding worth carrying forward: across four windows the learned model beats
+a seasonal moving average only in the post-holiday trough. Closing the gap in section 4
+below matters more than another feature.
+
 **Four of six against the legacy spreadsheet**, losing both Oct-Dec cells by 0.02 to 0.04.
 The headline result is Dec-Feb long: 0.1389 against a moving-average baseline's 0.2171 and
 the prototype's 0.2685. That cell had blocked every version since v1 and is where a plain

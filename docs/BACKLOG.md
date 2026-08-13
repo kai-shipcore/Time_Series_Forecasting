@@ -15,10 +15,13 @@ are three different things.
 
 | # | Item | Size |
 |---|---|---|
-| 26 | Run the final test, once | pre-registered, half a day |
 | 27 | Rewrite the three stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
 | 29 | Codebase cleanup: dead scripts and stale files | explicitly last, only if there is time |
+
+Item 26 closed on 2026-08-13: the final test ran once and passed its primary criterion,
+v11 against V1. It tied the structural baseline, which is recorded in Section 4.35 as the
+result's more important half rather than as a footnote.
 
 Item 28 closed on 2026-08-13: the cron now calls `scripts/ml_prepare_data.py`, which never
 touched the statsforecast track, so no live path reaches it.
@@ -1647,7 +1650,23 @@ deletion is possible. The extraction makes BACKLOG 6 a smaller job, which was it
 
 ## 26. Run the final test, once
 
-**Status: open. Pre-registered 2026-08-12 in `ML_FORECAST_DESIGN.md` section 4.34.**
+**Status: DONE 2026-08-13.** Ran once, at 12:02 PDT on commit `4a19ca1`, snapshot
+`2026-08-03-v2`. Result in `outputs/reports/final_test.json` and written up in design doc
+Section 4.35, with the criteria fixed beforehand in 4.34.
+
+**Primary criterion passed.** v11 beat V1 on smooth/short (−0.1711), smooth/long (−0.0548)
+and TOTAL (0.1784 against 0.3059), both segment deltas significant. v11's total bias is
+0.0% against V1's −28.0%.
+
+**It tied the structural baseline** (+0.0048 short, +0.0042 long, both inside one standard
+error). Whether the learned model earns its complexity over a seasonal moving average is
+therefore still open, and Section 4.35 says so rather than leading with the V1 headline.
+The cheapest next step is item 1 of Section 5.4, running the statistical prototype through
+this harness so the three-way comparison uses one scoring path.
+
+Original entry follows.
+
+**Pre-registered 2026-08-12 in `ML_FORECAST_DESIGN.md` section 4.34.**
 
 The final test window is quarantined by `ML_FINAL_TEST_CUTOFF` and has never been evaluated
 against during development, which is the only thing that makes it a test rather than another

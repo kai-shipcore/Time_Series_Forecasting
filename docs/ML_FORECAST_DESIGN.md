@@ -1763,6 +1763,82 @@ of them matter more than which forecaster wins one ten-week window.
 
 ---
 
+### 4.35 Final test: result
+
+**Run once, 2026-08-13T12:02:18-07:00, commit `4a19ca1`, snapshot `2026-08-03-v2`.**
+Recorded in `outputs/reports/final_test.json`, which the runner refuses to overwrite. The
+criteria in 4.34 were fixed before this ran and are not restated here in adjusted form.
+
+Quarantined window: cutoff 2026-05-04, test weeks 2026-05-11 to 2026-07-13, 303 SKUs scored.
+
+**Raw per-segment pooled WAPE, before any interpretation.**
+
+| segment | v11 | V1 | baseline |
+|---|---|---|---|
+| smooth/short | 0.2061 | 0.3772 | 0.2013 |
+| smooth/long | 0.1324 | 0.1872 | 0.1282 |
+| TOTAL | 0.1784 | 0.3059 | 0.1739 |
+
+**Bias %.**
+
+| segment | v11 | V1 | baseline |
+|---|---|---|---|
+| smooth/short | +4.2 | −34.9 | −4.4 |
+| smooth/long | −7.0 | −16.7 | −4.2 |
+| TOTAL | 0.0 | −28.0 | −4.3 |
+
+**Primary criterion: PASSED.** v11 beats V1 on smooth/short, smooth/long and TOTAL.
+
+| comparison | delta | se | 95% CI | verdict |
+|---|---|---|---|---|
+| short, v11 vs V1 | −0.1711 | 0.0215 | [−0.2135, −0.1269] | v11 ahead, significant |
+| long, v11 vs V1 | −0.0548 | 0.0174 | [−0.0879, −0.0198] | v11 ahead, significant |
+
+Both intervals exclude zero by a wide margin. On TOTAL, 0.1784 against 0.3059: v11's error
+is 42% smaller than the spreadsheet's. The direction check in 4.34 predicted v11 would win
+both segments comfortably, and it did.
+
+**Calibration is the larger practical difference.** V1 under-forecasts by 28% overall on
+this window and by 34.9% on short SKUs. v11's total bias is 0.0%. For an ordering system
+that is a bigger deal than the WAPE gap: a method that is systematically 28% low does not
+produce forecast error so much as a standing stockout risk that someone has to correct by
+hand.
+
+**Secondary, reported not decisive: v11 against the structural baseline is a tie.**
+
+| comparison | delta | se | 95% CI | verdict |
+|---|---|---|---|---|
+| short, v11 vs baseline | +0.0048 | 0.0108 | [−0.0169, +0.0255] | indistinguishable |
+| long, v11 vs baseline | +0.0042 | 0.0141 | [−0.0240, +0.0305] | indistinguishable |
+
+Both deltas are smaller than one standard error and both intervals straddle zero. **On this
+window a twelve-week moving average with a seasonal round-trip matches the LightGBM model.**
+Nominally the baseline is ahead in both segments, by less than half the noise floor, which
+is a tie and should be read as one.
+
+This is the result's honest centre of gravity and it should not be buried under the V1
+headline. The project's own framing has been consistent about it: Section 6 says beating
+v-base is necessary and not sufficient, and the development windows had v11 ahead of the
+baseline only in Dec-Feb. The final window is seasonally nearest Mar-May, where v11 was
+already level, so a tie here is the predicted outcome rather than a surprise. What the test
+establishes is that v11 is materially better than the method in production. What it does
+not establish is that the learned model earns its complexity over a moving average.
+
+**What follows from that, stated plainly.** Shipping v11 is justified on the criterion set
+in advance, and the calibration difference is a real operational gain. Someone continuing
+this work should nonetheless treat "does LightGBM beat a moving average" as open, because
+four windows now say it does not, except in the post-holiday trough. The cheapest honest
+next step is not another feature: it is Section 5.4 item 1, running the statistical
+prototype through this harness, so the three-way comparison is finally made with one
+scoring path.
+
+**Prior exposure.** `docs/HANDOVER.md` records that this window was evaluated once during
+development, on 2026-08-11, by `scripts/ml_34_asof_bucket_audit.py`. Nothing was tuned on
+it and the profiling has changed since, but a reader is entitled to know the window was not
+pristine.
+
+---
+
 ## 5. Feature Backlog & Open Questions
 
 ### 5.1 How features are added
@@ -1914,7 +1990,7 @@ where a table here disagrees.
 | v8 | separate models per segment | rejected | Section 6 |
 | v9 | holiday window ends mid-December, inside v3 | superseded by v11 | Section 4.25 |
 | v10 | hyperparameters tuned on the internal validation slice | rejected; current settings retained | Section 6 |
-| v11 | hybrid: shared short model + dedicated long model with an elevation feature | **BEST**, all criteria met; final test pending | Section 4.27 |
+| v11 | hybrid: shared short model + dedicated long model with an elevation feature | **BEST**, all criteria met; final test PASSED 2026-08-13 | Sections 4.27, 4.35 |
 | v12 | + SKU age feature in the shared (short) model | rejected | Section 4.28 |
 | v13 | acceleration feature: two independent tests (short model, and long model) | both rejected | Section 6 |
 | v14 | `min_child_samples` swept for the collapsing tail | rejected at every value tested | Section 6 |
@@ -2580,7 +2656,10 @@ carry gradual-growth signal. The Dec-Feb win, like the v9 window, ultimately res
 observed Decembers, though the elevation feature is trained on every elevated-then-reverted
 episode across all long SKUs and weeks, not on December alone.
 
-**Status: all three criteria met. New BEST. Final test not yet run.**
+**Status: all three criteria met. New BEST. Final test run 2026-08-13 and PASSED** on its
+primary criterion, v11 against V1: short −0.1711 and long −0.0548, both significant, TOTAL
+0.1784 against 0.3059. Against the structural baseline it is a tie on that window, +0.0048
+and +0.0042, both inside one standard error. Full result in Section 4.35.
 
 Re-measured on snapshot **2026-08-03-v2** (Section 4.32). Raw output:
 `docs/rebaseline_2026-08-03-v2/ml_22_v11_hybrid.log`.

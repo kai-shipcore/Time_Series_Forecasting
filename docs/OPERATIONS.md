@@ -170,10 +170,24 @@ elsewhere, the logs win.
 The Oct-Dec short cell is marked reference-only because just 14 short SKUs were eligible at
 that cutoff, too few to conclude anything from.
 
-> **If a final-test result exists**, it is recorded in `ML_FORECAST_DESIGN.md` in its own
-> section, separate from the section 4.34 pre-registration written before the test was run.
-> The pre-registration states what would count as a pass and what would count as a failure.
-> Read it before the result, not after.
+**The final test, run once on 2026-08-13.** On the quarantined window (cutoff 2026-05-04,
+weeks 2026-05-11 to 2026-07-13, 303 SKUs):
+
+| segment | v11 | V1 (spreadsheet) |
+|---|---|---|
+| smooth/short | 0.2061 | 0.3772 |
+| smooth/long | 0.1324 | 0.1872 |
+| TOTAL | 0.1784 | 0.3059 |
+
+v11's error is 42% smaller than the spreadsheet's overall, and both segment differences are
+statistically significant. Calibration matters more day to day: V1 under-forecasts by 28%
+overall, v11 by 0.0%.
+
+**The honest caveat.** On the same window v11 only ties a plain twelve-week moving average
+with a seasonal adjustment (+0.0048 and +0.0042, both inside the noise). The model is
+clearly better than what it replaced; whether the machine learning earns its keep over a
+much simpler method is not settled. Full detail in `ML_FORECAST_DESIGN.md` section 4.35,
+with the criteria fixed beforehand in 4.34.
 
 ---
 
