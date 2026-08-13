@@ -204,9 +204,12 @@ def check_referenced_paths() -> None:
 
     # Informational. A live document pointing at a moved file is worth fixing; a
     # historical record naming a deleted one is correct and must be left alone.
+    # Documents whose subject is a change, so naming files that no longer exist is
+    # the point of them rather than a defect.
     historical = {"WORKLOG.md", "BACKLOG.md", "CUTOVER_TASK.md", "DEPLOY_TASK.md",
                   "INVENTORY_EXPORT_TASK.md", "V1_AND_DASHBOARD_WIRING_TASK.md",
-                  "PLANNING_PLAN.md", "PLANNING_REQUIREMENTS.md"}
+                  "PLANNING_PLAN.md", "PLANNING_REQUIREMENTS.md",
+                  "VERIFICATION_2026-08-13.md"}
     live_docs = [p for p in ROOT.glob("docs/*.md") if p.name not in historical]
     stale = scan(live_docs, False)
     if stale:

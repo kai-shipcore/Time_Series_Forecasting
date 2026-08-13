@@ -3622,3 +3622,27 @@ the files and not knowing whether anyone had looked.
   src/legacy/__init__.py, api/legacy/routes.py, CODEBASE_GUIDE 1.1, OPERATIONS sections 2, 3,
   5 and 10, MODEL_GUIDE section 8, and DEPLOYMENT's weekly-run section and POST endpoint
   counts, which went from eight to four across the day.
+
+2026-08-13  Built two verification checkers and wrote docs/VERIFICATION_2026-08-13.md, after
+  being asked how to be certain nothing was broken. The honest answer was that I could not be,
+  from argument alone, so the checks came first.
+  scripts/verify_repo.py runs eight checks with no database and no network. It found eleven
+  stale path references left by the day's moves, and two that predate them and would have cost
+  someone an afternoon: src/planning/data.py supplies the remediation hints /health prints when
+  a required file is missing, and two of them named scripts that do not exist, ml_evaluate.py
+  and v1_forward.py, where the real producers are ml_accuracy_report.py and
+  ml_forward_forecast.py. The message an operator reads at their least patient moment was
+  pointing at nothing.
+  scripts/verify-api-routes.mjs does the equivalent for the Next app, which TypeScript cannot:
+  a fetch URL is a string, so deleting the route it points at compiles cleanly and fails at
+  runtime. 135 routes, 178 distinct calls, all resolving. Its first version reported three
+  false failures on /api/auth, because NextAuth is mounted at a [...nextauth] catch-all and the
+  app passes the bare basePath, which needs the catch-all to match zero segments.
+  Both checkers run a negative control, and both controls were exercised rather than assumed:
+  a real fetch was repointed at a nonexistent route and the file restored byte-identical
+  afterwards. The first attempt at that control edited a comment rather than the fetch and
+  reported a false pass, which is the same class of mistake as the three earlier versions of
+  the route probe. Three times in one day is enough to treat "did I watch it fail" as the
+  default question.
+  Also corrected CODEBASE_GUIDE's claim that src/ml/features.py is being restructured. No such
+  file exists; the restart folded feature building into model.py:build_matrix.
