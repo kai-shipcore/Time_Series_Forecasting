@@ -1814,33 +1814,56 @@ pooled WAPE only, which is what the criteria in 4.34 were written against. The 0
 −28.0% gap is large enough that noise is an implausible explanation on 303 SKUs, but that is
 an argument rather than a measurement, and it is labelled as one here.
 
-**Secondary, reported not decisive: v11 against the structural baseline is a tie.**
+**Secondary, reported not decisive: v11 against the structural baseline on this window.**
 
 | comparison | delta | se | 95% CI | verdict |
 |---|---|---|---|---|
 | short, v11 vs baseline | +0.0048 | 0.0108 | [−0.0169, +0.0255] | indistinguishable |
 | long, v11 vs baseline | +0.0042 | 0.0141 | [−0.0240, +0.0305] | indistinguishable |
 
-Both deltas are smaller than one standard error and both intervals straddle zero. **On this
-window a twelve-week moving average with a seasonal round-trip matches the LightGBM model.**
-Nominally the baseline is ahead in both segments, by less than half the noise floor, which
-is a tie and should be read as one.
+Both deltas are smaller than one standard error. On this window v11 and a twelve-week
+moving average with a seasonal round-trip are the same forecaster within noise.
 
-This is the result's honest centre of gravity and it should not be buried under the V1
-headline. The project's own framing has been consistent about it: Section 6 says beating
-v-base is necessary and not sufficient, and the development windows had v11 ahead of the
-baseline only in Dec-Feb. The final window is seasonally nearest Mar-May, where v11 was
-already level, so a tie here is the predicted outcome rather than a surprise. What the test
-establishes is that v11 is materially better than the method in production. What it does
-not establish is that the learned model earns its complexity over a moving average.
+**Read across all four windows, that tie is the expected result rather than a
+disappointment**, and the fuller picture is the more useful claim. Collecting every
+v11-against-baseline comparison the project has made:
 
-**What follows from that, stated plainly.** Shipping v11 is justified on the criterion set
-in advance, and the calibration difference is a real operational gain. Someone continuing
-this work should nonetheless treat "does LightGBM beat a moving average" as open, because
-four windows now say it does not, except in the post-holiday trough. The cheapest honest
-next step is not another feature: it is Section 5.4 item 1, running the statistical
-prototype through this harness, so the three-way comparison is finally made with one
-scoring path.
+| window | segment | baseline | v11 | WAPE delta | baseline bias | v11 bias |
+|---|---|---|---|---|---|---|
+| Mar-May | short | 0.2141 | 0.1926 | −0.0215 | −8.0% | +8.3% |
+| Mar-May | long | 0.1311 | 0.1350 | +0.0039 | −2.1% | −6.2% |
+| Dec-Feb | short | 0.1923 | 0.1994 | +0.0070 | +2.1% | +0.4% |
+| **Dec-Feb** | **long** | **0.2171** | **0.1389** | **−0.0782, significant** | **+16.7%** | **+4.3%** |
+| **Oct-Dec** | **short** | **0.4605** | **0.2473** | **−0.2132, significant** | **−46.0%** | **+7.5%** |
+| Oct-Dec | long | 0.1215 | 0.1040 | −0.0174 | −8.2% | −0.9% |
+| Final test | short | 0.2013 | 0.2061 | +0.0048 | −4.4% | +4.2% |
+| Final test | long | 0.1282 | 0.1324 | +0.0042 | −4.2% | −7.0% |
+
+**Across eight cells v11 is never significantly worse than the baseline, and is
+significantly better in two.** Every cell where the baseline nominally leads sits inside
+half a standard error. The two decisive cells are the seasonal turning points: the Q4
+ramp-up, where a trailing average under-forecasts new and growing SKUs by 46% and v11 by
+7.5%, and the post-holiday collapse, where the baseline over-forecasts established SKUs by
+16.7% and v11 by 4.3%.
+
+That is weak dominance, and it is the failure mode the architecture predicts. A moving
+average cannot turn a corner it has not yet seen; the seasonal round-trip handles the
+calendar but not the level change around it, and the learned residual is what closes that
+gap. The value is concentrated rather than uniform, which is also `HANDOVER.md` finding 2.
+
+**The bias half was bootstrapped separately**, on the three development windows, as a
+post-hoc analysis rather than a pre-registered criterion. The paired difference in absolute
+bias was −0.123 (95% CI [−0.157, −0.075]) for Dec-Feb long and −0.356 (95% CI
+[−0.497, −0.110]) for Oct-Dec short, both favouring v11; the remaining dev cells straddle
+zero. The final window's bias figures are reported above but were not bootstrapped, and the
+quarantined window was not re-run to do so.
+
+**So the honest reading of the final test is not "it tied".** It is that the final window,
+May to July, is a flat stretch, and in flat stretches v11 and the baseline are the same
+forecaster. The model earns its keep at the turning points, which this window does not
+contain, and 4.34's direction check said so before the run. What remains genuinely
+unproven is the wide middle: whether v11 helps in ordinary quarters, on this evidence, it
+does not, and it does not hurt either.
 
 **Prior exposure.** `docs/HANDOVER.md` records that this window was evaluated once during
 development, on 2026-08-11, by `scripts/ml_34_asof_bucket_audit.py`. Nothing was tuned on

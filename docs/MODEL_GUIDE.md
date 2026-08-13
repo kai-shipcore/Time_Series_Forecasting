@@ -164,13 +164,20 @@ elsewhere, the logs win.
 **The final test has been run**, once, on 2026-08-13. On the quarantined window v11 beat V1
 on both segments and TOTAL, all significant: short 0.2061 against 0.3772, long 0.1324
 against 0.1872, TOTAL 0.1784 against 0.3059, with v11's total bias at 0.0% against V1's
-−28.0%. It **tied the structural baseline**, +0.0048 short and +0.0042 long, both inside one
-standard error. Section 4.35 of the design doc has the full entry. Read 4.34 first; the
-criteria were fixed before the run.
+−28.0%. It matched the structural baseline on that window, +0.0048 short and +0.0042 long, both
+inside one standard error. Section 4.35 has the full entry; read 4.34 first, the criteria
+were fixed before the run.
 
-That tie is the finding worth carrying forward: across four windows the learned model beats
-a seasonal moving average only in the post-holiday trough. Closing the gap in section 4
-below matters more than another feature.
+**That match is expected and is not the whole picture.** Across all four windows and eight
+segment cells, v11 is never significantly worse than the baseline and is significantly
+better in two, on both WAPE and bias: Oct-Dec short (0.4605 to 0.2473, bias −46.0% to
++7.5%) and Dec-Feb long (0.2171 to 0.1389, bias +16.7% to +4.3%). Both are seasonal turning
+points. The final window, May to July, is a flat stretch, and in flat stretches the two are
+the same forecaster.
+
+So the model's value is concentrated at the corners a trailing average cannot turn, which is
+what the architecture predicts and what HANDOVER finding 2 already says. What stays unproven
+is the wide middle: in ordinary quarters v11 neither helps nor hurts on this evidence.
 
 **Four of six against the legacy spreadsheet**, losing both Oct-Dec cells by 0.02 to 0.04.
 The headline result is Dec-Feb long: 0.1389 against a moving-average baseline's 0.2171 and

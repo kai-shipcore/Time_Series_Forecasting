@@ -185,11 +185,20 @@ statistically significant. On calibration, V1 came in 28% low over this window a
 Note that V1's bias is season-dependent rather than always low: it ran 12.9% high in the
 post-holiday window.
 
-**The honest caveat.** On the same window v11 only ties a plain twelve-week moving average
-with a seasonal adjustment (+0.0048 and +0.0042, both inside the noise). The model is
-clearly better than what it replaced; whether the machine learning earns its keep over a
-much simpler method is not settled. Full detail in `ML_FORECAST_DESIGN.md` section 4.35,
-with the criteria fixed beforehand in 4.34.
+**Where the model earns its keep.** On this particular window v11 matches a plain
+twelve-week moving average with a seasonal adjustment. That is expected: May to July is a
+flat stretch. Across all four evaluation windows v11 is never significantly worse than that
+simple method and is significantly better at the two seasonal turning points, which is where
+ordering actually goes wrong:
+
+| | moving average | v11 |
+|---|---|---|
+| Q4 ramp-up, new and growing SKUs | 46% under-forecast | 7.5% |
+| after the holidays, established SKUs | 16.7% over-forecast | 4.3% |
+
+A trailing average cannot turn a corner it has not yet seen. That is the gap the model
+closes, and it is concentrated rather than spread evenly across the year. Full detail in
+`ML_FORECAST_DESIGN.md` section 4.35, with the criteria fixed beforehand in 4.34.
 
 ---
 

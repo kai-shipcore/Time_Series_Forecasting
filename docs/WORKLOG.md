@@ -3815,3 +3815,28 @@ the files and not knowing whether anyone had looked.
   worth more than another feature.
   Updated the version log's v11 entry and index row, OPERATIONS section 4 and MODEL_GUIDE
   section 4 with the result and the caveat, and closed BACKLOG 26.
+
+2026-08-13  Corrected how the final test result is framed, after the user pushed back on
+  "it tied the baseline". That was true of the final window in isolation and misleading as a
+  summary, because it flattened a consistent structure that both metrics agree on.
+  Collected every v11-against-baseline comparison across the four windows. In eight segment
+  cells v11 is never significantly worse and is significantly better in two, and the two are
+  the same on WAPE and on bias: Oct-Dec short, where a trailing average under-forecasts the
+  Q4 ramp by 46% against v11's 7.5% and WAPE runs 0.4605 against 0.2473, and Dec-Feb long,
+  where the baseline over-forecasts the post-holiday trough by 16.7% against 4.3% and WAPE
+  runs 0.2171 against 0.1389. Every cell where the baseline nominally leads sits inside half
+  a standard error.
+  That is weak dominance and it is the failure mode the architecture predicts: a moving
+  average cannot turn a corner it has not seen, the seasonal round-trip handles the calendar
+  but not the level change around it, and the learned residual closes that gap. It is also
+  HANDOVER finding 2, the value being concentrated rather than uniform, arriving from a
+  different direction.
+  It reframes the final test rather than contradicting it. May to July is a flat stretch, and
+  in flat stretches the two are the same forecaster, which 4.34's direction check predicted
+  before the run. What stays genuinely unproven is the wide middle: in ordinary quarters v11
+  neither helps nor hurts on this evidence.
+  Bootstrapped the bias difference on the three development windows to check the calibration
+  half rather than assert it: −0.123 (95% CI [−0.157, −0.075]) for Dec-Feb long and −0.356
+  (95% CI [−0.497, −0.110]) for Oct-Dec short, both favouring v11, the rest straddling zero.
+  Post-hoc rather than pre-registered, and labelled as such. The quarantined window was not
+  re-run for it.
