@@ -36,47 +36,46 @@ cd "$REPO_ROOT"
 
 echo "=== $(date -u '+%Y-%m-%d %H:%M:%S UTC') : starting forecast run ==="
 
-# Two pipelines, in this order, because they are not independent.
+# One pipeline: sync, ingest, clean, profile, forecast.
 #
-# The legacy statsforecast run comes first and does the ingest: it pulls fresh
-# order lines from the database and writes data/processed/sales_clean.parquet.
-# It also writes the shipcore.fc_* tables, which SKU Planning still reads
-# (docs/BACKLOG.md item 6 keeps that path in service pending a wider refactor),
-# so it is not optional even though the two live planning screens no longer use
-# its forecasts.
+# This used to be two, and the first of them was the statsforecast run, kept in
+# the weekly job long after its forecasts stopped being used because it was the
+# only thing that wrote data/processed/sales_clean.parquet. The ML run then read
+# what it produced. That dependency was invisible in the worst way: deleting the
+# statsforecast track would not have errored, the ML forecast would have carried
+# on being served and quietly stopped moving.
 #
-# The ML run comes second and has no ingest of its own. It reads the sales file
-# the first run just refreshed, and writes ml_forward_forecasts plus a row per
-# SKU into the accumulating ml_forecast_history. Until 2026-08-04 this script
-# ran only the first of the two, so the Action List and Forecast Validation were
-# serving whichever forecast someone had last produced by hand, and the history
-# store never gained a real run. The readiness check and the history backup at
-# the end of this file were both already written for the ML run, which is what
-# made the omission easy to miss.
+# scripts/ml_prepare_data.py already did the whole ML-only sequence and had done
+# since it was written, for the Action List's Run Forecast button. Pointing the
+# cron at it removes the statsforecast dependency without adding a script, and
+# gains the property the two-script version never had: it stages every artifact
+# in a sibling directory and commits with os.replace only after the forecast has
+# succeeded. A crash, a dropped SSH session or a failed step now leaves last
+# week's files intact and being served, instead of a half-updated set where
+# segmentation describes one week and sales describe another. That was the
+# BACKLOG 15 fix, and until now the weekly run did not benefit from it.
 #
-# --snapshot live is load-bearing. Without it the ML script defaults to
-# config.ML_DATA_SNAPSHOT, the pinned copy that exists so recorded evaluation
-# figures cannot drift. A weekly forward run against a frozen snapshot would
-# produce the same forecast every week and look like it was working.
-legacy_status=0
+# --force because it refuses to overwrite live files by default, which is the
+# right default everywhere except here.
+#
+# The forecast step inside it runs ml_forward_forecast.py --snapshot live.
+# "live" is load-bearing: the default is config.ML_DATA_SNAPSHOT, the pinned copy
+# that exists so recorded evaluation figures cannot drift, and a weekly run
+# against a frozen snapshot would produce the same forecast every week and look
+# like it was working.
+#
+# The shipcore.fc_* tables are no longer written by this job. Their two screens
+# were deleted in August 2026 and the statsforecast code is kept as a record
+# under api/legacy/ and src/legacy/ rather than run. See docs/BACKLOG.md item 6.
 ml_status=0
 
-echo "--- legacy statsforecast run (ingest + shipcore.fc_*) ---"
-.venv/bin/python scripts/run_forward_forecast.py || legacy_status=$?
-if [ "$legacy_status" -ne 0 ]; then
-  echo "WARNING: legacy forecast run failed with exit code $legacy_status."
-  echo "  SKU Planning will be stale, and the ML run below reads the sales file"
-  echo "  this run refreshes, so its forecast may be built on older demand."
-fi
-
-echo "--- ML run (ml_forward_forecasts + ml_forecast_history) ---"
-# Attempted even when the legacy run failed. The two serve different screens,
-# and a failure in the legacy backtest stage says nothing about whether the ML
-# forecast can be produced. The warning above records the caveat when it applies.
-.venv/bin/python scripts/ml_forward_forecast.py --snapshot live || ml_status=$?
+echo "--- forecast pipeline (sync, ingest, clean, profile, forecast) ---"
+.venv/bin/python scripts/ml_prepare_data.py --force || ml_status=$?
 if [ "$ml_status" -ne 0 ]; then
-  echo "ERROR: ML forecast run failed with exit code $ml_status."
-  echo "  The Action List and Forecast Validation will serve the previous run."
+  echo "ERROR: the forecast pipeline failed with exit code $ml_status."
+  echo "  Nothing was committed: the previous run's files are intact and still"
+  echo "  being served, so the Action List and Forecast Validation show last"
+  echo "  week's forecast rather than an error."
 fi
 
 if [ "$ml_status" -ne 0 ]; then
@@ -126,13 +125,12 @@ else
   echo "WARNING: $HIST does not exist after a successful run; nothing to back up."
 fi
 
-# Non-zero when either pipeline failed, so cron mails on the Monday it breaks.
-# The ML failure already exited above; this catches a legacy failure that the ML
-# run survived, which is a real problem for SKU Planning even though the two
-# screens this project owns are fine.
-if [ "$legacy_status" -ne 0 ]; then
-  echo "=== $(date -u '+%Y-%m-%d %H:%M:%S UTC') : done, with the legacy run failed ==="
-  exit "$legacy_status"
-fi
-
+# There is no second status to check any more. When the job was two pipelines this
+# is where a legacy failure that the ML run had survived was turned into a non-zero
+# exit, so cron would mail about it. One pipeline has one status, and it exits above.
+#
+# Note for anyone re-adding a step: `set -u` is on, so referring to a status
+# variable that is never assigned aborts the script rather than being treated as
+# empty. That is the desired behaviour and it is why this block was deleted rather
+# than left pointing at a variable that no longer exists.
 echo "=== $(date -u '+%Y-%m-%d %H:%M:%S UTC') : done ==="

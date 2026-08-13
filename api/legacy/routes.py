@@ -1837,7 +1837,7 @@ def run_forecast(horizon: int = Query(default=13, ge=1, le=104)):
         proc = None
         try:
             proc = subprocess.Popen(
-                [sys.executable, str(ROOT / "scripts" / "run_forward_forecast.py"),
+                [sys.executable, str(ROOT / "scripts" / "legacy" / "run_forward_forecast.py"),
                  "--horizon", str(horizon)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

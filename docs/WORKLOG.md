@@ -3559,3 +3559,35 @@ the files and not knowing whether anyone had looked.
   endpoints" to seven in DEPLOYMENT.md and in the hourly reachability workflow's comment, and
   replaced the .env.example block with a note saying the values do nothing, so anyone copying
   an older .env learns why they vanished rather than assuming an omission.
+
+2026-08-13  Took the statsforecast track out of the live path, closing BACKLOG 28 without
+  writing any code. The weekly cron ran run_forward_forecast.py first because it was the only
+  thing that wrote sales_clean.parquet, so production ran a full cross-validation and model
+  selection every Tuesday in order to obtain two files, and the LightGBM forecast depended on
+  a track nobody maintains. The dependency was invisible in the worst way: deleting the
+  statsforecast code would not have errored, the forecast would have kept being served and
+  quietly stopped moving.
+  Wrote scripts/run_ingest.py to extract the shared steps, then deleted it before committing,
+  because scripts/ml_prepare_data.py already did exactly that sequence and had since it was
+  written for the Action List's Run Forecast button. Worse, the new script wrote straight into
+  data/processed/ rather than staging, which would have reintroduced the hazard BACKLOG 15
+  fixed: a run interrupted between the sales file and the profile leaves segmentation
+  describing one week and sales describing another. Checking whether the thing already existed
+  would have saved the detour.
+  So the change is one line: the cron calls ml_prepare_data.py --force instead of
+  run_forward_forecast.py plus ml_forward_forecast.py --snapshot live. The weekly run is now
+  strictly safer than before, which was not the goal but is the larger effect, because
+  ml_prepare_data stages every artifact and commits with os.replace only after the forecast
+  succeeds. Until now the weekly run was the one path that did not benefit from that work.
+  Also removed the trailing block that turned a second status variable into a non-zero exit.
+  With one pipeline there is one status and it exits earlier; leaving the block would have
+  referenced an unassigned variable under set -u, which aborts rather than reading as empty.
+  Moved scripts/run_forward_forecast.py to scripts/legacy/ with a README covering why it is
+  kept, what replaced it, and why running it casually on the production machine is not
+  harmless: without --skip-ingest it rewrites sku_profiles.csv and moves segmentation
+  underneath a LightGBM forecast that did not change, which is BACKLOG item 7. Fixed the spawn
+  path in api/legacy/routes.py that pointed at the old location. The shipcore.fc_* tables are
+  no longer written by anything.
+  Earlier the same day, moved api/legacy.py into api/legacy/ as routes.py with an __init__.py
+  exporting the router, at the user's request, so the superseded work reads as a section of
+  the repository rather than a stray module. Route parity held at 34 throughout.

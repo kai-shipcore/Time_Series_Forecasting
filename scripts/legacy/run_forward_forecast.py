@@ -12,7 +12,7 @@ Run whenever new data arrives (weekly cron or manually):
 import sys, time, copy, argparse
 from datetime import date, datetime, timezone
 from pathlib import Path
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 import numpy as np

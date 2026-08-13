@@ -16,8 +16,10 @@ are three different things.
 | # | Item | Size |
 |---|---|---|
 | 6 | Retire the old Demand Forecast page, and SKU Planning's forecast tab with it | see the 2026-08-13 note in that section |
-| 28 | Separate the ingest from the statsforecast run | required by 6, half a day |
 | 29 | Codebase cleanup: dead scripts and stale files | explicitly last, only if there is time |
+
+Item 28 closed on 2026-08-13: the cron now calls `scripts/ml_prepare_data.py`, which never
+touched the statsforecast track, so no live path reaches it.
 | 26 | Run the final test, once | pre-registered, half a day |
 | 27 | Rewrite the three stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
@@ -1678,7 +1680,11 @@ The design doc and `CODEBASE_GUIDE.md` are current, having been updated alongsid
 
 ## 28. Separate the ingest from the statsforecast run
 
-**Status: open, and it became necessary rather than optional on 2026-08-13**, when the
+**Status: DONE 2026-08-13, and it needed no new code.** What was actually wrong, and the
+one-line fix, are recorded after the original entry. The analysis below was right about the
+problem and wrong about the solution, which is worth keeping rather than overwriting.
+
+**Original status: open, and it became necessary rather than optional on 2026-08-13**, when the
 decision was taken to delete SKU Planning's forecast tab as well as the Demand Forecast
 page. Until then the statsforecast track had live consumers and the entanglement below was
 merely untidy.
@@ -1722,6 +1728,41 @@ with nothing erroring.
 `sku_profiles.csv` are byte-identical before and after for the same input week. Compare
 checksums across the split rather than assuming, since the profiling has already been the
 source of one silent population change (Section 4.32 of the design doc).
+
+### What was actually done, 2026-08-13
+
+**No script was written, because the right one already existed.**
+`scripts/ml_prepare_data.py` has performed sync, ingest, clean, profile and then the
+LightGBM forecast since it was written for the Action List's Run Forecast button. It
+touches no statsforecast code at all. The cron was calling two other scripts and had simply
+never been pointed at it.
+
+So the fix was one line in `run_forecast_cron.sh`: replace `run_forward_forecast.py` plus
+`ml_forward_forecast.py --snapshot live` with `ml_prepare_data.py --force`.
+
+**A new `scripts/run_ingest.py` was written first and then deleted**, before it was
+committed. It duplicated the first three steps of `ml_prepare_data.py` and, more
+importantly, wrote straight into `data/processed/` rather than staging. That would have
+reintroduced exactly the hazard BACKLOG 15 fixed: a run interrupted between the sales file
+and the profile leaves segmentation describing one week and sales describing another, with
+nothing on any screen saying so. Recorded because the mistake is an easy one, and the
+lesson generalises: check whether the thing already exists before extracting it.
+
+**The weekly run is now strictly safer than before**, which was not the goal but is the
+larger effect. `ml_prepare_data.py` stages every artifact in a sibling directory and
+commits with `os.replace` only after the forecast succeeds, so a crash or a dropped SSH
+session leaves last week's files intact and being served. The two-script version had no
+such protection, so until now the weekly run was the one path that did not benefit from the
+BACKLOG 15 work.
+
+**`scripts/run_forward_forecast.py` moved to `scripts/legacy/`** with a README explaining
+why it is kept and why running it casually on the production machine is not harmless. The
+`shipcore.fc_*` tables are no longer written by anything.
+
+**Still to verify on the server**, since it cannot be checked from a machine without
+database access: that the first cron run after this change produces a `sales_clean.parquet`
+and `sku_profiles.csv` consistent with the previous week's. The staging behaviour means a
+failure is safe, but a silent difference in the profile counts would not be.
 
 ---
 
