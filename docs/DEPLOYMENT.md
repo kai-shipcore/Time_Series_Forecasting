@@ -303,9 +303,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now coverland-forecast-api
 ```
 
-Bound to `127.0.0.1`, not `0.0.0.0`. On a shared box the service has no reason
-to accept connections from anywhere but the Next.js process beside it, and
-binding to the loopback enforces that whatever the firewall says.
+Bound to `0.0.0.0` since 2026-08-07, so the service accepts connections from
+outside the box. That change is documented in "Reaching the deployed service
+from a laptop" above. `FORECAST_API_TOKEN` is the perimeter, not the bind
+address.
 
 Allow the deploy user to restart this one unit with passwordless sudo.
 

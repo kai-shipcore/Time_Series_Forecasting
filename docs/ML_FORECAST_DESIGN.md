@@ -1757,9 +1757,9 @@ recommendation is to keep the spreadsheet. A validation exercise that stops a mo
 model replacing a working one on the strength of development-window results has done its
 job. That outcome is reported as prominently as the alternative.
 
-**What no result changes.** Findings 1 through 10 in `docs/archive/HANDOVER.md` stand either way.
-They concern the evaluation, the data and the pipeline rather than this model, and several
-of them matter more than which forecaster wins one ten-week window.
+**What no result changes.** The caveats in `OVERVIEW.md` Section 7 and `MODEL.md` Section 6
+stand either way. They concern the evaluation, the data and the pipeline rather than this
+model, and several of them matter more than which forecaster wins one ten-week window.
 
 ---
 
@@ -1849,7 +1849,8 @@ ramp-up, where a trailing average under-forecasts new and growing SKUs by 46% an
 That is weak dominance, and it is the failure mode the architecture predicts. A moving
 average cannot turn a corner it has not yet seen; the seasonal round-trip handles the
 calendar but not the level change around it, and the learned residual is what closes that
-gap. The value is concentrated rather than uniform, which is also `archive/HANDOVER.md` finding 2.
+gap. The value is concentrated rather than uniform (`OVERVIEW.md` Section 6, "Where the model
+actually earns its keep").
 
 **The bias half was bootstrapped separately**, on the three development windows, as a
 post-hoc analysis rather than a pre-registered criterion. The paired difference in absolute
@@ -1865,7 +1866,7 @@ contain, and 4.34's direction check said so before the run. What remains genuine
 unproven is the wide middle: whether v11 helps in ordinary quarters, on this evidence, it
 does not, and it does not hurt either.
 
-**Prior exposure.** `docs/archive/HANDOVER.md` records that this window was evaluated once during
+**Prior exposure.** `OVERVIEW.md` Section 7 records that this window was evaluated once during
 development, on 2026-08-11, by `scripts/ml_34_asof_bucket_audit.py`. Nothing was tuned on
 it and the profiling has changed since, but a reader is entitled to know the window was not
 pristine.

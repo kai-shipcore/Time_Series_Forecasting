@@ -4211,3 +4211,20 @@ the files and not knowing whether anyone had looked.
   `--no-sync` is the flag for picking up after a sync that was already triggered.
   Confirmed `data/processed` was untouched by the interrupt, which is the 2026-08-05 staging
   design working as intended, and removed the one orphaned directory.
+
+- 2026-08-14: Consolidated V1 parameters into a single source of truth. `scripts/compare_v1.py`
+  now imports `V1_WINDOWS` and `SEASONAL` from `src/v1.py` instead of defining its own copies.
+  The import chain is `src/v1.py` → `compare_v1.py` → `src/ml/serving/v1.py` → all benchmark
+  and accuracy scripts. Documented in `src/v1.py` docstring, CODEBASE_GUIDE.md, and OVERVIEW.md.
+
+- 2026-08-14: Fixed tooltip bug on the demand vs forecast chart (Commerce_Integration). The
+  forward curve's anchor point (bridging the last actual to the first forecast) showed the
+  actual value as a duplicate "Forecast" entry in unified hover. Split the anchor into a
+  separate trace with `hoverinfo: "skip"`.
+
+- 2026-08-14: Documentation rewrite (BACKLOG #27). Wrote four-document set from scratch:
+  OVERVIEW.md, MODEL.md, DATA_AND_PIPELINE.md, SCREENS.md with Korean counterparts. Renamed
+  LEARNING_NOTES to MODEL_PRIMER.md as a plain-language explainer. Stripped PROJECT_WRITEUP
+  to interview study notes. Deleted four fully superseded archive docs (HANDOVER, OPERATIONS,
+  MODEL_GUIDE, FUTURE_WORK). Updated all cross-references in live documents. Marked stale
+  accuracy report defect as fixed.

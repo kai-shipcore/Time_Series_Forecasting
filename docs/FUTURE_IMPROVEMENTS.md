@@ -17,30 +17,14 @@ least 0.01.
 
 ## 0. Fix these first
 
-Not improvements. Things that are currently wrong. Two of the three found on 2026-08-14 were
-fixed the same day and are recorded here as done, so nobody re-opens them; one remains.
+Not improvements. Things that were wrong. All three found on 2026-08-14 were fixed the same
+day and are recorded here so nobody re-opens them.
 
-### 0.1 STILL OPEN: the accuracy report behind Forecast Validation is stale
+### 0.1 DONE 2026-08-14: the accuracy report behind Forecast Validation was stale
 
-`outputs/reports/ml_accuracy.csv` and `ml_accuracy_by_sku.csv` are dated 2026-07-30 and
-predate the profiling fix of 2026-08-11, the threshold alignment of 2026-08-12 and the V1
-as-of fix of 2026-08-13. Both files are tracked, so the stale copies are what the server
-deploys. Sections 01 and 05 of Forecast Validation and the reliability tiers on the Action
-List are all computed from them, which means they describe a population that no longer exists
-and a V1 column with a known systematic error.
-
-**This is the only remaining defect that misleads a reader about accuracy**, and the figures
-visibly differ: v11 smooth/short in Oct-Dec reads 0.1783 from the CSV against the correct
-0.2473.
-
-Run `scripts/ml_accuracy_report.py`, which retrains on the three development windows and by
-construction never touches the quarantined window. Check the grid against `OVERVIEW.md`
-Section 6, then **commit the regenerated files**. An hour, most of it waiting.
-`SCREENS.md` Section 3.7.
-
-While doing it, fix the docstring: it says to refresh when the model version changes, and it
-also needs refreshing when the **population** changes, which is what any profiling or
-threshold change does. That omission is the reason this went unnoticed.
+Re-run against snapshot `2026-08-03-v2` and committed. The figures in Forecast Validation
+sections 01 and 05 and the reliability tiers on the Action List now match `OVERVIEW.md`
+Section 6. See `SCREENS.md` Section 3.7 for the refresh cycle and why it is not on the cron.
 
 ### 0.2 DONE 2026-08-14: the final test is served and rendered
 

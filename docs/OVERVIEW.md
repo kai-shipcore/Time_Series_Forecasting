@@ -10,7 +10,9 @@ pieces fit together, how the forecast is evaluated, and what the measured result
 | How does the model work, and how do I change it? | `MODEL.md` |
 | Where does the data come from, and what runs weekly? | `DATA_AND_PIPELINE.md` |
 | How do the two screens work, and how do I maintain them? | `SCREENS.md` |
+| How is it deployed, and how do I access the server? | `DEPLOYMENT.md` |
 | What is worth doing next? | `FUTURE_IMPROVEMENTS.md` (standalone, read when you want it) |
+| What if I don't have an ML background? | `MODEL_PRIMER.md` (plain-language explainer) |
 
 **The record, kept but not curated.** `ML_FORECAST_DESIGN.md` is the full decision log and
 version log, with every experiment and its evidence including the rejections. `WORKLOG.md`
@@ -28,7 +30,8 @@ answer to "how many of these will we sell per week over the next quarter".
 
 The answer in production before this project is a spreadsheet formula, referred to
 throughout as **V1**. It blends sales velocity over 7, 15, 30, 60 and 90 day windows and
-multiplies by hand-set monthly seasonal factors. It has two structural problems. A trailing
+multiplies by hand-set monthly seasonal factors (both defined in `src/v1.py`, the single
+source of truth for V1 parameters). It has two structural problems. A trailing
 average cannot anticipate change, so it under-forecasts products that are ramping and
 over-forecasts ones that are fading. And its error is large and changes sign by season, so
 no single correction fixes it.
@@ -347,8 +350,7 @@ full list is in `ML_FORECAST_DESIGN.md` Section 2.2 and `MODEL.md` Section 6.
 
 ## 8. Known defects at handover
 
-Three were found on 2026-08-14. Two are fixed; one remains and needs a command run against
-the database.
+Three were found on 2026-08-14. All three are fixed.
 
 **Fixed: the Forecast Validation page said the final test had not been run.** The API
 hardcoded `"evaluated": False` and the page rendered "Not evaluated yet, deliberately", which
@@ -362,10 +364,6 @@ that cannot be regenerated, because the test is single-use and the runner refuse
 overwrite, so an untracked copy on one machine was one `rm` from taking the commit, the input
 md5 and the bootstrap intervals with it.
 
-**Still open: the accuracy report behind the same page is stale.**
-`outputs/reports/ml_accuracy.csv` is dated 2026-07-30, so it predates the profiling fix, the
-threshold alignment and the V1 as-of fix. It is tracked, so the stale version is committed
-and deployed. The figures in Section 6 above are correct; the ones rendered in sections 01
-and 05 of Forecast Validation, and the reliability tiers on the Action List, are not. Fixing
-it is one run of `scripts/ml_accuracy_report.py` followed by a commit. `SCREENS.md`
-Section 3.7.
+**Fixed: the accuracy report behind the same page was stale.** Re-run on 2026-08-14 against
+snapshot `2026-08-03-v2`. The figures in sections 01 and 05 of Forecast Validation and the
+reliability tiers on the Action List now match Section 6 above.

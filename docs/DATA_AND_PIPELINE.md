@@ -195,30 +195,27 @@ cd ~/Documents/Time_Series_Forecasting
 .venv/bin/python scripts/ml_prepare_data.py --force
 ```
 
-Expect, on a run made any day of the week beginning 2026-08-11 or later:
+Expect:
 
 | Check | Expected |
 |---|---|
-| `Training through` in the output | the newest complete W-MON label, `2026-08-10` at time of writing |
-| SKUs forecast | **340**, not 467. The pipeline re-profiles, and the current thresholds classify 127 of the previous 467 as intermittent |
+| `Training through` in the output | the newest complete W-MON label |
+| SKUs forecast | approximately **340** (the current smooth population) |
 | `data/processed/sales_clean.parquet` newest `ds` | matches `Training through` |
 
-**The SKU count is the check that matters.** Before this run the served forecast covered 467
-SKUs while the current profiler recognised 340, so 127 products were being forecast that the
-model declines to forecast. A run that leaves the count at 467 means profiling did not
-re-run and the output should not be trusted.
+**The SKU count is the check that matters.** It confirms that profiling re-ran and the
+forecast covers the current smooth population. A count far from 340 means either the
+profiler did not run or the thresholds have changed.
 
 **Step 2. Re-run the accuracy report.** Only needed when the snapshot has been re-cut or the
-profiler has changed, which is the case here and is not the case most weeks. It reads the
-pinned snapshot, so it is unaffected by Step 1 and cannot be substituted by it.
+profiler has changed, not most weeks. It reads the pinned snapshot, so it is unaffected by
+Step 1 and cannot be substituted by it.
 
 ```bash
 .venv/bin/python scripts/ml_accuracy_report.py
 ```
 
-Check the printed grid against `OVERVIEW.md` Section 6 before committing. The figures will
-move, because the population moved: v11 smooth/short in Oct-Dec should go from **0.1783** to
-approximately **0.2473**, and the Mar-May cells should no longer read `n_skus=206`.
+Check the printed grid against `OVERVIEW.md` Section 6 before committing.
 
 **Step 3. Commit all four files together.**
 
@@ -274,7 +271,7 @@ setup, trigger the auto-start path against a server that is already running.
 "data_freshness":  { "ok": true,  "detail": "data through 2026-08-10, current" },
 "accuracy_report": { "ok": true,  "detail": "accuracy report matches the pinned snapshot and the served population" }
 
-// The state this checkout was actually in on 2026-08-14
+// An unhealthy example
 "data_freshness":  { "ok": false, "detail": "served data ends 2026-08-03 but the last complete week is 2026-08-10, 1 week(s) behind",
                      "fix": "scripts/ml_prepare_data.py --force" }
 ```
@@ -400,8 +397,8 @@ The 4.5 MB that makes this possible is `data/dev_seed/`, the four snapshots unde
 **The accuracy report has a refresh trigger nobody wrote down.** Its docstring says to
 refresh it "when the served model version changes". That is incomplete: it also needs
 refreshing when the **population** changes, which is what a profiling or threshold change
-does. The file on disk is dated 2026-07-30 and predates three such changes, so the Forecast
-Validation screen is currently showing stale figures. See `SCREENS.md` Section 3.7.
+does. Re-run on 2026-08-14 against snapshot `2026-08-03-v2`. See `SCREENS.md` Section 3.7
+for the refresh cycle and why it is not on the cron.
 
 **On dependency pinning.** Every version in `requirements.txt` is pinned exactly. The five
 machine-learning pins are there because results are compared at the third decimal, finer than

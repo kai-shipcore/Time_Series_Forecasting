@@ -42,21 +42,10 @@ CV_PATH      = ROOT / "outputs" / "reports" / "cv_results.parquet"
 OUT_PATH     = ROOT / "outputs" / "reports" / "v1_comparison.csv"
 HORIZON_DAYS = 70
 
-SEASONAL = {
-    1: 0.75, 2: 0.80, 3: 0.90, 4: 0.95,
-    5: 1.00, 6: 1.00, 7: 1.00, 8: 1.00, 9: 1.00,
-    10: 1.10, 11: 1.25, 12: 1.30,
-}
-
-# V1 blend weights — same for West and East streams
-V1_WINDOWS = [
-    (90, 0.10, "sales"),
-    (60, 0.15, "sales"),
-    (30, 0.30, "sales"),
-    (15, 0.20, "sales"),
-    (7,  0.15, "sales"),
-    (30, 0.10, "preorder"),
-]
+# Single source of truth for V1 parameters: src/v1.py. Editing them there
+# changes both the live pipeline and every benchmark script that imports from
+# here, which is every file that calls v1_forecast or _blend_rate.
+from src.v1 import SEASONAL, V1_WINDOWS  # noqa: E402
 
 
 # ── Data pull ─────────────────────────────────────────────────────────────────

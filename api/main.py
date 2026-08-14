@@ -490,6 +490,7 @@ def planning_action_list(
             # Surfaced so a caller can reconcile against the forecast file
             # rather than finding the totals quietly short.
             "demoted_since_forecast": int(plan.attrs.get("demoted_since_forecast", 0)),
+            "demoted_ids": plan.attrs.get("demoted_ids", []),
             "trained_through": snapshot.date().isoformat() if snapshot is not None else None,
             # Which model produced the forecast, and how far it reaches. The
             # header said when it was trained and nothing else, so a reader could

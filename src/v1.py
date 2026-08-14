@@ -1,6 +1,15 @@
 """V1 forecasting formula — stream-based blend with seasonal modifier.
 
-Ported from scripts/compare_v1.py for use in the live pipeline.
+Single source of truth for V1_WINDOWS and SEASONAL. Every file that uses the
+V1 formula imports these constants from here, either directly or through
+scripts/compare_v1.py. Changing them here changes the live pipeline, the
+accuracy benchmarks, the final test runner, and the forward V1 baseline.
+
+The live pipeline also reads from shipcore.fc_user_preferences (see
+_load_v1_config), falling back to these constants when the DB row is absent
+or unreachable. To change V1 for the live forecast only, edit the DB row; to
+change it everywhere including benchmarks, edit the constants below.
+
 Computes a total forecast for a given horizon in days, from the DB
 snapshot (fc_velocity_link_snapshot_forecast with order_type and channel).
 """

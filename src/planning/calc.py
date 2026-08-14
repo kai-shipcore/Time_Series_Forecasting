@@ -182,7 +182,7 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
 
     Bringing them into the worklist is a separate piece of work and needs its own
     basis, since every quantity on this screen is derived from a forecast they do
-    not have. See docs/BACKLOG.md.
+    not have. See docs/archive/BACKLOG.md.
     """
     p = {**DEFAULT_PARAMS, **(params or {})}
     lead_weeks = int(p["lead_time_weeks"])
@@ -218,8 +218,10 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     #
     # The count is kept on the frame rather than printed: silently shrinking a
     # table is how a caller ends up puzzled by totals that will not reconcile.
-    n_demoted = int(df["bucket"].eq("intermittent").sum())
-    df = df[~df["bucket"].eq("intermittent")].copy()
+    demoted_mask = df["bucket"].eq("intermittent")
+    n_demoted = int(demoted_mask.sum())
+    demoted_ids = list(df.loc[demoted_mask, "unique_id"])
+    df = df[~demoted_mask].copy()
     df = df.merge(recent, on="unique_id", how="left")
     df = df.merge(inv.drop(columns=["is_sample"], errors="ignore"), on="unique_id", how="left")
 
@@ -560,6 +562,7 @@ def build_planning_table(params: dict | None = None) -> pd.DataFrame:
     # Set last: pandas drops `attrs` across most merges and assignments, so a
     # value attached earlier in this function would silently arrive as None.
     out.attrs["demoted_since_forecast"] = n_demoted
+    out.attrs["demoted_ids"] = demoted_ids
     return out
 
 

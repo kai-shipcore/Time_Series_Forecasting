@@ -28,7 +28,7 @@ A note on what this module deliberately does not do. It reports drift; it does
 not repair it. Regenerating the accuracy report is a retraining pass over three
 windows whose output is compared against the design doc at the third decimal,
 and starting one from a health check or a cron would move published figures with
-no human deciding they should move. See `docs/BACKLOG.md` and the header of
+no human deciding they should move. See `docs/archive/BACKLOG.md` and the header of
 `scripts/ml_accuracy_report.py` for why the weekly cron is the wrong trigger:
 the report reads pinned inputs, so a weekly run rewrites identical bytes.
 """

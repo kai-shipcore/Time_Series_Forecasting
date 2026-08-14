@@ -253,7 +253,7 @@ Routine style rather than erroring.
 | poor | above | ●○○ |
 | none | unmeasured | ○○○ |
 
-**That CSV is stale.** See Section 3.7; it affects this screen too.
+That CSV was re-run on 2026-08-14. See Section 3.7 for when it needs refreshing.
 
 ### 2.7 `error_basis` and the demand-band fallback
 
@@ -642,51 +642,21 @@ claimed yet". The last section is now the strongest claim on the page rather tha
 of one. That same comment also lists a section order that already disagreed with the
 `VALIDATION_SECTIONS` array 20 lines below it; the array is the one to trust.
 
-### 3.7 DEFECT: the accuracy report is stale
+### 3.7 The accuracy report refresh cycle
 
-**Status: open, not previously recorded anywhere.**
+**Fixed 2026-08-14.** Re-run against snapshot `2026-08-03-v2`, committed, and pushed to the
+server. The figures now match `OVERVIEW.md` Section 6.
 
-`outputs/reports/ml_accuracy.csv` and `ml_accuracy_by_sku.csv` are both dated **2026-07-30**.
-They therefore predate all three of:
+**When to re-run it.** `scripts/ml_accuracy_report.py` needs refreshing when the snapshot is
+re-cut or the profiler changes. It does **not** belong on the weekly cron, because it reads
+the pinned snapshot: a weekly run would retrain three windows to rewrite identical bytes.
+The trigger is a population change, which the cron cannot predict. Hence detection rather
+than scheduling: the cron reports the condition via the drift check, and a human runs the
+script.
 
-- the profiling fix of 2026-08-11, which added back 41% of the forecastable catalogue,
-- the threshold alignment of 2026-08-12, which moved the smooth set from 467 SKUs to 340,
-- the V1 as-of off-by-one fix of 2026-08-13.
-
-**Consequence.** Section 01 of Forecast Validation, section 05, and the reliability tiers on
-the Action List are all computed from a population that no longer exists and a V1 column with
-a known systematic error. The figures visibly differ. As one example, v11 smooth/short in
-Oct-Dec reads **0.1783** from the CSV against the correct **0.2473**.
-
-**Both files are tracked in git**, re-included by `.gitignore:39-40` after the wildcard. So
-the stale versions are committed and are what the server deploys.
-
-**The fix.** Re-run `scripts/ml_accuracy_report.py`, which retrains on each of the three
-development windows and never touches the quarantined window by construction. Confirm the
-grid against `OVERVIEW.md` Section 6, then **commit the regenerated files**, including
-`ml_accuracy_meta.json`, or the server keeps serving the stale ones.
-
-**The underlying cause is a documentation gap.** The script's own docstring says to refresh
-it "when the served model version changes". That is incomplete. It also needs refreshing when
-the **population** changes, which is what any profiling or threshold change does, and nothing
-recorded that until now. The docstring says so as of 2026-08-14 and the drift check enforces
-it.
-
-**Why this is not on the weekly cron**, which is the obvious fix and is wrong. The script
-calls `load_weekly()` with its default argument, so both the actuals and the SKU profiles
-come from the pinned snapshot. A weekly run therefore reads unchanged inputs and rewrites
-identical bytes, after retraining three windows to do it. It cannot track the served
-population, by construction, and adding it to `run_forecast_cron.sh` would buy nothing while
-looking like a fix.
-
-The trigger is a snapshot re-cut or a profiler change, neither of which is weekly and
-neither of which the cron can predict. Hence detection rather than scheduling: the cron
-reports the condition and a human runs the script.
-
-**The second reason it is not automated.** The output is compared against the design doc at
-the third decimal and quoted in a management proposal. A pass that regenerates it without
-anyone deciding it should be regenerated moves published figures silently, which is the
-failure the "one hypothesis at a time" rule in `CLAUDE.md` exists to prevent.
+**Why it is not automated.** The output is compared against the design doc at the third
+decimal and quoted in the management proposal. A pass that regenerates it without anyone
+deciding it should be regenerated moves published figures silently.
 
 ---
 
@@ -696,18 +666,11 @@ failure the "one hypothesis at a time" rule in `CLAUDE.md` exists to prevent.
 
 | # | Where | What |
 |---|---|---|
-| 1 | `outputs/reports/ml_accuracy*.csv` | Stale as of 2026-07-30, and tracked, so the stale copy is what deploys. **The one remaining defect that misleads a reader about accuracy.** Now announced by the drift banner rather than silent. Section 3.7 |
 | 2 | `types.ts:89`, `reliability-card.tsx:71-75` | `error_basis` values out of date; Korean locale shows untranslated strings. Section 2.7 |
 | 4 | `run-forecast.tsx:61` | Undeclared `Step N/4` stdout contract with `ml_prepare_data.py`. Section 2.10 |
 | 5 | `SkuForecastsService.getForecastBounds()` | Orphaned when `/api/forecast/bounds` was deleted. Still has a passing test, so it is dead code that looks maintained |
 
-None is a crash. Number 1 is the one worth fixing before anyone uses these screens to make a
-decision, and it is one script run plus a commit. Until that run happens the page says so
-where a reader of the figures will see it, which is the part that was missing rather than
-the knowledge that it was stale.
-
-Numbering is left with a gap at 3 rather than renumbered, so the references to these numbers
-elsewhere in this document keep pointing at the same defects.
+None is a crash. None misleads a reader about accuracy.
 
 **Fixed 2026-08-14.**
 
@@ -719,4 +682,5 @@ elsewhere in this document keep pointing at the same defects.
 | `ml_accuracy_report.py`, `.gitignore` | `ml_accuracy_meta.json` records what the report was measured on. `meta.accuracy_computed` is no longer a file mtime |
 | `run_forecast_cron.sh` | The weekly run reports whether the accuracy report still matches the served population |
 | `forecast-validation/page.tsx`, `section-heading.tsx` | Code guides left stale by the final-test change above. Was defect 3 |
+| `outputs/reports/ml_accuracy*.csv` | Re-run against snapshot `2026-08-03-v2`. Was defect 1. Section 3.7 |
 | `column-picker.tsx` | The Columns panel was `z-30`, which tied the sticky column-name row and lost to the sticky corner cell, so it opened underneath the headers it overlaps. Now `z-50` |

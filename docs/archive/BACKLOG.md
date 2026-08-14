@@ -16,9 +16,13 @@ are three different things.
 | # | Item | Size |
 |---|---|---|
 | 31 | The history-length boundary is a week later than its name says | a measurement, then a re-baseline |
-| 27 | Rewrite the stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
-| 29 | Codebase cleanup: dead scripts and stale files | explicitly last, only if there is time |
+
+Item 27 closed on 2026-08-14: the four-document set (OVERVIEW, MODEL, DATA_AND_PIPELINE,
+SCREENS) replaced all six archived documents. LEARNING_NOTES was rewritten as
+`docs/MODEL_PRIMER.md`. PROJECT_WRITEUP was stripped to interview study notes in
+`docs/archive/`. HANDOVER, OPERATIONS, MODEL_GUIDE and FUTURE_WORK were deleted.
+Item 29 closed on 2026-08-14: skipped, no time remaining.
 
 Item 30 closed on 2026-08-13: the Forecast Validation screen renders the final test result.
 **Closed on the user's statement rather than on inspection**, which is worth knowing because
@@ -46,13 +50,9 @@ suit whatever is convenient later.
 > `baselines.py`, are still in the tree only because BACKLOG 6 has not closed. A copy taken
 > after that page is retired does not contain them. Details in section 24.
 
-**Not in this file, and the largest piece of documentation debt**
-
-`docs/PROJECT_WRITEUP.md` carries v11 and V1 figures from the July snapshot and claims the
-model "matches or beats the production spreadsheet in five of six cells" with one exception.
-On the current snapshot it is four of six with two exceptions, and the V1 column does not
-match any measurement taken since. It is the document most likely to be read by someone
-outside the project, so it is the one most worth correcting.
+**Documentation debt cleared on 2026-08-14.** The four-document set replaced the stale
+documents. `docs/archive/PROJECT_WRITEUP.md` is now interview study notes only, with no
+figures to go stale.
 
 **Done 2026-08-11 and 2026-08-12**
 
@@ -1698,26 +1698,12 @@ real finding about generalisation, not a reason to look for a better window.
 
 ## 27. Rewrite the stale documents
 
-**Status: open.** Was "the three stale documents"; `OPERATIONS.md` joined them on 2026-08-13.
-
-| document | state |
-|---|---|
-| `PROJECT_WRITEUP.md` | carries a SUPERSEDED banner. July figures, and a five-of-six claim that is four-of-six now |
-| `HANDOVER.md` | carries a SUPERSEDED banner. Rewrite last, at actual handover, so it describes the state being handed over |
-| `LEARNING_NOTES.md` | no banner, and largely fine. It is conceptual and does not repeat the numbers that moved |
-| `OPERATIONS.md` | Section 1 counts predate the 2026-08-10 narrowing: "roughly 450" smooth against 340, "about 3,000 of the 3,300" intermittent against 3,185 of 3,525, and a 360/80 short-long split against 247/93. The accuracy tables in Section 4 are current; only the population counts are stale |
-
-The `OPERATIONS.md` figures are the ones most likely to be quoted by someone who does not
-know they moved, because that document is written for whoever runs the system rather than
-for whoever built it. Counts verified against `data/snapshots/2026-08-03-v2/sku_profiles.csv`
-on 2026-08-13.
-
-`LEARNING_NOTES.md` is listed to record that it was checked rather than assumed: it was
-described as stale earlier, and on inspection it contains none of the figures the 2026-08-11
-and 2026-08-12 work changed. It needs a pass for the promotion threshold and the onset fix
-as concepts, not a figure sweep.
-
-The design doc and `CODEBASE_GUIDE.md` are current, having been updated alongside the work.
+**Status: closed (2026-08-14).** The four old documents (PROJECT_WRITEUP, HANDOVER,
+LEARNING_NOTES, OPERATIONS) were replaced by a new four-document set written from scratch:
+OVERVIEW.md, MODEL.md, DATA_AND_PIPELINE.md, SCREENS.md. LEARNING_NOTES was renamed to
+MODEL_PRIMER.md and rewritten as a plain-language explainer. PROJECT_WRITEUP was stripped to
+interview study notes and moved to `docs/archive/`. HANDOVER, OPERATIONS, MODEL_GUIDE, and
+FUTURE_WORK were deleted (fully superseded). All cross-references in live documents updated.
 
 ---
 

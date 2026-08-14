@@ -32,14 +32,19 @@ obvious ideas are already there and several have a recorded reason they were rej
    re-litigate settled decisions without new evidence; do not contradict them silently.
 - `docs/CODEBASE_GUIDE.md`: what every file does and how data flows from raw sales to a
    scored forecast.
-- `docs/BACKLOG.md`: item-by-item work log, including closed items with their reasoning.
-- `docs/archive/`: six documents superseded on 2026-08-14, each carrying a header saying
-   what replaced it. Their figures are stale; several of their arguments are not.
+- `docs/MODEL_PRIMER.md`: plain-language explainer for anyone without an ML background.
+   Covers how trees work, what the features do, and the version narrative.
+- `docs/archive/BACKLOG.md`: item-by-item work log, including closed items with their
+   reasoning.
+- `docs/archive/WORKLOG.md`: running record of completed work for progress summaries.
+- `docs/archive/PROJECT_WRITEUP.md`: personal interview study notes, not a reference.
+- `docs/archive/` also holds completed task briefs (DEPLOY_TASK, PLANNING_PLAN,
+   PLANNING_REQUIREMENTS, VERIFICATION_2026-08-13), the superseded V1_FORMULA (now
+   `src/v1.py`), rebaseline logs, and older rebaseline logs.
 
-**Three known defects at handover**, all recorded in `docs/SCREENS.md` Section 4: the
-Forecast Validation page reports the final test as not run, `outputs/reports/ml_accuracy.csv`
-is stale as of 2026-07-30, and `outputs/reports/final_test.json` is not in version control
-and cannot be regenerated.
+**Known defects** are collected in `docs/SCREENS.md` Section 4. All accuracy-affecting
+defects (final test rendering, stale accuracy report, untracked final_test.json) were fixed
+on 2026-08-14.
 
 `Machine_Learning_Demand_Forecast_Proposal.md` and its `_KO` counterpart are the summary
 written for management. They are built to `.docx` by `build_docx.sh`, which currently
@@ -62,8 +67,8 @@ artifact and rebuilding it discards anything typed into it directly.
 
 ## Work log (required habit)
 
-`docs/WORKLOG.md` is the running record of completed work, used to generate day-by-day
-progress summaries for the user's manager.
+`docs/archive/WORKLOG.md` is the running record of completed work, used to generate
+day-by-day progress summaries for the user's manager.
 
 - Whenever a notable piece of work is completed (a document, a harness change, a model
   version evaluated, a bug fixed), append one dated line describing it in plain terms.

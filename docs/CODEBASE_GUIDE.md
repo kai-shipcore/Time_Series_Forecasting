@@ -55,7 +55,8 @@ Supporting scripts outside `src/ml/` that the track depends on:
 | File | Role |
 |---|---|
 | `scripts/export_forecast_history.py` | Exports forecast tables from the database to `data/processed/*.parquet` for offline analysis. Discovers table schemas at runtime. |
-| `scripts/compare_v1.py` | The production V1 formula. `ml_02` imports its `v1_forecast` and cumulative-sum index functions so the benchmark uses the exact production logic. |
+| `src/v1.py` | **Single source of truth for V1 parameters** (`V1_WINDOWS`, `SEASONAL`). Also contains the stream-based blend, daily rate, and seasonal modifier. The live pipeline reads overrides from `shipcore.fc_user_preferences`, falling back to these constants. Every other file that needs V1 imports from here (directly or through `compare_v1.py`). |
+| `scripts/compare_v1.py` | The production V1 formula. `ml_02` imports its `v1_forecast` and cumulative-sum index functions so the benchmark uses the exact production logic. Imports `V1_WINDOWS` and `SEASONAL` from `src/v1.py` rather than defining its own. |
 | `config.py` | Central configuration (paths, `TEST_WEEKS`, `TRIM_TRAILING_WEEKS`, segmentation thresholds, seasonal settings). The harness reads split-related settings from here. |
 | `src/deseasonalize.py` | Provides the production seasonal factors. The restart baseline (Design Section 4.10) will use these to deseasonalize the target. |
 
@@ -350,7 +351,7 @@ holds again. Design doc Section 4.32.
 The `bucket` label (smooth versus intermittent) is still not recomputed as of the cutoff.
 That is a documented limitation and a measured one: at the 2025-10-06 cutoff, 121 SKUs were
 classifiable as smooth from data available then against the 467 the harness scored, so the
-population is partly selected with hindsight. See `docs/archive/HANDOVER.md` finding 6.
+population is partly selected with hindsight. See `OVERVIEW.md` Section 7.
 
 ---
 
