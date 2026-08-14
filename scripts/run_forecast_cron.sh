@@ -99,6 +99,72 @@ else
   exit 1
 fi
 
+# Did this run actually advance the data?
+#
+# The pipeline exiting zero means it completed, not that it produced a newer
+# week. An upstream table that has stopped receiving orders, a sync step that
+# failed quietly, or a velocity snapshot nobody refreshed all produce a clean
+# run over last week's data, and the result is served as though it were current.
+#
+# This is a non-zero exit, unlike the accuracy warning below, because it is the
+# one condition where the forecast on the screen is wrong rather than merely
+# described wrongly. Cron mails on it.
+#
+# The 2026-08-11 run is why. The week labelled 2026-08-10 closed the evening
+# before and never arrived; the Action List and Forecast Validation both carried
+# on serving a forecast trained through 2026-08-03, and it was found by hand
+# three days later. DATA_AND_PIPELINE.md Section 4 predicted this exactly and
+# left it as something a human should check against a calendar.
+fresh_ok="$(printf '%s' "$body" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("data_freshness") or {}).get("ok"))' 2>/dev/null)"
+fresh_detail="$(printf '%s' "$body" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("data_freshness") or {}).get("detail") or "")' 2>/dev/null)"
+if [ "$fresh_ok" = "False" ]; then
+  echo "ERROR: the run completed but the data did not advance."
+  echo "  ${fresh_detail}"
+  echo "  The forecast being served is stale. Check the velocity sync and the"
+  echo "  upstream order table before trusting anything on the planning screens."
+  exit 1
+elif [ "$fresh_ok" = "True" ]; then
+  echo "Data is current: ${fresh_detail}"
+else
+  echo "WARNING: could not determine whether the data advanced (${fresh_detail:-no detail})."
+fi
+
+# Does the pinned accuracy report still describe what is being served?
+#
+# This run just rewrote data/processed, which is what moves the served
+# population. The accuracy report did not move and is not supposed to: it reads
+# the snapshot named by config.ML_DATA_SNAPSHOT, so re-running it here would
+# retrain three windows to produce identical bytes. What it needs instead is to
+# be re-run when the snapshot is re-cut or the profiler is changed, and this is
+# the check that notices either has happened.
+#
+# Why this exists. On 2026-08-11 the snapshot was re-cut with a re-profiled
+# population, moving smooth/short from 382 SKUs to 247. Nothing re-ran the
+# report, and for two weeks the Forecast Validation page reported accuracy for a
+# cohort that no longer existed while every check in this script passed. They
+# all ask whether files are present; none asked whether they agree.
+#
+# A warning rather than a non-zero exit, deliberately. The forecast this run
+# produced is good and is being served; the accuracy caption beside it is what
+# has gone stale, and exiting non-zero would mail the operator about a healthy
+# forecast run. The page carries the same warning where a reader of the figures
+# will see it, which is the place that actually matters.
+acc_ok="$(printf '%s' "$body" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("accuracy_report") or {}).get("ok"))' 2>/dev/null)"
+if [ "$acc_ok" = "False" ]; then
+  detail="$(printf '%s' "$body" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("accuracy_report") or {}).get("detail") or "")' 2>/dev/null)"
+  echo "WARNING: the accuracy report no longer matches what is being served."
+  echo "  ${detail}"
+  echo "  Fix: .venv/bin/python scripts/ml_accuracy_report.py, then commit"
+  echo "  outputs/reports/ml_accuracy*.csv and ml_accuracy_meta.json."
+  echo "  Forecast Validation sections 01 and 05, and the Action List's"
+  echo "  reliability tiers, are computed from that report."
+elif [ "$acc_ok" = "True" ]; then
+  echo "Accuracy report matches the pinned snapshot and the served population."
+else
+  echo "NOTE: accuracy report provenance unknown (pre-manifest checkout, or the"
+  echo "  report has never been run). Run scripts/ml_accuracy_report.py to record it."
+fi
+
 # Dated copy of the one artifact that cannot be rebuilt.
 #
 # Everything else this run wrote regenerates from the database. The accumulating
