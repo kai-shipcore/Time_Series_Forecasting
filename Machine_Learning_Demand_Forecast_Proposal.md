@@ -1,135 +1,217 @@
-# New Proposed Machine Learning Demand Forecast Model
+# Demand Forecasting: Project Summary
 
-Prepared by Yuchan  |  July 2026
+Prepared by Yuchan  |  August 2026
 
 ------------------------------------------------------------------------
 
 # Summary
 
-## Purpose
+## Purpose and scope
 
-The company forecasts weekly demand for every SKU to plan how much stock to order. Today that runs on an in-house spreadsheet formula, called the **current method** here. This project replaces it with a more accurate model for the SKUs where accuracy matters most, learning from the company's own sales history.
+The company forecasts weekly demand per SKU to decide how much stock to order. At the start of this project that was an in-house spreadsheet formula, referred to throughout as the **current method**.
 
-Two terms, used throughout:
+The objective was to find out whether a model trained on the company's own sales history could forecast more accurately, and if so, to put that forecast in front of the planning team as a working tool.
 
-- **Demand**: units of a SKU that customers actually ordered in a given week.
-- **Forecast**: a prediction of that weekly demand for a week that has not happened yet, in the same units.
+**A note on the comparison.** The current method was reproduced in code from the spreadsheet as it stood in mid-July 2026, and every figure here compares against that version. If the spreadsheet has changed since, the comparison is against the earlier form. The exact formula, its constants, and the points where it is most likely to have diverged are in the Technical Detail section.
+
+The work covered five areas, all complete and in production:
+
+1. A way to measure forecast accuracy fairly, so that any two methods can be compared on equal terms.
+2. The forecast itself. An initial statistical model was built first, then replaced by the machine learning model now in use.
+3. The data pipeline and the service that produce and publish the forecast.
+4. Deployment on the company server, including an automated weekly update that runs without manual intervention.
+5. Two screens in Demand Pilot: one showing what to order, and one showing how accurate the forecast has been.
+
+Two terms are used throughout:
+
+- **Demand**: units of a SKU that customers ordered in a given week.
+- **Forecast**: a prediction of that weekly demand for a week that has not yet occurred, in the same units.
+
+## What the model produces
+
+- A predicted number of units sold for each of the next thirteen weeks, for every SKU it covers.
+- Republished weekly, automatically.
+- Standard orders and preorders both count as demand, in the week the order was placed, so one forecast covers both.
 
 ## Results
 
-**The new model cuts forecast error roughly in half.** Tested across two recent periods (Dec 2025 to May 2026, about 20 weeks, ~66,800 units of demand):
+The model was validated once, against a ten-week period set aside at the start of the project and not examined until development finished. Because it was never used while building the model, it measures accuracy independently rather than judging the work by its own standard.
 
-- Current method: **~24,300 units** off.
-- New model: **~11,700 units** off, about half as much.
-- That is **~12,600 fewer units** of forecast error.
+**Over that period the new model reduced forecast error by 42 percent compared with the current method.**
 
-**What that is worth.** Those **~12,600 fewer units** of forecast error are each either stock ordered that does not sell (cash tied up) or demand that goes unmet (a lost sale). At an example $200 average selling price, that is a potential **$2.5M** in reduced inventory exposure over these 20 weeks. It is an upper bound, since the real value depends on the company's own margins and holding costs, but the direction is clear: less cash tied up in overstock and fewer sales lost to stockouts.
+| Measure, ten weeks | Current method | New model |
+| --- | --- | --- |
+| Units of forecast error | 12,470 | **7,274** |
+| Error as a share of demand | 30.6% | **17.8%** |
+| Net over or under forecast | 28.0% under | **0.0%** |
 
-**Where the gains come from:**
+Measured across 40,762 units of actual demand, May to July 2026.
 
-- Long-history SKUs, Dec-Feb 2026: error falls from **40%** to **14%**, correcting the current method's post-holiday over-forecast.
-- Short-history SKUs, Mar-May 2026: error falls from **42%** to **20%**, correcting its spring under-forecast.
-- Long-history SKUs, Oct-Dec 2025: the current method is nominally ahead, **8%** vs **10%** error.
+- **Financial significance.** Each unit of error is either stock ordered that does not sell or demand that cannot be met. The new model removed 5,196 units of it. At an assumed $200 average selling price that is roughly $1.0 million in reduced inventory exposure, an upper bound rather than a realised saving, since the actual value depends on margins and holding costs.
+- **Forecast bias.** The current method ran 28 percent below actual demand overall and 35 percent below on newer SKUs. A forecast that is consistently low is a standing stockout risk somebody corrects by hand every ordering cycle. The new model was within 0.1 percent in aggregate.
 
-That 2-point gap is within measurement noise rather than a systematic weakness, and it is the only window where the current method comes out ahead. Everywhere else the new model is far more accurate.
+## Where the improvement comes from
 
-**Forecast error and bias, by group and period**
+The largest gains come where demand changes direction, particularly entering and leaving the fourth-quarter peak. The current method estimates a recent sales rate and projects it forward, so it responds to a change only after the change has happened.
 
-| SKU group and period | Current off by | New off by | Current bias | New bias |
-| --- | --- | --- | --- | --- |
-| Long history, Mar-May 2026 | 4,169 (32%) | **1,768 (14%)** | -30.5% | -7.2% |
-| Long history, Dec-Feb 2026 | 4,590 (40%) | **1,566 (14%)** | +38.7% | +5.0% |
-| Long history, Oct-Dec 2025 | **1,536 (8%)** | 1,813 (10%) | -1.0% | +1.7% |
-| Short history, Mar-May 2026 | 9,857 (42%) | **4,605 (20%)** | -39.8% | +9.4% |
-| Short history, Dec-Feb 2026 | 5,704 (30%) | **3,782 (20%)** | +5.0% | -1.5% |
+Accuracy by period and SKU group, measured as error as a share of demand:
 
-*"Off by" is total error, what has to be stocked for; bias is the net over- or under-forecast.*
+| Period | SKU group | Current method | New model |
+| --- | --- | --- | --- |
+| Dec 2025 to Feb 2026 | Established | 39.3% | **13.9%** |
+| Dec 2025 to Feb 2026 | Newer | 22.4% | **19.9%** |
+| Mar to May 2026 | Established | 27.8% | **13.5%** |
+| Mar to May 2026 | Newer | 33.5% | **19.3%** |
+| Oct to Dec 2025 | Established | **8.5%** | 10.4% |
+| Oct to Dec 2025 | Newer | **22.1%** | 24.7% |
 
-*Why "within noise": a difference this small is within the normal variation between one set of SKUs and another. Re-tested on resampled SKUs, it does not hold up.*
+The current method wins both October to December cells. That is the only period of the three where it does, and both differences fall within normal variation between samples.
 
-Week by week (actual demand solid, both forecasts dashed): the new model (blue) tracks demand closely but smoothly, while the current method (red) is a near-flat rate that drifts. Each dashed vertical line is a fresh 10-week forecast.
+In the charts below, actual demand is the solid black line and both forecasts are dashed. Each vertical marker is a new ten-week forecast being issued.
 
-**Long-history SKUs: weekly demand vs the two forecasts (Oct 2025 to May 2026)**
+**Established SKUs: weekly demand against both forecasts, October 2025 to May 2026**
 
 ![](outputs/reports/management_chart_established.png)
 
-**Short-history SKUs: weekly demand vs the two forecasts (Dec 2025 to May 2026)**
+After Christmas, demand falls from about 2,400 units per week to about 1,000. The current method instead rises to about 2,300 and holds there, projecting December's rate forward, then over-corrects and sits roughly 400 units per week low through the spring. The new model follows the decline.
+
+**Newer SKUs: weekly demand against both forecasts, December 2025 to May 2026**
 
 ![](outputs/reports/management_chart_newer.png)
 
-*The short-history chart starts in December 2025; too few short-history SKUs existed before then to compare.*
+The same effect in the opposite direction. From March, demand rises toward 2,900 units per week while the current method stays near 1,600. The new model follows it. The chart starts in December because too few newer SKUs existed before then for a fair comparison.
 
-## Which SKUs the forecast covers
+## What was delivered
 
-The company sells about 3,400 SKUs, but only ~450 sell regularly enough to forecast. Those are a small slice of the catalogue yet about **80% of all units sold**, so that is where accuracy matters most. The project forecasts them and leaves the rest out.
+**1. A method for measuring forecast accuracy.**
 
-Each SKU is sorted on two questions:
+- The existing spreadsheet formula reproduced in code, matching its reported accuracy to four decimal places.
+- Both methods run through the same scoring process, on the same SKUs and periods, so no result depends on a difference in data or calculation.
+- It reports whether a gap between two methods is larger than normal sample variation, so a small difference is not mistaken for an improvement.
+- Built first, before any model existed, so later results could not be judged by the work that produced them.
 
-- **How regular are its sales?**
-    - **Smooth**: sells in most weeks (under about 30% of weeks with no sales). Forecastable.
-    - **Intermittent**: sporadic, 30% or more of weeks with no sales. Not forecastable.
-- **How much history does it have?**
-    - **Short history**: under 50 weeks of sales, roughly under a year.
-    - **Long history**: 50 weeks or more.
+**2. An initial statistical model.**
 
-That gives **three demand groups**:
+- Standard statistical techniques applied per SKU, with the most suitable one selected automatically for each.
+- Ran weekly and published a thirteen-week forecast through its own screens.
+- More accurate than the current method, and set the standard the machine learning work had to exceed.
+- Retired in August 2026 once that standard was beaten, and its screens removed. The code is kept because every accuracy figure recorded during the project is measured against it.
 
-- **Long history (smooth)**, about 80 SKUs: its own model, tuned for settled demand that returns to a normal level.
-- **Short history (smooth)**, about 370 SKUs: a separate but similar model, tuned for newer SKUs still finding their level.
-- **Intermittent**, about 3,000 SKUs: too sporadic to predict, so no forecast, only sales history.
+**3. The machine learning model now in use.**
 
-**Demand breakdown by group (last 90 days)**
+- Trained across all covered SKUs together rather than one model per SKU, so a pattern seen in one product informs forecasts for others. Most SKUs have under a year of history and say little alone.
+- Eighteen versions built and tested. Fourteen rejected for not improving accuracy, each with the measurements behind the rejection.
+- Two related models in production, one for newer SKUs and one for established SKUs. Growth in a newly launched SKU usually continues; the same pattern in an established SKU is more often temporary.
 
-| SKU group | SKUs | Demand, last 90 days | Share | Avg units / SKU |
-| --- | --- | --- | --- | --- |
-| Long history (smooth) | 81 | 21,745 | 31% | 268 |
-| Short history (smooth) | 366 | 34,816 | 49% | 95 |
-| Intermittent | 3,002 | 14,452 | 20% | 5 |
-| **All SKUs** | **3,449** | **71,013** | **100%** | **21** |
+**4. The data pipeline.**
 
-The two smooth groups are about one in eight of the catalogue but roughly 80% of demand, and short-history SKUs carry the largest single share, so forecasting them well matters as much as the long-history SKUs.
+- One process runs the whole sequence: refresh the order data, rebuild each SKU's weekly sales history, reclassify every SKU, produce the thirteen-week forecast, publish it.
+- Every file is staged and moved into place only after the whole run succeeds, so a failure leaves last week's forecast intact and in use rather than a half-updated set.
+- Published to the database and to a file. Every forecast ever issued is kept in an accumulating record, backed up weekly, and it is the only part of the system that cannot be rebuilt: it holds what was predicted before the outcome was known, which is what makes after-the-fact accuracy reporting possible.
 
-![](outputs/reports/demand_breakdown_donut.png)
+**5. The forecast service.**
 
-## How performance is measured
+- Runs on the company server and supplies Demand Pilot with the forecast, the detail behind each recommendation, the accuracy tables and demand history. The team sees it in the application they already use, and nobody needs a copy of the data or the modelling software.
+- Access requires a token.
+- A status check reports whether the service has data and which version of the code is running, separating three problems that look identical from outside: a server that is down, one running an old version, and one running correctly with nothing to serve.
 
-**The metric: WAPE, error as a share of demand.** The measure is WAPE (weighted absolute percentage error): the total forecast miss across all SKUs in a group, divided by the group's total actual sales. A result of 20% means the forecasts were off by 20% of demand. Lower is better.
+**6. Weekly automation and deployment.**
 
-Example. Say a group has two SKUs in one period:
+- The forecast regenerates every Tuesday morning, unattended. Tuesday rather than Monday because a sales week closes Monday night, so a Monday run would always be a week behind.
+- Code and data have separate owners and cannot overwrite each other. Code deploys automatically on publish; data is produced on the server itself, so no other machine needs to be running.
+- Three checks run unprompted: a failed weekly run notifies, an hourly check confirms the service is reachable and still refusing untokened requests, and the screens report when they cannot reach it.
 
-- A high-volume SKU sells **200 units**; the forecast said 180, so it is **off by 20**.
-- A low-volume SKU sells **20 units**; the forecast said 30, so it is **off by 10**.
+**7. The Action List.** The screen showing what to order. It combines the forecast with stock on hand, outstanding preorders and confirmed incoming shipments, and ranks SKUs by which require attention. A forecast alone is not an ordering instruction: 400 predicted units means something different depending on whether 50 or 5,000 units are already in the warehouse.
 
-Total miss is 30 units on 220 sold, so WAPE is **about 14%**. A plain average of the two percentage misses would read 30% (10% and 50% split evenly), but that lets a 10-unit miss on a tiny SKU count as much as a miss on a SKU that actually matters for stocking. Weighting by demand keeps the number tied to the units and dollars that matter. Alongside it we track **bias**: whether the forecast runs net high (overstock risk) or net low (lost-sales risk).
+- A recommended order quantity per SKU, shown on the detail page as the arithmetic behind it, so it can be checked by hand.
+- An estimated stockout date, run against that SKU's own forecast curve rather than a flat average, and accounting for whether incoming stock lands before the shelf empties.
+- A reliability rating per SKU with the evidence behind it. Where a SKU has never been measurable, the screen says so rather than showing a figure that belongs to something else.
+- Filters, sorting, column selection, search and export, so the list can be worked through as a queue.
+- Adjustable planning parameters, such as weeks of cover. Applied by the service rather than the browser, so the order formula exists once rather than twice.
+- A demand chart that follows the current filters, so the chart and the table always describe the same products.
+- A separate view of the SKUs the model does not forecast, sized from recent sales and labelled as such.
+- A button to run the forecast on demand, for when the weekly run is not soon enough.
 
-**How the accuracy is proven: testing on the past.** Every figure here comes from backtesting, which grades the model the way it would be used rather than on data it has already seen:
+**8. The Forecast Validation screen.** The screen showing whether the forecast can be relied upon. Five parts:
 
-- **Train only on the past.** The model sees sales up to a chosen past date and nothing after, so it cannot see the sales it is being tested against.
-- **Forecast forward.** From that date it predicts the next 10 weeks.
-- **Compare to reality.** Those predictions are scored against what actually sold.
-- **Across seasons.** Repeated at three points in the year (Oct-Dec, Dec-Feb, Mar-May), so the result does not depend on one favorable window.
-- **Fair, side by side.** The current method runs through the identical test, on the same SKUs and periods, so the comparison is like-for-like.
-- **A held-back final test.** A separate, more recent period was quarantined and never used during development. It gives an independent check of accuracy before the model can replace the current method.
+- The model against the current method across every SKU group and test period, including the cells where the current method still wins. A comparison that reports only its wins is not evidence.
+- Demand patterns, showing what demand looks like independent of any forecast, and how much of it the model covers.
+- Actual weekly demand against what the forecast said those weeks would be, continuing past the last completed week into the current forecast.
+- How each weekly forecast performed once its weeks completed. A stronger claim than the comparison above, because those were published before the outcome was known. Fills in as weeks pass.
+- A SKU-level breakdown of whether the improvement is broad or carried by a few products, by SKU count and by units, traceable to the individual product.
+
+**9. Documentation and handover.** Enough for someone else to take the work over:
+
+- An operating guide for running the system day to day.
+- A deployment reference covering the server setup and what to do when the service stops responding.
+- A guide to the code, and a technical guide to the model.
+- A full record of design decisions, including the fourteen rejected versions and the evidence behind each.
+- A handover note of findings and caveats a successor would otherwise rediscover, and a list of identified but incomplete work.
+
+## Which SKUs are forecast
+
+The company sells approximately 3,500 SKUs. Around 340 sell regularly enough for a weekly forecast to be meaningful. That count is not fixed: SKUs are reclassified each week as sales patterns change.
+
+A small share of the catalogue by SKU count and the large majority of units sold, which is why accuracy was concentrated there.
+
+Each SKU is assessed on two questions:
+
+- **How regular are its sales?** A SKU selling in most weeks can be forecast. One with no sales in a substantial share of recent weeks is classified as irregular and gets no forecast, because any weekly figure would be unsupported. Its sales history is still shown.
+- **How much history does it have?** Under a year is treated as newer and forecast using a different model from established SKUs.
+
+## How accuracy was measured
+
+All figures come from testing against past periods, using only information that would have been available at the time.
+
+- The model is trained on sales up to a chosen past date and given nothing after it.
+- From that date it forecasts the following ten weeks, which are compared against what actually sold.
+- The process is repeated at three points across the year, so results do not depend on one favourable period.
+- The current method is tested identically, on the same SKUs and periods.
+- One ten-week period was set aside before development began and used only once, at the end.
+
+The criteria for that final test were recorded in advance: what would count as success, what would count as failure, and what outcome was expected. The project also committed in advance to recommending the current method be kept if the model did not beat it. Fixing the criteria beforehand stops results being reinterpreted afterwards.
+
+Accuracy is total forecast error divided by total actual demand, so 20 percent means forecasts were off by 20 percent of units sold. It weights each SKU by volume, so an error on a high-volume product counts more. Bias sits alongside it, recording whether forecasts run consistently high, meaning overstock risk, or low, meaning lost sales.
 
 ## Limitations
 
-Stated openly so expectations stay realistic.
+**Not in scope.** Three exclusions, each a decision rather than a gap:
 
-- **Results are from backtesting; the final test is still to come.** The held-back period has not been run yet. It must pass before the model can replace the current method.
-- **Only about two years of history.** That is one or two examples of each season, so the figures should become more reliable with another year of data. The holiday period is least certain, since the promotion pattern changed after 2024.
-- **The long-history group is small.** About 80 SKUs, several close variants, so its figures rest on a small sample and may move.
-- **Short-history SKUs are inherently harder.** Short histories mean less to learn from, so their forecasts are less certain.
-- **Intermittent SKUs are out of scope.** The ~3,000 sporadic SKUs are not forecast at all.
+- **The roughly 3,200 irregular-selling SKUs are not forecast.** Most of the catalogue by SKU count, a minority of units sold. They have no sales in most weeks, so a weekly figure would be an estimate with nothing behind it. They stay visible on the Action List, sized from recent sales and labelled as such. Forecasting them needs a different method answering a different question, closer to whether a SKU sells at all this month than to how many.
+- **Revenue and margin.** Everything forecast, recommended and measured is in units. No figure in the system is in currency.
+- **Order timing and supplier logistics.** The Action List gives the quantity needed and when stock is projected to run out, not when to order, how to combine orders across suppliers, or how to fill a container.
 
-## Where the project stands
+**Limits of the forecast itself.**
 
-The model is built and performs well in backtesting, but it is not in production yet, so the current spreadsheet method still runs day to day. The forecasting method itself is largely in place. What remains is the final validation test, the data corrections, and the user interface, all listed below.
+- **The improvement is not uniform.** Gains concentrate where demand changes direction. In stable periods the model performs much like simpler approaches.
+- **A brand new SKU cannot be forecast at all.** The model needs history before it can produce a number, so a product gets nothing until it has sold for some months. A real gap, since a launch is when a wrong order costs most, but a figure drawn from no history would be a guess presented as a forecast.
+- **Coverage is effectively car covers and seat covers.** Only three or four categories sell regularly enough to forecast. The rest are too new or too small and fall into the irregular group.
+- **A SKU with an unusual pattern is served less well.** One model trained across all covered SKUs is what lets a product with little history borrow from products with more. The cost is that a SKU behaving unlike the rest is pulled toward the general pattern.
+- **Accuracy is concentrated on the highest-volume SKUs.** The model fits what most of the demand looks like, and the accuracy measure weights each SKU by volume, so both favour the same products. Deliberate, because that is where the money is, but it means an individual low-volume SKU may be forecast better by something simpler. Raising the bar for which SKUs are forecast removed much of this; the judgement is applied to the group rather than product by product, so some remain.
+- **The seasonal factors are set by hand, not learned.** Learning them would be preferable and is not realistic on two years of history that differ this much from each other: the model would learn one specific past rather than a repeating pattern. The holiday period is least certain, the promotional pattern having changed after 2024.
+- **The established SKU group is small**, several of its products close variants, so its figures rest on a modest sample.
+- **Newer SKUs are inherently harder**, having less history to learn from.
+- **Forecasts run thirteen weeks; accuracy is measured over ten.** Error grows with distance, so the last three weeks are less certain than the measured figures suggest.
+- **Recorded demand understates true demand during stockouts**, which affects every method including the current one.
 
-## What comes next
+## Further work
 
-- **Clean the sales data and feed it in.** Two fixes matter most. Stockouts push a week's recorded sales toward zero, which looks like falling demand when it was just unmet, and trains the model to under-forecast. Preorders are recorded when placed but ship later, so the demand lands in the wrong week, worst for new SKUs whose launch preorders dominate their short history. Both fixes help the current method too and are expected to be the largest remaining accuracy gain.
-- **Build the interface with inventory-aware ordering.** The tool will also read current stock. When a SKU is low, out of stock, or has preorders waiting, it can raise the recommended order above the plain forecast, so orders cover both demand and backlog. This is part of the interface, not the model itself.
-- **Run the final validation test.** Score the model once on the held-back period before proposing it to replace the current method.
+Four things, in order of expected value. A full list with the reasoning behind each is kept in the project repository.
+
+1. **Correct the sales data for stockouts.** When a SKU is out of stock, recorded sales fall toward zero, and the record reads that as demand falling. Every forecasting method learns from that record, so all of them predict low for exactly the products that most need reordering. Blocked on stockout dates per SKU, which are not recorded in usable form today.
+2. **Give the forecast price and promotion data.** It currently sees units sold and nothing else, so a discount that moved 300 units looks like ordinary demand for 300 units. This is also part of the seasonal problem above: the change in holiday behaviour after 2024 is a promotional change being treated as a calendar one. The largest missing input.
+3. **Add order timing to the Action List.** Supplier lead times and the container schedule would turn "order 400 units" into "order 400 units by this date", which is the decision being made.
+4. **Put money on the screens.** Everything is in units, so the list cannot be triaged by spend. Needs a decided cost basis and a source for it before it means anything.
+
+Beyond these, a set of model improvements is identified and testable, and a smaller set is blocked on more sales history accumulating.
+
+## Current status
+
+- In production and running without manual intervention.
+- The forecast updates weekly on the company server.
+- The Action List and Forecast Validation screens are in use by the planning team.
+- The screens built on the initial statistical model have been retired, so there is one forecast in the system rather than two that could disagree.
+- Everything needed to continue the work is documented, as described in item 9 above.
 
 ```{=openxml}
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
@@ -137,76 +219,95 @@ The model is built and performs well in backtesting, but it is not in production
 
 # Technical Detail
 
-*The sections below are optional background. Part 1 covers what is needed to act on the results.*
+*The following sections provide additional background and are not required to act on the results above.*
 
-## Why this approach was chosen
+## Why this approach was selected
 
-The current spreadsheet formula has two limits: it cannot learn from its own errors, and it cannot share information between SKUs, so each SKU is forecast on its own.
+The current spreadsheet formula has two structural limitations: it cannot learn from its own past errors, and it cannot use information from one SKU when forecasting another, so each product is forecast in isolation.
 
-The new approach is a **LightGBM** model trained jointly across SKUs rather than one model per SKU. In practice it is split into two closely related versions by history length, covered in "How the new model works."
+The replacement is a machine learning model of a type commonly used for this class of problem, trained across all covered SKUs together. A pattern seen in one product, such as how demand behaves after a launch, can then inform forecasts for similar products, so a SKU with limited history draws on comparable SKUs with more. Per-SKU models cannot do this, and it is the main structural advantage available given how recent much of the catalogue is.
 
-- **What LightGBM is.** A gradient-boosted decision tree model: it combines many small decision trees, each trained to correct the errors of the ones before it. It is the standard high-performing method for tabular data, meaning data laid out as columns of features describing each case (here, each SKU and week).
-- **Why train across SKUs.** One model over all SKUs lets a pattern learned on one SKU carry to others, for example how demand ramps in the weeks after a launch. A SKU with little history borrows from SKUs with more history that behave like it. Per-SKU models cannot share this way.
+The design follows the two largest public forecasting competitions, which are the standard reference points for this kind of work. The company's data resembles each on a different dimension:
 
-The specific design follows the two largest public forecasting competitions. Our data matches each on a different point, so we take the model family from one and the seasonality handling from the other.
+- The first covered daily unit sales for approximately 30,000 retail products, the same class of problem faced here. Models of the type used in this project produced the winning entries, which is the basis for the approach selected.
+- The second covered approximately 100,000 series, most with short histories, matching the company's roughly two years of data. The successful approaches there removed seasonal variation as a fixed preliminary step and had the model learn only the remaining pattern, on the basis that short histories cannot reliably teach seasonal behaviour.
 
-**M5 (2020): the model family.** M5 asked entrants to forecast daily unit sales for about 30,000 Walmart retail products.
+Both findings are applied here. Seasonality uses the existing monthly factors rather than being learned. When the model was allowed to learn it directly, it reproduced the specific two years it had seen and over-forecast the post-holiday period by 123 percent.
 
-- **How it matches us.** Same problem type: a catalogue of related retail SKUs whose demand patterns partly transfer between products. Our vehicle-accessory catalogue is the same shape of problem, only smaller.
-- **What won.** Global LightGBM models, the same family used here. That is the direct evidence for the model choice.
+## How the model works
 
-**M4 (2018): the seasonality handling.** M4 covered about 100,000 series, most with short histories.
+The model does not predict unit volumes directly. It predicts how far a week's demand will run above or below that SKU's recent typical level, and the forecast is that proportion applied to the recent level, adjusted for season.
 
-- **How it matches us.** Short history. We have about two years, so only one or two examples of each season.
-- **What won.** Methods that removed seasonality up front as a fixed step and had the model learn only the leftover pattern, because short histories cannot teach seasonality reliably.
-- **So we do the same.** The hand-set monthly multipliers are divided out of demand before training (deseasonalizing), the model learns the residual, and the multipliers are applied back afterward.
+- **Recent level.** Each SKU's reference point is its average weekly demand over the previous twelve weeks.
+- **The predicted proportion.** A value of 1.0 repeats that average unchanged, so with no clear signal the forecast stays at the recent level and moves away from it only where the data supports doing so.
+- **Seasonal adjustment.** For established SKUs, the relevant monthly seasonal factor completes the calculation.
 
-We differ from M5 in one place, and it is the same point where we match M4. M5 winners had more than five years of data, five or six examples of each annual event, enough for the model to learn seasonality directly. We do not. When we tested giving the model a month feature, it memorized the two specific years it had seen and over-forecast the post-holiday demand dip by 123%. So seasonality is imposed as fixed structure rather than learned.
+The inputs are few, and all derived from the sales history itself:
 
-The result is an M5-style model trained across SKUs, applied to M4-style deseasonalized demand. The same feature-based design also lets the model take in corrected data later (see What comes next), which the fixed formula cannot use.
+- How many weeks ahead the forecast week is.
+- The most recent week and the week before it, each relative to the twelve-week average.
+- For newer SKUs, the four-week average relative to the twelve-week average, which indicates acceleration.
+- For established SKUs, the recent four-week level relative to that SKU's own level over the previous year, which indicates whether it is running above its normal range.
 
-## How the new model works
+Newer and established SKUs use separate models because the same signal means different things for each. A newly launched SKU showing acceleration is usually still growing; an established SKU running above its normal level is more often experiencing a temporary increase, so the model expects a return toward normal. Both keep the recent-level inputs, so genuine gradual growth is still reflected.
 
-The model does not predict units directly. It predicts a **ratio**: how far a week's demand will run above or below the SKU's recent typical level. The forecast is that ratio times the level, times the season.
+The boundary between the two sits at a year of sales history because the established model's comparison against the previous year cannot be calculated with less than that. It is a requirement of the input rather than a figure chosen for convenience.
 
-- **The recent level.** Each SKU's baseline is its **12-week average**, the trailing average of the last 12 weeks of demand. For long-history SKUs it is computed on deseasonalized demand.
-- **The ratio.** The model predicts a multiplier on that level. A ratio of **1.0 just repeats the 12-week average**, so with no useful signal the forecast falls back to a safe baseline and only moves off it when the features give a reason. This keeps it from reacting to every noisy week.
-- **The season.** For long-history SKUs the target week's monthly multiplier is applied at the end, completing the deseasonalize-then-reseasonalize round-trip from the previous section.
+This was not the initial approach. A single combined model was tested first and rejected, because adjustments that improved forecasts for established SKUs degraded them for newer ones.
 
-**What the model looks at.** Each SKU-week is described by a few features, all drawn from sales history:
+## How development decisions were made
 
-- **Lead:** how many weeks ahead the target week is.
-- **Recent-level ratios:** the last week, and the week before, each against the 12-week average, since the most recent weeks carry the most signal for the near term.
-- **Ramp** (short-history model): the 4-week average against the 12-week average, which flags a SKU that is accelerating.
-- **Elevation** (long-history model): the recent 4-week level against the SKU's own trailing annual level, which flags a SKU running above its normal yearly baseline.
+- Changes were made one at a time and evaluated across three test periods covering different seasons.
+- The criteria for acceptance were recorded before each test.
+- A change was accepted only if it improved accuracy consistently across all three periods by more than a measured threshold for normal variation. That threshold was established by repeatedly resampling the SKU population, which showed that differences below approximately one percentage point cannot be distinguished from chance and were therefore treated as inconclusive.
+- Eighteen versions were evaluated and fourteen rejected, each with the measurements supporting the rejection, so that future work does not repeat approaches already shown not to help.
 
-**Two models, split by history.** Short-history and long-history SKUs use separate but similar models, because the same signal means different things for each:
+## Data sources
 
-- **Short history** keeps the ramp feature. A new SKU is often genuinely ramping after launch, so recent acceleration tends to continue.
-- **Long history** drops the ramp feature and adds elevation. A mature SKU running above its usual level is more often a temporary spike than lasting growth, so the model treats "above its own annual baseline" as a reason to expect a return to normal rather than extend the spike. It keeps the recent-level ratios, so genuine gradual growth is still tracked.
+Both forecasting methods read the same order history, so the comparison reflects the methods themselves rather than differences in input.
 
-The model is trained to minimize absolute error on the ratio, weighted by each SKU's demand level. That is the same demand weighting as the WAPE accuracy metric, so training and scoring optimize the same thing.
+| Used for | Table | Contents |
+| --- | --- | --- |
+| Demand, both methods | `shipcore.fc_velocity_link_snapshot_forecast` | Complete order-line history, all sales channels, no date limit. Order date, SKU, quantity, order type and channel |
+| Stock on hand | `ecommerce_data.coverland_inventory_by_warehouse` | On hand, allocated, available and backorder, per warehouse. Read live |
+| Incoming shipments | `shipcore.fc_container_items` with `shipcore.fc_containers` | Confirmed inbound quantities and arrival dates, and draft containers. Read live |
+| Forecast published to | `shipcore.ml_forward_forecasts` | The current thirteen-week forecast, one row per SKU per week |
+| Forecast history | `shipcore.ml_forecast_history` | Every forecast ever issued, accumulating |
 
-## Where the data comes from
+Two points about the demand data:
 
-Both methods read the same source: the company's full order history in the database (the `shipcore.fc_velocity_link_snapshot_forecast` table), covering every sales channel (West, East, and Amazon FBA). Because both are built from identical data, the comparison in Results is like-for-like, not an artifact of different inputs. The series is keyed on order date, with preorders recorded as a separate stream, which is the record the data-quality corrections in What comes next act on.
+- It must be the uncapped table. The similarly named `shipcore.fc_velocity_link_snapshot` holds only 120 days, which is shorter than the look-back windows the current method uses.
+- Demand is recorded against the date the order was placed, with preorders flagged separately by order type.
 
-## The current method
+Weeks run Tuesday to Monday and are labelled by the Monday on which they end. The weekly update runs on Tuesday morning so that it includes the week that closed the previous day.
 
-The current method estimates a daily demand rate for each SKU from its recent sales pace, weighting the most recent weeks most and including preorders, then projects it forward across the forecast horizon with a seasonal adjustment. The daily rate is the sum of three streams: the main sales channel (West), the secondary channel (East), and Amazon (FBA):
+## The current method, for reference
+
+**This is the formula as it stood in mid-July 2026**, which is when it was reproduced in code. Every figure attributed to the current method in this document comes from this version. If the spreadsheet has been changed since, the comparison is against the earlier form and would need re-running to reflect the current one.
+
+The current method estimates a daily demand rate for each SKU from its recent sales pace, weighting recent weeks most heavily and including preorders, then projects that rate forward with a seasonal adjustment. The daily rate is the sum of three channels: the main sales channel (West), the secondary channel (East), and Amazon (FBA):
 
 > rate = West + East + FBA
 
-Each of West and East is a weighted blend of recent sales pace, where every look-back window contributes units-per-day over its own length:
+West and East are each a weighted blend of recent sales pace, where each look-back window contributes units per day over its own length:
 
 > West, East = Σ w · ( units(last d days) / d )
 
-The sum runs over these **(d, w)** pairs, where d is the number of days in the look-back window and w is that window's weight in the final daily rate: (90, 0.10), (60, 0.15), (30, 0.30), (15, 0.20), (7, 0.15) on normal sales, plus (30, 0.10) on preorders. The weights add up to 1, so normal orders and preorders enter together as one weighted average, and the nearer windows carry the most weight. Each of West and East is then smoothed (damped) against its own value one week earlier, where S is the current blend and R is the blend one week back:
+The sum runs over these (d, w) pairs, where d is the number of days in the look-back window and w is that window's weight: (90, 0.10), (60, 0.15), (30, 0.30), (15, 0.20), (7, 0.15) for standard sales, plus (30, 0.10) for preorders. The weights total 1, so standard orders and preorders combine into a single weighted average, with nearer windows carrying the greatest weight. West and East are then each smoothed against their own value one week earlier, where S is the current blend and R is the blend one week prior:
 
 > damp(S, R) = 0.1 R + 0.9 S if |S - R| / R \< 0.5, else 0.2 R + 0.8 S
 
-so a small week-to-week change is mostly kept and a large jump is held back. Amazon (FBA) is a plain 30-day average, units(last 30) / 30, with no smoothing. The horizon forecast then multiplies the daily rate by the horizon length H and a seasonal modifier M:
+so a small week-to-week change is largely retained and a large movement is moderated. Amazon (FBA) uses a plain 30-day average with no smoothing. The forecast multiplies the daily rate by the forecast length H and a seasonal modifier M:
 
 > forecast = rate · H · M (H = 70 days)
 
-where H is the number of days being forecast (70, i.e. ten weeks) and M is the average of the monthly seasonal factors over that horizon, weighted by how many of the days fall in each month. The monthly factors are m = { 0.75, 0.80, 0.90, 0.95, 1.00, 1.00, 1.00, 1.00, 1.00, 1.10, 1.25, 1.30 } for January through December, so demand is marked down in winter and up toward the end of the year. As part of this project the formula was re-run on the company's data and reproduced its reported accuracy to the fourth decimal, so the figures in Results are the method's own numbers.
+where M is the average of the monthly seasonal factors across the forecast period, weighted by how many days fall in each month. The monthly factors are m = { 0.75, 0.80, 0.90, 0.95, 1.00, 1.00, 1.00, 1.00, 1.00, 1.10, 1.25, 1.30 } for January through December.
+
+The reproduction matched the spreadsheet's reported accuracy to four decimal places, so the figures attributed to the current method in this document are its own rather than an approximation of it.
+
+**Where the reproduction is most likely to differ from the spreadsheet**, if it does, in rough order of how much each would move the answer:
+
+- The as-of date. It uses the day before the forecast date. Using the forecast date itself changes a worked example by 4.4 percent.
+- The preorder weighting. Preorders are 20 percent of demand overall and over half of some SKUs, but enter the blend at a fixed weight of 0.10. If the spreadsheet weights them differently, the divergence is largest on exactly the preorder-heavy SKUs.
+- The damping thresholds and whether Amazon is damped. Here it is not, and it bypasses the blend entirely.
+- The order in which a line is classified. The channel check runs before the order type check, so an Amazon preorder counts as Amazon rather than as a preorder.

@@ -15,6 +15,7 @@ are three different things.
 
 | # | Item | Size |
 |---|---|---|
+| 30 | Forecast Validation still says the final test has not been run | half a day, and the first half is urgent |
 | 27 | Rewrite the three stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
 | 29 | Codebase cleanup: dead scripts and stale files | explicitly last, only if there is time |
@@ -1833,3 +1834,73 @@ Other candidates noted while working: `scratch_introspect_fc_products.js` and
 and `docs/CUTOVER_TASK.md`, `DEPLOY_TASK.md`, `INVENTORY_EXPORT_TASK.md` and
 `V1_AND_DASHBOARD_WIRING_TASK.md`, which are completed task briefs rather than reference
 documents and could move to `docs/tasks_completed/`.
+
+---
+
+## 30. Forecast Validation still says the final test has not been run
+
+**Status: open.** Raised 2026-08-13, the same day item 26 closed. The two are the same
+event seen from either end: the test ran, and the page that exists to report it does not
+know.
+
+**What a reader sees today, which is the urgent half.** `api/main.py` hardcodes
+`"evaluated": False` in the `final_test` block of `/planning/validation`, with a comment
+reading "Pinned, quarantined, and not yet run." Both were true when written and neither is
+now. The page therefore renders the not-evaluated branch of its final-test section, which
+tells the reader "Not evaluated yet, deliberately" and "Once it is run, results in the same
+shape as the comparison above will appear here, and those are the figures the adoption
+decision rests on."
+
+That is not a missing feature. It is a false statement, in the last section of the one
+screen whose entire purpose is to let someone decide whether to trust the forecast, and it
+is the section carrying the strongest evidence the project has. Fixing the flag is minutes
+of work and should not wait for the rest of this item.
+
+**Flipping the flag alone is not enough, and this is why the item is not a one-liner.** The
+evaluated branch is also a placeholder, titled "Results not rendered yet" and reading "The
+final test has been run. Its results belong in this space." So the flag on its own moves the
+page from a false statement to an empty panel, which is better and is still not the result.
+
+**The data exists and needs no re-run.** `outputs/reports/final_test.json` holds everything
+the section needs: cutoff, the ten test weeks, per-segment and total pooled WAPE for v11, V1
+and the structural baseline, and the bootstrap deltas with standard errors and confidence
+intervals for v11 against each. It also records the commit, the snapshot and the md5 of the
+V1 input, which is what makes the figure reproducible. The API reads none of it. The work is
+to serve that file through the `final_test` payload and render it.
+
+**What has to be rendered, stated as a constraint rather than left to whoever picks this
+up.** The result has two halves and the page has to carry both:
+
+1. v11 beats V1 by a wide margin, 0.1784 against 0.3059 on TOTAL, both segment differences
+   significant.
+2. v11 ties the structural baseline, +0.0048 on short and +0.0042 on long, both intervals
+   straddling zero.
+
+Rendering only the first is the failure mode `comparison-section.tsx` already refuses in
+its own code guide: "a comparison that only reports its wins is not evidence." The same
+standard applies here, and applies harder, because this is the section a reader is told to
+weight above the others. Design doc Section 4.35 leads with both for the same reason and is
+the model for the wording. The calibration figures belong here too, V1 at 28% under against
+v11's 0.0%, since Section 4.35 treats that as the more practically important difference.
+
+**Three smaller things that go stale with it.**
+
+- `types.ts` declares `final_test: { cutoff: string; evaluated: boolean }`. It needs to
+  widen to carry the scores, and the shape should follow `final_test.json` rather than
+  being invented separately, so the two cannot drift.
+- The header comment in `section-heading.tsx` describes the page order as ending on "what
+  is deliberately not claimed yet". Once the result renders, the last section becomes the
+  strongest claim on the page rather than the absence of one. The ordering itself still
+  holds; only the reason recorded for it changes.
+- Both language strings are needed. This page is EN/KO throughout and the existing
+  placeholders are translated, so a result rendered in English only would be the first
+  untranslated content on it.
+
+**What does not need to change.** The section description above the panel explains why the
+window was quarantined and why that makes its figure worth more than the ones above it.
+That is still true after the test has run, and it is what stops the result being read as
+one more backtest. Keep it.
+
+**Not blocked by anything.** The test is run, the file is committed, and no further
+measurement is needed or wanted: Section 2.2 quarantines that window and its value comes
+from having been used once.

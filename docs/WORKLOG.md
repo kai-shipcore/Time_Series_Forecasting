@@ -3840,3 +3840,258 @@ the files and not knowing whether anyone had looked.
   (95% CI [−0.497, −0.110]) for Oct-Dec short, both favouring v11, the rest straddling zero.
   Post-hoc rather than pre-registered, and labelled as such. The quarantined window was not
   re-run for it.
+
+2026-08-13  Rewrote `Machine_Learning_Demand_Forecast_Proposal.md` into a full project
+  summary, at the user's request, covering everything built rather than the model result
+  alone. The markdown only; the docx was deliberately not rebuilt.
+  "What was delivered" went from six short items to nine. The five that were missing are
+  the data pipeline including the staged writes and why the accumulating history cannot be
+  rebuilt, the forecast service and what its status check distinguishes, deployment and the
+  three automated checks, and the documentation set. The Action List and Forecast Validation
+  entries went from a paragraph each to itemised lists of what the screens actually do,
+  checked against the components rather than written from memory.
+  Three claims were corrected against the repository while writing it. The measurement
+  section said the harness was built "before any modelling work", which is false of the
+  statsforecast prototype and true only of the machine learning track, so it now says so.
+  Forecast Validation was described as having four sections and has five; the
+  demand-against-forecast chart was missing. The documentation was described as five
+  documents and is seven, so the count is gone and the deployment and model guides are
+  named.
+  Kept the 338 figure over OPERATIONS section 1's "roughly 450", the latter predating the
+  2026-08-10 narrowing from 467 to 338. OPERATIONS is the document that is now wrong there.
+
+2026-08-13  Added BACKLOG item 30, that the Forecast Validation page still reports the final
+  test as not run. Found while surveying the two planning screens for the summary above.
+  `api/main.py` hardcodes `"evaluated": False` in the `final_test` block with a comment
+  reading "not yet run", so the page renders its not-evaluated branch and tells a reader
+  "Not evaluated yet, deliberately" alongside a line about what will appear once it is. Both
+  were true when written and neither survived 2026-08-13.
+  Recorded as two separate pieces of work rather than one, because the first is minutes and
+  the second is not. The flag is a false statement in the last section of the screen whose
+  job is to say whether the forecast can be trusted, and it should not wait. Flipping it
+  alone is still not the result: the evaluated branch is also a placeholder, so the page
+  would move from a wrong statement to an empty panel.
+  `outputs/reports/final_test.json` already holds everything the section needs and the API
+  reads none of it, so no re-run is involved. Wrote the rendering constraint into the item
+  rather than leaving it to whoever picks it up: the section has to carry the baseline tie
+  alongside the V1 headline, on the same standard `comparison-section.tsx` already states
+  for itself, and Section 4.35 is the model for the wording.
+
+2026-08-13  Second pass on the project summary, at the user's request: scope boundaries
+  stated explicitly, and the document converted to bullets wherever prose was carrying a
+  list.
+  Limitations now opens with what was deliberately not attempted, which the document had
+  only ever implied. Three exclusions: the roughly 3,000 irregular-selling SKUs, with the
+  reason a weekly number for them would be meaningless and the note that forecasting them
+  is a different question rather than a harder version of this one; revenue and margin,
+  since nothing in the system is denominated in currency; and order timing and supplier
+  logistics, which the Action List does not decide. Stated as choices with reasons rather
+  than as gaps, because a reader who is not told something was excluded on purpose will
+  assume it was missed.
+  Checked the demand-share wording before writing it. The 13%/83% split in the design doc
+  and OPERATIONS predates the 2026-08-10 narrowing, which took 6.8% of forecast demand out
+  of coverage, so the summary says the tail is "a minority of the units sold" rather than
+  quoting a figure that has moved and not been re-measured.
+  "What was delivered" is now nine bulleted entries rather than nine paragraphs. Net length
+  is roughly unchanged, 4,343 words to 4,229, because the scope section was added while the
+  prose was compressed; the change is in how fast it can be read, not in how much there is.
+
+2026-08-13  Third pass on the project summary: the V1 caveat, the data sources, and a much
+  longer further-work section.
+  Added that the current method was reproduced from the spreadsheet as it stood in mid-July
+  2026 and that the comparison is against that version, in Purpose and scope and again in
+  the technical section. Also lifted V1_FORMULA section 9 into the technical section as the
+  four places the reproduction is most likely to differ from the sheet, the as-of date first
+  at 4.4% on the worked example. Worth stating to a reader who owns the sheet and may have
+  changed it since; without it the headline invites the assumption that the comparison
+  tracks whatever the sheet does now.
+  Data sources became a table naming the actual tables, including the warning that the
+  demand source must be `fc_velocity_link_snapshot_forecast` and not the 120-day-capped
+  `fc_velocity_link_snapshot`, which is shorter than V1's own look-back windows.
+  Further work went from two paragraphs to four groups, ordered by what blocks each. Group 1
+  is the data corrections, and the stockout entry now splits into correcting the history and
+  giving the model the stock position, written as "it sees units sold and nothing else, so a
+  soft market and an empty shelf look identical to it" rather than in terms of features.
+  Group 2 is the eight unblocked model candidates from design sections 5.2 and 5.5, each
+  stated as what the model would be told rather than as a feature name. Group 3 is the
+  screens, from BACKLOG 9, 10, 30 and the S5 note: order timing against supplier lead times
+  and the container schedule, finishing the draft-container checks, money, recommended
+  against actually ordered, and rendering the final test.
+  Tightened 21 bullets while adding all of this. Net 4,229 to 5,132 words, so the section
+  work is what grew it rather than the prose.
+
+2026-08-13  Fourth pass on the project summary, on the user's review of the further-work
+  list. Four things moved between sections rather than being added or cut, which is the
+  substance of the pass.
+  Brand-new SKUs moved from further work to limitations, at the user's direction: the model
+  needs history before it can produce anything, and forcing a number out of a historyless
+  SKU is a guess presented as a forecast rather than an improvement to be built. Written to
+  say the gap is real, since a launch is when a wrong order costs most.
+  The seasonal factors moved the same way, and this was the user's own recall rather than
+  something the docs surfaced. They are hand-set, learning them would be preferable, and it
+  is not realistic on two years that differ this much from each other: the model would learn
+  one specific past rather than a repeating pattern. It reads better as a limitation with a
+  reason than as an improvement nobody can act on, so the further-work bullet was removed
+  and the two-years limitation was rewritten around it.
+  Two limitations added that the document had never stated. Coverage is effectively car
+  covers and seat covers, three or four categories being all that sell regularly enough,
+  and a SKU with an unusual pattern is served less well because one model is trained across
+  all of them. The second is the cost side of the design's main advantage and the document
+  had only ever given the benefit.
+  Price and promotions added to the blocked group and called the largest missing signal.
+  Tied it to the seasonal problem: the post-2024 holiday change is a change in promotional
+  activity currently absorbed into the seasonal factors as though it were a calendar effect.
+  Prediction intervals recorded as deliberately deprioritised rather than missing, with the
+  user's three reasons: too little history per SKU for a reliable range, safety stock already
+  doing much the same job, and under-ordering being the expensive direction so the right
+  quantity sits at the high end of any range rather than its middle.
+  SKU age dropped. The short/long split already carries it.
+  Added the history-length boundary as a further-work item after checking its provenance.
+  `SHORT_HISTORY_WEEKS = 50` is a config constant with no measurement behind it for this
+  model; `experiment_training_length_threshold.py` tested 26 to 78 weeks for the statistical
+  prototype, which is a different question. So the concrete version is that the boundary was
+  set rather than measured and nothing has tested where it belongs, not that it should be
+  tuned.
+
+2026-08-13  Fifth pass on the project summary. Two corrections, one of them to something I
+  had written wrongly in the previous pass.
+  The history-length boundary is NOT "set rather than measured", which is what the fourth
+  pass claimed on the strength of `SHORT_HISTORY_WEEKS = 50` having no measurement behind
+  it in the design doc. The user supplied the actual reason and the code confirms it:
+  `elev_long` is a 4-week level over a 52-week rolling mean with `min_periods=52`, so the
+  long model's main input does not exist below a year of history and is neutralised to 1.0
+  where it cannot be computed. The boundary is a requirement of the input. Rewrote the
+  further-work item to say what is genuinely open, which is whether a year is also the best
+  place for it and whether two groups is the right number, and marked it modest. Added the
+  reason to the technical section beside the input it belongs to, since a reader meeting the
+  boundary and the input separately would not connect them.
+  Recording the error rather than just the fix: absence of a recorded measurement was read
+  as absence of a reason. The design doc documents decisions that were contested, and a
+  constant that follows from a feature definition never had to be argued for, so it is
+  exactly the kind of thing that leaves no trace in a decision log.
+  Added the volume-concentration limitation, which the document had never stated in either
+  half. The global model fits what most of the demand looks like and the metric weights each
+  SKU by volume, so both push the same way and an individual low-volume SKU may be better
+  served by a simpler method. Noted that raising the intermittent thresholds removed much of
+  this but is applied to the group rather than per SKU, so it remains true.
+  Added the consequence as a further-work item, from HANDOVER finding 3: fixing the low and
+  mid-volume bands completely moves pooled WAPE about 0.006 against a 0.01 acceptance
+  threshold and a noise floor of 0.011 to 0.014, so the measure cannot see the improvement.
+  Written for the summary as "agree a different measure before starting, or you will make a
+  real improvement and be unable to demonstrate it".
+
+2026-08-13  Fixed the stale descriptive statistics on promoted SKUs in `src/profile.py`.
+  The per-SKU loop computed mean, std, cv, zero_pct and trend on the window
+  `_detect_ramp_up` returned; the promotion block then overwrote train_start,
+  active_weeks and history_length via `_smooth_onset` and left the five statistics
+  describing the earlier window. They are now recomputed on the same slice `_smooth_onset`
+  selected, so the window and the statistics cannot disagree by construction.
+  Placed after classification rather than before, and it has to be there: classify() has
+  already run and is not re-run, so nothing can move between buckets, and the demotion
+  below reads recent_mean, which is computed on the trailing window and untouched. Verified
+  rather than argued: re-profiled the 2026-08-03-v2 snapshot into a temp directory and
+  diffed against the stored file. bucket, history_length, active_weeks, train_start and
+  ramp_up differ on zero SKUs; the five statistics differ on exactly the 63 promoted rows
+  and nowhere else; and every promoted row's mean now reproduces from its own active_weeks
+  window. No recorded figure moves, so no re-baseline.
+  The two SKUs that prompted this now read as what they are. CA-SC-10-B-28-DB-1TO goes from
+  a mean of 1.378 with zero_pct 0.577 to 3.040 with 0.080, and CA-SC-10-F-116-BK-1TO from
+  1.405/0.541 to 3.000/0.059. Both had looked like sub-threshold SKUs that should never have
+  been promoted.
+  Correcting my own report from earlier in the session: I had named four SKUs as affected
+  and two of them never were. 7.077 reads as 92/13 and equally as 368/52, and 3.192 as 83/26
+  and as 166/52, so inferring the denominator from the decimal was ambiguous and I treated
+  it as evidence. Both are non-promoted rows whose statistics were always consistent. The
+  empirical diff is what settled it, and it should have been the first step rather than the
+  last.
+
+2026-08-13  Found, and deliberately did NOT fix, an off-by-one in what `active_weeks` means.
+  The promotion path assigns `k` from `_smooth_onset`, which is a row count. Every other SKU
+  gets `(data_end - train_start).days / 7`, which is a span and therefore one less than the
+  row count for the same window. Checked on the 2026-08-03-v2 snapshot: all 63 promoted rows
+  match the row count and none match the span, and 400 sampled non-promoted rows match the
+  span and none the row count.
+  It matters because `history_length` is derived from this field, so the two paths reach the
+  50-week boundary one week apart. 15 smooth SKUs currently sit at 49 to 51 weeks, two of
+  them promoted.
+  Left alone because fixing it moves SKUs across the boundary, which changes which model
+  serves them, which changes the scored population and therefore every recorded figure
+  including the final test's. That is a re-baseline, not a correction, and it is the same
+  class of change as the SHORT_HISTORY_WEEKS question raised earlier today. Both belong in
+  the backlog together.
+
+2026-08-13  Fixed the active_weeks off-by-one after establishing that it does not require a
+  re-baseline, which is the opposite of what the previous entry assumed and the reason that
+  entry deferred it.
+  The evaluation never reads the field. `evaluate.py`, `model.py` and `diagnostics.py` all
+  segment through `dataset.asof_history_length(profiles, cutoff)`, and both that function and
+  `eligible_skus` compute `(cutoff - train_start).days / 7` from `train_start` alone. The
+  `active_weeks` and `history_length` COLUMNS are read only by production serving and the
+  planning layer. So the off-by-one moved which model serves a SKU and could not move a
+  recorded figure. Confirmed empirically as well as by reading: eligible smooth SKUs at the
+  final-test cutoff are 303 both before and after, split 241 short and 62 medium either way.
+  Fixed toward the span rather than the row count. Both conventions are defensible in
+  isolation; the span wins because `asof_history_length` uses it, and that function is what
+  every recorded accuracy figure was measured with, so this puts production routing and
+  evaluation segmentation on one convention instead of two. Converting the other direction
+  would have meant changing `asof_history_length` too, which does move the scored population
+  and would have re-baselined everything.
+  Measured on the pinned snapshot: bucket, train_start and ramp_up unchanged on all 3,525
+  SKUs; active_weeks shifts by one on the 63 promoted rows and nowhere else; history_length
+  moves for exactly one SKU, CA-SC-10-B-28-DB-1TO, medium to short. Every SKU in the file now
+  satisfies `active_weeks == rows - 1`, where before the promoted rows satisfied
+  `active_weeks == rows`.
+  Deliberately did not regenerate the pinned snapshot. It is read-only by design (Section
+  4.21) and the recorded figures read it directly, so leaving it alone is what keeps them
+  reproducible. The fix reaches production at the next profiling run.
+  Checked the one place that might have depended on the old value:
+  `scripts/promoted_sku_accuracy.py` has a fallback identifying promoted SKUs by
+  `active_weeks == RECENT_WEEKS`, but it is guarded behind `promoted` being absent from the
+  frame and current code always writes that column.
+  What remains open, and it is the question underneath both of today's boundary findings: a
+  window of 50 rows counts as 49 weeks under this convention, so the 50-week boundary sits a
+  week later than its name suggests, in production and in evaluation alike. Changing that is
+  a re-baseline and a measurement question rather than a correction. It belongs in the
+  backlog with the SHORT_HISTORY_WEEKS item.
+
+2026-08-13  Rebalanced the project summary and moved the long further-work list out of it.
+  The document had drifted. Limitations plus further work had reached 1,816 words against
+  1,069 for what was delivered, so 43% of the summary was caveats and unbuilt work and a
+  reader would have spent more time on what is wrong than on what exists. Each addition was
+  justified individually, including the ones I argued for; the accumulation was not.
+  Created `docs/FUTURE_WORK.md` holding the full list, grouped by what blocks each item and
+  cross-referenced to the design doc sections, BACKLOG numbers and HANDOVER findings behind
+  them. It also records the rejected candidates so they are not retried, and the prediction
+  interval decision with its three reasons, so that stays a decision rather than resurfacing
+  as an oversight.
+  The summary's version is now four numbered items in 230 words, down from 1,163: stockout
+  correction, price and promotion data, order timing, and money on the screens. Those are the
+  four with business consequence and the only four the manager can act on. The rest is
+  referred to as existing in the repository without naming a file.
+  Limitations kept all twelve points and lost 124 words of prose around them.
+  Global tightening pass on sixteen further passages. Total 5,751 to 4,594 words, with the
+  balance now 1,069 delivered against 759 for limitations and further work combined.
+  Also applied the two corrections raised earlier and never made: 338 to 340 forecast SKUs,
+  and the irregular count from "roughly 3,000" to 3,200. Both now match the pinned snapshot,
+  which holds 340 smooth and 3,185 intermittent of 3,525.
+  Left `The current method, for reference` at its full length deliberately. It is a formula
+  specification and the divergence list beneath it, where precision is the point, and it sits
+  in the optional technical half.
+
+2026-08-13  Rewrote the Korean summary against the current English one and rebuilt both docx
+  files through the existing pandoc pipeline.
+  The Korean file on disk was the July version: different structure, different figures, and
+  the old "roughly halves the error" framing from before the final test existed. It was not
+  a translation that had drifted, it was a different document, so it was replaced rather
+  than patched.
+  Matched structurally rather than by feel, since the point of the markdown is that it
+  converts to docx unchanged. Both files now carry 18 headings, 3 tables, 2 charts, the same
+  page break before the technical half, and 118 list and table rows each. Verified by
+  diffing those counts rather than by reading.
+  Both docx built with `pandoc --columns=20 --reference-doc=custom-reference.docx` followed
+  by `finalize_docx.py`, which is what `build_docx.sh` does for the English file. Checked the
+  output rather than trusting the exit code: 181 paragraphs, 18 headings, 3 tables of 17 rows
+  and 2 embedded images in each, and the headline figures present in both.
+  Removed the final-test rendering item from `FUTURE_WORK.md` at the user's instruction, the
+  Forecast Validation screen now being complete. BACKLOG 30 still describes it and was left
+  alone; if the screen is done, that item should be closed there too rather than deleted.

@@ -2,10 +2,10 @@
 """Demand-breakdown donut for the management summary.
 
 Renders the "Share of demand, last 90 days" donut used in
-Demand_Forecasting_Project_Summary.docx. It shows the same figures as the
+Machine_Learning_Demand_Forecast_Proposal.docx. It shows the same figures as the
 "Demand breakdown by SKU group" table in that document: the share of total unit
 demand carried by each SKU group over the trailing 90 days, with the two
-regular-selling groups (established + newer) making up roughly 80% of demand.
+regular-selling groups (established + newer) making up roughly 79% of demand.
 
 The values below mirror the table in the document. Update them together with the
 table when the data snapshot is refreshed. They are kept as plain constants so
@@ -25,12 +25,16 @@ from matplotlib.patches import Patch
 # ── data: mirrors the demand-breakdown table (last 90 days) ──────────────────
 #   name, SKU count, demand (units), colour
 GROUPS = [
-    ("Long history",  81,    21_745, "#1F4E79"),  # smooth, long history
-    ("Short history", 366,   34_816, "#2E75B6"),  # smooth, short history
-    ("Intermittent",  3_002, 14_452, "#D9D9D9"),  # sporadic, not forecast
+    ("Long history",  85,    22_474, "#1F4E79"),  # smooth, long history
+    ("Short history", 382,   36_368, "#2E75B6"),  # smooth, short history
+    ("Intermittent",  3_058, 15_547, "#D9D9D9"),  # sporadic, not forecast
 ]
 TITLE = "Share of demand, last 90 days"
-CENTER = "80%\nregular-\nselling"   # established + newer share of demand
+# Derived from GROUPS rather than typed, so the centre figure and the segment
+# labels cannot drift apart. It read 80% against segments summing to 79%.
+_reg = sum(d for n, _, d, _ in GROUPS if n != "Intermittent")
+_all = sum(d for _, _, d, _ in GROUPS)
+CENTER = f"{round(_reg / _all * 100)}%\nregular-\nselling"
 
 
 def main(out: Path) -> None:

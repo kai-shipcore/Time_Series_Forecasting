@@ -265,9 +265,58 @@ def profile(df: pd.DataFrame) -> pd.DataFrame:
         piv = piv[sorted(piv.columns)]
         cols = list(piv.columns)
         starts, weeks = {}, {}
+        # The descriptive statistics are recomputed here, on the window that was
+        # just detected, rather than left as the per-SKU loop computed them.
+        # Without this a promoted row describes two different windows at once:
+        # train_start and active_weeks from _smooth_onset, and mean, std, cv,
+        # zero_pct and trend from whatever _detect_ramp_up had returned earlier.
+        # Measured on the 2026-08-03-v2 snapshot: 63 promoted rows, all of them
+        # affected. CA-SC-10-B-28-DB-1TO carried a mean of 1.378 taken over 37
+        # weeks beside an active_weeks of 50, against 3.040 on its own window;
+        # CA-SC-10-F-116-BK-1TO 1.405 over 37 weeks beside 51, against 3.000.
+        # Both read as sub-threshold SKUs that should never have been promoted,
+        # which is the misreading this causes: the figure was real, it just
+        # described the window from before promotion moved the start.
+        #
+        # Safe to do after classification rather than before, and it has to be
+        # after: classify() has already run and is not re-run, so this cannot
+        # move any SKU between buckets. The demotion below reads recent_mean
+        # only, which is computed on the trailing window and is untouched here.
+        # Nothing in the ML harness reads these columns either, so no recorded
+        # figure moves. It changes what the row says about itself, not what the
+        # row is.
+        stat_cols = ("mean", "std", "cv", "zero_pct", "trend")
+        restats: dict[str, dict] = {c: {} for c in stat_cols}
         for uid in profiles.loc[upgrade, "unique_id"]:
-            start, k = _smooth_onset(piv.loc[uid].to_numpy(), cols)
-            starts[uid], weeks[uid] = start, k
+            y_all = piv.loc[uid].to_numpy()
+            start, k = _smooth_onset(y_all, cols)
+            # k is a ROW COUNT; active_weeks everywhere else in this file is a
+            # SPAN, `(data_end - train_start).days / 7`, which is one less for
+            # the same window. Storing k directly made the promotion path
+            # disagree with every other SKU by a week, and history_length is
+            # derived from this field, so the two paths reached the 50-week
+            # boundary one week apart.
+            #
+            # Converted to the span rather than the other way round, because the
+            # span is also what `dataset.asof_history_length` computes when it
+            # segments a backtest, and that function is what every recorded
+            # accuracy figure was measured with. Matching it keeps production
+            # routing and evaluation segmentation on one convention. Changing
+            # the convention itself, so that a window of 50 rows counts as 50
+            # weeks rather than 49, is a separate question: it moves SKUs across
+            # the boundary in both places and would re-baseline every figure.
+            # See BACKLOG, alongside the SHORT_HISTORY_WEEKS question.
+            starts[uid], weeks[uid] = start, k - 1
+            # The slice stays the row count: these are the k weeks _smooth_onset
+            # actually selected, so the statistics and the window cannot
+            # disagree by construction.
+            w = y_all[-k:]
+            m, s = w.mean(), w.std()
+            restats["mean"][uid] = m
+            restats["std"][uid] = s
+            restats["cv"][uid] = s / m if m > 0 else np.inf
+            restats["zero_pct"][uid] = (w == 0).mean()
+            restats["trend"][uid] = _trend_slope(w)
         ids = profiles.loc[upgrade, "unique_id"]
         profiles.loc[upgrade, "train_start"] = ids.map(starts).to_numpy()
         profiles.loc[upgrade, "active_weeks"] = ids.map(weeks).to_numpy()
@@ -279,6 +328,8 @@ def profile(df: pd.DataFrame) -> pd.DataFrame:
         profiles.loc[upgrade, "history_length"] = (
             ids.map(weeks).map(_history_length).to_numpy()
         )
+        for c in stat_cols:
+            profiles.loc[upgrade, c] = ids.map(restats[c]).to_numpy()
 
     # Demote: smooth/low_volume → intermittent if recently dormant
     downgrade = (
