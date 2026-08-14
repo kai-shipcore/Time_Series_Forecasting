@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-08-14. Replaced by `docs/OVERVIEW.md`.** Kept for its reasoning, not its figures: the accuracy table below is from the July snapshot and is wrong in two documented ways. Do not quote it.
+
+---
+
 # Demand Forecasting: Project Write-Up
 
 > **FIGURES SUPERSEDED, 2026-08-12. Do not quote the accuracy table below.**

@@ -1,0 +1,39 @@
+{
+  "run_at": "2026-08-14T11:50:38-07:00",
+  "commit": "abf30582b838a78271b439e1d1a28e7cd708f313",
+  "snapshot": "2026-08-03-v2",
+  "final_test_cutoff": "2026-05-04",
+  "model_version": "v11",
+  "versions": [
+    "v1",
+    "v11"
+  ],
+  "windows": [
+    {
+      "window": "Oct-Dec",
+      "cutoff": "2025-10-06",
+      "n_skus": 70
+    },
+    {
+      "window": "Dec-Feb",
+      "cutoff": "2025-12-15",
+      "n_skus": 260
+    },
+    {
+      "window": "Mar-May",
+      "cutoff": "2026-02-23",
+      "n_skus": 281
+    }
+  ],
+  "scored_skus": 281,
+  "population": {
+    "total": 3525,
+    "segments": {
+      "intermittent/full": 3160,
+      "intermittent/short": 25,
+      "smooth/full": 53,
+      "smooth/medium": 40,
+      "smooth/short": 247
+    }
+  }
+}

@@ -110,6 +110,24 @@ def main() -> int:
     # the minutes the old behaviour left open. Closing it completely means
     # swapping a directory symlink, which changes how every reader resolves its
     # paths, and that is a larger change than this problem justifies.
+    # Sweep staging directories left by earlier runs.
+    #
+    # The name carries the pid, so the check below only ever matches this
+    # process and a directory abandoned by any other run is invisible to it.
+    # Interrupting during the sync leaks one every time, because that step runs
+    # before the try block that calls _abandon, and nothing else on the machine
+    # removes them. Harmless individually, they are empty, but they accumulate
+    # in data/ and the next person to look there finds a scatter of hidden
+    # directories with no idea which run left them or whether any is live.
+    #
+    # Matching the glob rather than tracking pids: a stale directory's owner is
+    # gone by definition, and a directory belonging to a concurrently running
+    # prepare-data would be a second run against the same output files, which
+    # api/main.py already prevents by giving both entry points the same job type
+    # and returning 409.
+    for stale in PROCESSED.parent.glob(".staging_*"):
+        shutil.rmtree(stale, ignore_errors=True)
+
     staging = PROCESSED.parent / f".staging_{os.getpid()}"
     if staging.exists():
         shutil.rmtree(staging)
@@ -146,7 +164,27 @@ def main() -> int:
         print("Step 1/4  sync: skipped (--no-sync)", flush=True)
     else:
         print("Step 1/4  sync: refreshing the velocity snapshot …", flush=True)
-        sync_velocity_snapshot()
+        # Interrupting here is common and was not handled. The step blocks for
+        # minutes with no output, so someone watching it reasonably concludes it
+        # has hung, and the KeyboardInterrupt then escaped past the try block
+        # below and left the staging directory behind. Caught here so a cancel
+        # during the sync says the same thing a cancel anywhere else does.
+        #
+        # Worth saying out loud, because the obvious next move is wrong: the
+        # POST has already reached the app, and the app finishes the upsert
+        # whether or not anything is still listening. Ctrl-C stops the waiting,
+        # not the sync. Re-running immediately therefore starts a second upsert
+        # on top of the first; --no-sync is the flag for picking up after one
+        # that was already triggered.
+        try:
+            sync_velocity_snapshot()
+        except KeyboardInterrupt:
+            _abandon("Interrupted during the velocity sync.")
+            print("The sync itself is still running on the app server: the "
+                  "request was delivered before the interrupt. Give it a few "
+                  "minutes, then re-run with --no-sync to use its result "
+                  "rather than starting a second one.", flush=True)
+            return 130
 
     # clean() and profile() read their own PROCESSED_DIR, which follows
     # FORECAST_PROCESSED_DIR set above. Reassigned explicitly as well, because

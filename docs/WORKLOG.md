@@ -4095,3 +4095,119 @@ the files and not knowing whether anyone had looked.
   Removed the final-test rendering item from `FUTURE_WORK.md` at the user's instruction, the
   Forecast Validation screen now being complete. BACKLOG 30 still describes it and was left
   alone; if the screen is done, that item should be closed there too rather than deleted.
+
+2026-08-13  Reconciled the backlog against everything raised this session, before handover.
+  Four gaps between what happened and what was written down.
+  Closed item 30, the Forecast Validation final test rendering, on the user's statement that
+  the screen is complete. Recorded that it was closed on that statement rather than on
+  inspection, because the last verified state of the code that morning still had
+  `api/main.py` hardcoding `"evaluated": False` with both branches rendering placeholders.
+  Kept the original entry so anyone who sees the panel reporting the test as pending has the
+  exact diagnosis rather than an empty closed item.
+  Added item 31 for the history-length boundary, which was the one genuinely open question
+  left and existed only in WORKLOG and FUTURE_WORK. It records the convention (a span, so 50
+  rows counts as 49 weeks), the reason 50 exists at all (`elev_long` needs 52 rows and
+  cannot be computed below a year), the three things actually open, and why it carries a
+  re-baseline. Also recorded the two fixes that landed today so the item is not confused
+  with them.
+  Extended item 27 to include OPERATIONS.md, whose Section 1 population counts predate the
+  2026-08-10 narrowing: 450 smooth against 340, 3,000 of 3,300 intermittent against 3,185 of
+  3,525, and a 360/80 split against 247/93. Its Section 4 accuracy tables are current. Noted
+  that this is the document most likely to be quoted by someone unaware the counts moved,
+  being written for whoever runs the system.
+  Pointed CLAUDE.md at BACKLOG and the new FUTURE_WORK, which nothing referenced, and added
+  that the proposal docx files are build artifacts and the markdown is the master.
+
+2026-08-14  Separated the live and pinned halves of the Forecast Validation page, and made a
+  superseded accuracy report detectable.
+  The page has always carried two kinds of figure and distinguished them nowhere. Sections
+  02, 03 and 04 read `data/processed` and move with the Tuesday cron because they describe
+  the business now; sections 01, 05 and 06 read the snapshot pinned by `ML_DATA_SNAPSHOT`
+  and are supposed to sit still. A reader had to assume one or the other and either
+  assumption was wrong for half the page.
+  The concrete defect was `coverage`, which intersected today's planning table with the SKU
+  list from the pinned report and rendered the ratio as one percentage on the headline card.
+  Numerator and denominator were from different weeks, so the figure described a moment that
+  never existed, and it moved every week for reasons the page attributed entirely to
+  promoted SKUs.
+  Established first that re-running `ml_accuracy_report.py` weekly cannot fix any of this:
+  it calls `load_weekly()` with the default argument, so both the actuals and the profiles
+  come from the pinned snapshot, and a weekly run rewrites identical bytes after retraining
+  three windows. The report needs re-running when the snapshot is re-cut, not on a schedule.
+  That is what went wrong on 2026-08-11: the re-cut into `2026-08-03-v2` re-profiled the
+  population from 382 smooth/short to 247, nothing re-ran the report, and every existing
+  check passed because they all ask whether files are present and none asked whether they
+  agree.
+  `ml_accuracy_report.py` now writes `outputs/reports/ml_accuracy_meta.json` recording the
+  snapshot, commit, run time, scored SKU count and the profiled population. `/planning/
+  validation` returns a `basis` block per clock, `coverage` carries a date on each side plus
+  a count of scored SKUs no longer served, and `meta.accuracy_computed` reads the recorded
+  run time instead of the summary file's mtime, which every checkout and deploy rewrites.
+  New `src/planning/provenance.py` holds the comparison. Its drift measure is taken over the
+  forecastable cohort rather than the whole catalogue: measured over all 3,525 SKUs the
+  August re-profile reads 3.8% and would sit under any usable tolerance, which is to say the
+  check would have stayed silent through the incident it exists to catch. Over the 340
+  scored SKUs the same event reads 42.1%, against the 41% recorded elsewhere in the docs.
+  `/health` reports the comparison and the cron prints it as a warning rather than a failure,
+  since a drifted report still serves and exiting non-zero would mail about a healthy run.
+  Frontend renders a basis line under each heading and a drift banner above the pinned
+  figures, which are still shown: they are real measurements and suppressing them would put
+  nothing where the page's central claim goes.
+  Also corrected two code guides left stale by the 2026-08-14 final-test change: the page
+  comment still said the last two sections had no data by design, and `section-heading.tsx`
+  carried a section order that disagreed with the array twenty lines below it.
+  Not done: the accuracy report itself is still the 2026-07-30 one. It needs a run on a
+  machine with the venv and lightgbm, and the drift banner will report the gap until then.
+
+2026-08-14  Added freshness detection for the live half, after finding the served forecast a
+  week behind.
+  The user asked why the page still showed an 08-03 snapshot when the Tuesday cron should
+  have run on 08-11. Two separate things turned out to be true.
+  The snapshot name is not a build date. `2026-08-03-v2` is the data cutoff, and its manifest
+  records `derived_from: 2026-08-03`, `created_at: 2026-08-11`, `sales_clean_identical_to_
+  source: true`. It is 08-03 data carrying profiles regenerated on the 11th, so the name is
+  correct and reads stale only because it looks like one.
+  The live half genuinely was stale. `data/processed/sales_clean.parquet` ends at the week
+  labelled 2026-08-03; as of Friday 2026-08-14 the newest complete week is 2026-08-10. Every
+  file in `data/processed` is dated 08-12 from manual runs and `logs/forecast_cron.log` holds
+  no run header from the current script, its last entry being the retired statsforecast
+  pipeline at `week_of=2026-07-27`. The 08-11 run did not deliver.
+  Worse, the served forecast covers 467 SKUs while the current profiler recognises 340, so
+  127 products are being forecast that the model declines to forecast. Nothing anywhere
+  reported either condition.
+  `live_basis` now carries `expected_week` and `weeks_behind` from `src.weeks.
+  last_complete_week`, the same rule the ingest uses, rather than from today's date, because
+  a mid-week ingest writes a partial bucket under next Monday's label and comparing against
+  today would read two days of orders as a full week. `/health` gains `data_freshness`
+  alongside `accuracy_report`, kept separate because a stopped pipeline and an unregenerated
+  report are unrelated failures with different fixes. The cron exits non-zero on a stale
+  week, unlike the accuracy warning, because this is the case where the forecast itself is
+  wrong rather than merely described wrongly. The page turns its live basis line amber.
+  Verified against the real repo state: the check reports 1 week behind today and clears when
+  given an 08-10 grid.
+  Decided against advancing `ML_DATA_SNAPSHOT` to a newer snapshot, which was the user's
+  first instinct. `final_test.json` records `snapshot: 2026-08-03-v2`, the window is
+  single-use, `ml_41_final_test.py` refuses to overwrite it and its preflight fails when the
+  config no longer matches. Advancing the pin would strand section 06 permanently. Recorded
+  here because it is the kind of decision that looks like tidying and is not.
+  Added Section 6b to DATA_AND_PIPELINE.md: the catch-up sequence with the expected week
+  label, the expected 340 SKU count and the expected accuracy movements, so a wrong outcome
+  is recognisable rather than merely different.
+
+2026-08-14  Fixed a staging directory leak on cancel, found when the user interrupted the
+  velocity sync.
+  The sync step blocks for minutes with no output while the app upserts the order-line table,
+  so it reads as a hang and gets interrupted. `src/velocity_sync.py` already predicted that
+  in a comment. What nothing handled was the consequence: the staging directory is created
+  before the sync runs, but the `except KeyboardInterrupt` that discards it wraps only the
+  steps after, so the interrupt escaped and left `data/.staging_<pid>` behind. The name
+  carries the pid and the existing guard only matches the current process, so nothing ever
+  removed one. Empty and harmless individually; they accumulate silently.
+  Two changes. Stale `.staging_*` directories are swept at startup, which is safe because a
+  concurrent second run is already prevented by the shared job type returning 409. And the
+  sync call is wrapped so a cancel there abandons the same way a cancel anywhere else does,
+  printing the thing that is not obvious: the POST was already delivered, the app finishes
+  the upsert regardless, and re-running immediately starts a second one on top of it.
+  `--no-sync` is the flag for picking up after a sync that was already triggered.
+  Confirmed `data/processed` was untouched by the interrupt, which is the 2026-08-05 staging
+  design working as intended, and removed the one orphaned directory.

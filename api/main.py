@@ -13,6 +13,7 @@ because only the legacy endpoints used it and it went with them.
 
 import sys
 import os
+import json
 import signal
 import threading
 import subprocess
@@ -130,6 +131,35 @@ async def health():
             "commit": DEPLOYED_COMMIT,
         }
 
+    # Whether the accuracy report still describes the pinned snapshot and the
+    # served population.
+    #
+    # Deliberately not part of `ready`. A drifted report serves correctly: the
+    # grid renders, and its figures are real measurements of a real cohort. The
+    # only thing wrong is that the cohort has moved on, which is a caption
+    # problem rather than an outage, and failing readiness over it would take
+    # both planning screens down and auto-start a server that was already up.
+    #
+    # It is here because this is the endpoint the cron already calls. The
+    # 2026-08-11 re-profile went undetected for two weeks with every existing
+    # check passing, because they all ask whether files are present and none
+    # asked whether they agree.
+    try:
+        accuracy = _prov.drift_summary(_ML_DATA_SNAPSHOT)
+    except Exception as exc:  # pragma: no cover - a caption must not 500 /health
+        accuracy = {"ok": None, "known": False, "detail": f"drift check failed: {exc}"}
+
+    # Whether the weekly pipeline is still delivering. Reported apart from the
+    # accuracy check above because the two failures are unrelated and their
+    # fixes are different: this is a cron that stopped, that is a report nobody
+    # regenerated. Also not part of `ready`, for the same reason: last week's
+    # forecast is a worse forecast, not an outage, and 503 here would take both
+    # planning screens down over a forecast that still works.
+    try:
+        freshness = _prov.freshness_summary()
+    except Exception as exc:  # pragma: no cover
+        freshness = {"ok": None, "detail": f"freshness check failed: {exc}"}
+
     return {
         "status": "ok",
         "ready": status["ready"],
@@ -137,6 +167,8 @@ async def health():
         "missing_optional": status["missing_optional"],
         "files": status["files"],
         "repo_root": status["repo_root"],
+        "accuracy_report": accuracy,
+        "data_freshness": freshness,
         # Which revision is actually serving. repo_root answers "started from
         # this directory", which a process left over from an earlier deploy also
         # satisfies; this answers "started from this commit", which it does not.
@@ -799,6 +831,7 @@ def planning_demand_trend(req: DemandTrendRequest):
 from config import ML_FINAL_TEST_CUTOFF as _ML_FINAL_TEST_CUTOFF  # noqa: E402
 from config import ML_DATA_SNAPSHOT as _ML_DATA_SNAPSHOT  # noqa: E402
 from src.ml.serving import history as _hist  # noqa: E402
+from src.planning import provenance as _prov  # noqa: E402
 
 
 def _model_card(version: str | None) -> dict | None:
@@ -861,6 +894,97 @@ def _pooled(g: pd.DataFrame, err="ae", act="y_total") -> float:
 # "outlier" stops being accurate. Adjustable on the page, and displayed there,
 # because the right number depends on what the reader is looking for.
 OUTLIER_MIN_UNITS = 100
+
+
+#: Where scripts/ml_41_final_test.py writes the quarantined window's result.
+FINAL_TEST_RESULT = ROOT / "outputs" / "reports" / "final_test.json"
+
+
+def _final_test_payload() -> dict:
+    """The final test result, served from the file the runner wrote.
+
+    The file is the source and this function does not restate its numbers. It
+    passes `scores` and the provenance fields through unchanged, so a figure on
+    the page and a figure in `final_test.json` cannot disagree without the file
+    itself being wrong. That mattered enough to be worth the awkwardness: this
+    project has three recorded instances of a number rotting because it was
+    transcribed into prose rather than read from where it was measured.
+
+    Two things are derived rather than passed through, both so the web app does
+    not have to know a model version by name:
+
+    `methods` names which key in `scores` plays which role. The comparison
+    section above already reads versions out of its payload rather than naming
+    v11 in a component, and this keeps that property here.
+
+    `comparisons` flattens the `<model>_vs_<other>` blocks into a list. In the
+    file they are keys containing a version name, which a TypeScript interface
+    cannot describe without hardcoding that name. As a list each entry carries
+    what it is comparing, so a future model changes the data and not the code.
+
+    Returns `evaluated: False` when the file is absent, which is the honest
+    answer on a fresh clone: the result is not regenerable, so a missing file
+    means this checkout does not have it rather than that the test is pending.
+    """
+    fallback = {"cutoff": _ML_FINAL_TEST_CUTOFF, "evaluated": False}
+    try:
+        with FINAL_TEST_RESULT.open() as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        # Same posture as the rest of this endpoint: a section with no evidence
+        # renders as "nothing here yet" rather than taking the page down.
+        return fallback
+
+    scores = raw.get("scores") or {}
+    if not scores:
+        return fallback
+
+    # Roles by elimination. "baseline" and "V1" are fixed names written by the
+    # runner; whatever else is in there is the model under test.
+    spreadsheet = next((k for k in scores if k.upper() == "V1"), None)
+    structural = next((k for k in scores if k.lower() == "baseline"), None)
+    model = next((k for k in scores if k not in (spreadsheet, structural)), None)
+
+    comparisons = []
+    for key, block in raw.items():
+        if "_vs_" not in key or not isinstance(block, dict):
+            continue
+        against = key.split("_vs_", 1)[1]
+        against = spreadsheet if against.lower() == "v1" else against
+        for segment, stats in block.items():
+            if not isinstance(stats, dict) or "delta" not in stats:
+                continue
+            comparisons.append({
+                "against": against,
+                "segment": segment,
+                "delta": stats.get("delta"),
+                "se": stats.get("se"),
+                "ci_lo": stats.get("ci_lo"),
+                "ci_hi": stats.get("ci_hi"),
+            })
+
+    return {
+        "cutoff": raw.get("cutoff") or _ML_FINAL_TEST_CUTOFF,
+        "evaluated": True,
+        "run_at": raw.get("run_at"),
+        "commit": raw.get("commit"),
+        "snapshot": raw.get("snapshot"),
+        "test_weeks": raw.get("test_weeks") or [],
+        "scores": scores,
+        "methods": {
+            "model": model,
+            "spreadsheet": spreadsheet,
+            "structural_baseline": structural,
+        },
+        "comparisons": comparisons,
+        # The runner records pooled WAPE and the bootstrap only. The bias
+        # figures for this window exist in ML_FORECAST_DESIGN.md Section 4.35
+        # and are deliberately not copied in here, because a number typed into
+        # a payload is exactly the kind that goes stale unnoticed. If they are
+        # wanted on the page, ml_41_final_test.py should record them and this
+        # passes them through like everything else.
+        "has_bias": False,
+    }
 
 
 @app.get("/planning/validation")
@@ -933,9 +1057,25 @@ def planning_validation(
             } if cur_w and base_w else None,
         }
 
-    # Coverage: what the comparison can and cannot speak for. The gap is the
-    # promoted SKUs whose training start moves with every profiling run, so they
-    # are ineligible at any fixed cutoff (docs/BACKLOG.md item 2).
+    # Coverage: what the comparison can and cannot speak for.
+    #
+    # This is a join across the page's two clocks and it is the only figure that
+    # is. `served` is live: today's planning table, which the Tuesday cron moves.
+    # `scored` comes from the pinned accuracy report, which by design does not
+    # move. Rendering their ratio as one percentage with one date, which is what
+    # this did until 2026-08-14, states a fact about a single moment that never
+    # existed.
+    #
+    # The gap has two causes and they are not interchangeable. The intended one
+    # is promoted SKUs, whose training start moves with every profiling run and
+    # which are therefore ineligible at any fixed cutoff (docs/BACKLOG.md item
+    # 2). The unintended one is a report measured on a superseded population,
+    # which is what `basis["drift"]` reports. The page attributed the whole gap
+    # to the first cause in prose, so the second was invisible in exactly the
+    # period it was true.
+    #
+    # Both dates travel with the counts now, so the caption can say which side
+    # of the join each number comes from rather than implying they share one.
     plan = _plan_calc.build_planning_table(_plan_calc.DEFAULT_PARAMS)
     scored_ids = set()
     if sku_path.exists():
@@ -943,11 +1083,26 @@ def planning_validation(
         scored_ids = set(sku_acc.loc[sku_acc["model_version"] == comparison.get("current"),
                                      "unique_id"])
     served_ids = set(plan["unique_id"])
+    accuracy_basis = _prov.accuracy_basis(_ML_DATA_SNAPSHOT)
+    live_basis = _prov.live_basis()
     coverage = {
         "served": len(served_ids),
         "scored": len(served_ids & scored_ids),
         "unscored": len(served_ids - scored_ids),
         "share": (len(served_ids & scored_ids) / len(served_ids)) if served_ids else 0.0,
+        # Which clock each side is on. The frontend renders these rather than
+        # assuming both numbers are current, and cannot omit them by accident:
+        # the caption reads one of two different sentences depending on drift.
+        "served_as_of": live_basis["as_of"],
+        "scored_as_of": accuracy_basis["computed_at"],
+        "scored_snapshot": accuracy_basis["snapshot"],
+        # Scored SKUs that are no longer served at all. Distinct from `unscored`,
+        # which counts the other direction. A large value here means the report
+        # is measuring products that have since left the forecast set, which is
+        # the same staleness seen from the other end and the one the ratio hides
+        # completely: dropping a scored SKU raises `share` by shrinking nothing
+        # a reader can see.
+        "scored_not_served": len(scored_ids - served_ids),
     }
 
     # Largest individual wins and losses, so the aggregate can be checked against
@@ -1045,21 +1200,42 @@ def planning_validation(
             # that assumed you already knew.
             "model": _model_card(comparison.get("current")),
             "snapshot": _ML_DATA_SNAPSHOT,
-            "accuracy_computed": (
-                pd.Timestamp(acc_path.stat().st_mtime, unit="s").date().isoformat()
-                if acc_path.exists() else None
-            ),
+            # Recorded by ml_accuracy_report.py rather than inferred from the
+            # summary file's mtime, which is what this was until 2026-08-14. An
+            # mtime describes the filesystem, not the measurement: git checkout,
+            # cp -r and every deploy rewrite it, so the page dated the report by
+            # when the file last moved. Falls back to the mtime for a checkout
+            # written before the manifest existed, and `basis.accuracy` says
+            # which of the two a given figure is.
+            "accuracy_computed": accuracy_basis["computed_at"],
             "trained_through": (
                 snap.date().isoformat()
                 if (snap := _plan_data.forecast_snapshot_date()) is not None else None
             ),
         },
-        "final_test": {
-            # Pinned, quarantined, and not yet run. Reported so the page can say
-            # what is coming rather than leaving a blank panel unexplained.
-            "cutoff": _ML_FINAL_TEST_CUTOFF,
-            "evaluated": False,
+        # Which clock each section runs on.
+        #
+        # The page has always had both kinds of figure and never said which was
+        # which. Sections 02, 03 and 04 read data/processed and move with the
+        # Tuesday cron, because they describe the business as it is now. Sections
+        # 01, 05 and 06 read the pinned snapshot and do not move, because they
+        # are measurements whose whole value is being comparable across model
+        # versions. A reader with no way to tell them apart has to assume one or
+        # the other, and either assumption is wrong for half the page.
+        #
+        # `accuracy.drift` is the part that could not be expressed at all
+        # before: whether the pinned side has been superseded. It is reported
+        # rather than repaired, and `src/planning/provenance.py` says why.
+        "basis": {
+            "live": live_basis,
+            "accuracy": accuracy_basis,
         },
+        # Served from outputs/reports/final_test.json. This was hardcoded to
+        # `evaluated: False` with a comment reading "not yet run" until
+        # 2026-08-14, which stopped being true on 2026-08-13 and left the last
+        # section of the evidence page asserting the opposite of the result it
+        # exists to report.
+        "final_test": _final_test_payload(),
     })
 
 
@@ -1156,6 +1332,12 @@ def planning_demand_patterns(weeks: int = Query(default=52, ge=13, le=260)):
         "n_skus": int(len(per_sku)),
         "segments": seg,
         "weeks": weeks,
+        # This section is live and should say so on its own, without the reader
+        # having to hold the other payload's basis block in their head. `as_of`
+        # is the newest week in the sales grid rather than today: they differ by
+        # up to a week normally, and by however long the cron has been failing
+        # otherwise, which is the case worth being able to see.
+        "basis": _prov.live_basis(sales["ds"].max()),
     })
 
 

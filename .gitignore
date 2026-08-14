@@ -39,10 +39,25 @@ outputs/reports/*
 !outputs/reports/ml_accuracy.csv
 !outputs/reports/ml_accuracy_by_sku.csv
 !outputs/reports/ml_backtest_weekly.csv
+# Provenance for the two accuracy CSVs above, and tracked for the same reason
+# they are: it is what the deployed server reads to date them. Untracked, a
+# fresh checkout would have the figures without the snapshot they were measured
+# on, and the drift check that exists to catch a re-cut snapshot would report
+# every deploy as unverifiable.
+!outputs/reports/ml_accuracy_meta.json
 # The route expectation is tracked on purpose: check_route_parity.py compares
 # against it, so an endpoint added or removed shows up as a diff in review rather
 # than as a check that quietly re-records whatever it just found.
 !outputs/reports/route_parity.json
+# final_test.json is the quarantined window's result, and it is the one file here
+# that cannot be regenerated. Section 2.2 of the design doc spends that window on
+# a single use and scripts/ml_41_final_test.py refuses to overwrite the file, so
+# re-running is not a recovery path: it is either refused or it spends a window
+# that no longer exists. The headline figures are transcribed into the design doc
+# and OVERVIEW.md, but the commit, the input md5 and the bootstrap intervals are
+# only here, and those are what make the figure checkable rather than quoted.
+# 1.3 KB.
+!outputs/reports/final_test.json
 
 __pycache__/
 *.py[cod]

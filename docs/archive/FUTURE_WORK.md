@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-08-14. Replaced by `docs/FUTURE_IMPROVEMENTS.md`**, which carries everything here plus the three defects found on 2026-08-14.
+
+---
+
 # Future work
 
 The full list of identified improvements, in plain language, grouped by what each needs

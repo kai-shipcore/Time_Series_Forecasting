@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-08-14.** The findings are absorbed into `docs/OVERVIEW.md` Section 7 and `docs/MODEL.md` Section 6. Kept because the ten findings are stated here at more length than either summarises, and because the design doc still cites this file by finding number. Its figures are two snapshots old.
+
+---
+
 # Handover: findings and caveats
 
 > **FIGURES SUPERSEDED, 2026-08-12. The findings hold; the numbers are two snapshots old.**

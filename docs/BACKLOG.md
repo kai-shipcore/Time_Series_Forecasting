@@ -15,10 +15,17 @@ are three different things.
 
 | # | Item | Size |
 |---|---|---|
-| 30 | Forecast Validation still says the final test has not been run | half a day, and the first half is urgent |
-| 27 | Rewrite the three stale documents | a day |
+| 31 | The history-length boundary is a week later than its name says | a measurement, then a re-baseline |
+| 27 | Rewrite the stale documents | a day |
 | 24 | Take the personal copy of this repository | last thing before handover, see below |
 | 29 | Codebase cleanup: dead scripts and stale files | explicitly last, only if there is time |
+
+Item 30 closed on 2026-08-13: the Forecast Validation screen renders the final test result.
+**Closed on the user's statement rather than on inspection**, which is worth knowing because
+the last verified state of the code, earlier the same day, had `api/main.py` hardcoding
+`"evaluated": False` and both branches of the section rendering a placeholder. If the panel
+is ever seen saying "Not evaluated yet, deliberately" or "Results not rendered yet", the
+item body below still describes exactly what to change and is the place to start.
 
 Item 26 closed on 2026-08-13: the final test ran once and passed its primary criterion,
 v11 against V1. It tied the structural baseline, which is recorded in Section 4.35 as the
@@ -1689,15 +1696,21 @@ real finding about generalisation, not a reason to look for a better window.
 
 ---
 
-## 27. Rewrite the three stale documents
+## 27. Rewrite the stale documents
 
-**Status: open.**
+**Status: open.** Was "the three stale documents"; `OPERATIONS.md` joined them on 2026-08-13.
 
 | document | state |
 |---|---|
 | `PROJECT_WRITEUP.md` | carries a SUPERSEDED banner. July figures, and a five-of-six claim that is four-of-six now |
 | `HANDOVER.md` | carries a SUPERSEDED banner. Rewrite last, at actual handover, so it describes the state being handed over |
 | `LEARNING_NOTES.md` | no banner, and largely fine. It is conceptual and does not repeat the numbers that moved |
+| `OPERATIONS.md` | Section 1 counts predate the 2026-08-10 narrowing: "roughly 450" smooth against 340, "about 3,000 of the 3,300" intermittent against 3,185 of 3,525, and a 360/80 short-long split against 247/93. The accuracy tables in Section 4 are current; only the population counts are stale |
+
+The `OPERATIONS.md` figures are the ones most likely to be quoted by someone who does not
+know they moved, because that document is written for whoever runs the system rather than
+for whoever built it. Counts verified against `data/snapshots/2026-08-03-v2/sku_profiles.csv`
+on 2026-08-13.
 
 `LEARNING_NOTES.md` is listed to record that it was checked rather than assumed: it was
 described as stale earlier, and on inspection it contains none of the figures the 2026-08-11
@@ -1839,7 +1852,10 @@ documents and could move to `docs/tasks_completed/`.
 
 ## 30. Forecast Validation still says the final test has not been run
 
-**Status: open.** Raised 2026-08-13, the same day item 26 closed. The two are the same
+**Status: CLOSED 2026-08-13 on the user's statement that the screen is complete.** Not
+verified against the code. The last inspected state, earlier that day, is described below
+and is what to compare against if the screen is ever seen reporting the test as pending.
+The original entry follows unchanged. Raised 2026-08-13, the same day item 26 closed. The two are the same
 event seen from either end: the test ran, and the page that exists to report it does not
 know.
 
@@ -1904,3 +1920,58 @@ one more backtest. Keep it.
 **Not blocked by anything.** The test is run, the file is committed, and no further
 measurement is needed or wanted: Section 2.2 quarantines that window and its value comes
 from having been used once.
+
+---
+
+## 31. The history-length boundary is a week later than its name says
+
+**Status: open.** Raised 2026-08-13 while fixing two defects in `src/profile.py`. Those two
+are fixed and are not this item; this is the question they exposed underneath.
+
+**The convention.** `active_weeks` is a span, `(data_end - train_start).days / 7`, so a
+window of 50 rows counts as 49 weeks. `_history_length` thresholds that span at
+`SHORT_HISTORY_WEEKS = 50`. A SKU therefore needs 51 rows of history to be labelled medium,
+not 50, and the boundary named "50 weeks" sits a week later than it reads.
+
+`dataset.asof_history_length` computes the same span from `train_start` and the cutoff, so
+evaluation and production agree with each other. They are consistently one week late rather
+than inconsistent, which is why nothing has ever looked wrong.
+
+**Why the number is 50 in the first place**, since this was misread once already and the
+design doc does not say. It is not arbitrary and it is not free to move: `elev_long`, the
+long model's distinguishing input, is a 4-week mean over a 52-week rolling mean with
+`min_periods=52`. Below a year of history it cannot be computed at all and is neutralised to
+1.0. The boundary exists because the input requires it. Absence of a recorded measurement
+here is absence of an argument, not absence of a reason.
+
+**What is actually open.** Three things, and they should be settled together:
+
+1. Whether the boundary should be a row count rather than a span, so that "50 weeks" means
+   50 weeks of data.
+2. Whether 50 is the right place for it at all, which has never been measured for the
+   LightGBM track. `scripts/experiment_training_length_threshold.py` tested 26 to 78 weeks,
+   but it asked when the statistical prototype beats V1, which is a different question.
+3. Whether two groups is the right number.
+
+**Why this is not a quick fix.** Changing either the convention or the threshold moves SKUs
+across the boundary in `asof_history_length` as well as in the profiler, which changes which
+model serves them, which changes the scored population, which re-baselines every recorded
+figure including the final test's. Section 2.2 quarantines that window and its value comes
+from having been used once. So this is a measurement decision with a re-baseline attached,
+not a correction, and it should not be started casually.
+
+**Current exposure, measured on the pinned `2026-08-03-v2` snapshot.** 15 smooth SKUs sit at
+49 to 51 weeks, two of them promoted. Converting the promoted path to the row-count
+convention moved exactly one SKU's `history_length`. So the population effect today is
+small; the reason to do it is that the boundary should mean what it says, not that it is
+currently costing accuracy.
+
+**Two related fixes already landed on 2026-08-13**, recorded here so this item is not
+confused with them:
+
+- Promoted SKUs carried `mean`, `std`, `cv`, `zero_pct` and `trend` computed on the window
+  from before promotion moved `train_start`. They are now recomputed on the detected window.
+  Classification is unaffected because it has already run by that point, so no figure moved.
+- The promotion path assigned `active_weeks` as a row count while every other path used a
+  span, so the two reached the boundary a week apart. The promotion path now uses the span,
+  matching `asof_history_length`. One SKU changed `history_length`; no recorded figure moved.

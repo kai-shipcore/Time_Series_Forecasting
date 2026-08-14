@@ -350,7 +350,7 @@ holds again. Design doc Section 4.32.
 The `bucket` label (smooth versus intermittent) is still not recomputed as of the cutoff.
 That is a documented limitation and a measured one: at the 2025-10-06 cutoff, 121 SKUs were
 classifiable as smooth from data available then against the 467 the harness scored, so the
-population is partly selected with hindsight. See `docs/HANDOVER.md` finding 6.
+population is partly selected with hindsight. See `docs/archive/HANDOVER.md` finding 6.
 
 ---
 

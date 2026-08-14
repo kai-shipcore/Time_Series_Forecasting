@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-08-14. Replaced by `docs/MODEL.md`.** Largely correct when written on 2026-08-13; its Section 1 population counts ("roughly 450 SKUs") predate the recount and the current figure is 340.
+
+---
+
 # Model guide: technical handover
 
 **Audience:** whoever picks up the modelling. Assumes pandas, cross-validation and

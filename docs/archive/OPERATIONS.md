@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-08-14. Replaced by `docs/DATA_AND_PIPELINE.md`.** Its Section 1 population counts are stale, and its Section 4 provenance note is wrong about the V1 column: it cites the rebaseline log, which predates the 2026-08-13 as-of fix.
+
+---
+
 # Operations: running and maintaining the demand forecast
 
 **Audience:** whoever keeps this running. No machine-learning knowledge is assumed. If you

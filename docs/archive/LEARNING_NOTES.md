@@ -1,3 +1,7 @@
+> **ARCHIVED 2026-08-14.** `docs/MODEL.md` replaces it for anyone maintaining the model, but deliberately does not reproduce the plain-language explanations, the glossary or the self-test below, which assume no machine-learning background. Kept for that reason. It contains none of the figures that moved.
+
+---
+
 # Learning Notes
 
 A plain-language study guide to what this project is, how the model works, and why

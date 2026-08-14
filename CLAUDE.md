@@ -5,14 +5,46 @@ Guidance for AI assistants working in this repository.
 ## Project state
 
 The active work is the LightGBM demand-forecasting track in `src/ml/` and
-`scripts/ml_*.py`. Before doing anything, read:
+`scripts/ml_*.py`.
 
-1. `docs/ML_FORECAST_DESIGN.md`: goals, metrics, evaluation protocol, every design
-   decision with its evidence (Section 4), the model version log (Section 6). This is the
-   source of truth for what has been decided and why. Do not re-litigate settled
-   decisions without new evidence; do not contradict them silently.
-2. `docs/CODEBASE_GUIDE.md`: what every file does and how data flows from raw sales to a
+**Start with the four-document set.** Rewritten 2026-08-14 as a considered set rather than
+an accumulation. Each has a Korean counterpart with the `_KO` suffix.
+
+1. `docs/OVERVIEW.md`: what the project is, how the pieces fit, the evaluation protocol and
+   the measured results. **The entry point; read it first.** Its Section 6 is the
+   authoritative performance table, and it states the provenance of each column, which the
+   older documents got wrong.
+2. `docs/MODEL.md`: architecture, features, segmentation rules, what was rejected, how to
+   run an experiment.
+3. `docs/DATA_AND_PIPELINE.md`: data sources, the week convention, the weekly cron, health
+   checks and troubleshooting.
+4. `docs/SCREENS.md`: the Action List and Forecast Validation pages, for whoever maintains
+   them. Includes the order formula and the known defects.
+
+`docs/FUTURE_IMPROVEMENTS.md` is deliberately standalone: everything identified and not
+done, grouped by what blocks it. Read it before proposing an improvement, because most
+obvious ideas are already there and several have a recorded reason they were rejected.
+
+**The record**, kept as reference rather than as reading:
+
+- `docs/ML_FORECAST_DESIGN.md`: every design decision with its evidence (Section 4) and the
+   model version log (Section 6). The source of truth for what was decided and why. Do not
+   re-litigate settled decisions without new evidence; do not contradict them silently.
+- `docs/CODEBASE_GUIDE.md`: what every file does and how data flows from raw sales to a
    scored forecast.
+- `docs/BACKLOG.md`: item-by-item work log, including closed items with their reasoning.
+- `docs/archive/`: six documents superseded on 2026-08-14, each carrying a header saying
+   what replaced it. Their figures are stale; several of their arguments are not.
+
+**Three known defects at handover**, all recorded in `docs/SCREENS.md` Section 4: the
+Forecast Validation page reports the final test as not run, `outputs/reports/ml_accuracy.csv`
+is stale as of 2026-07-30, and `outputs/reports/final_test.json` is not in version control
+and cannot be regenerated.
+
+`Machine_Learning_Demand_Forecast_Proposal.md` and its `_KO` counterpart are the summary
+written for management. They are built to `.docx` by `build_docx.sh`, which currently
+handles the English file only. **Edit the markdown, never the docx**: the docx is a build
+artifact and rebuilding it discards anything typed into it directly.
 
 ## Working rules
 
