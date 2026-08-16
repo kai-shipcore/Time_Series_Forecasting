@@ -1,208 +1,99 @@
-# Model primer: how the forecast works, in plain language
+# Model primer
 
-**Audience:** anyone who needs to understand the model without a machine-learning background.
-If you can explain each section here in your own words, you understand the project well
-enough to maintain it, present it, or decide what to do with it.
+Conceptual introduction to the forecast model for readers without a machine-learning background.
 
-**This is not the technical reference.** `MODEL.md` has the architecture, the features, and
-the code pointers. `OVERVIEW.md` has the measured results and the evaluation protocol. This
-document explains the ideas underneath both, without assuming you already know what a
-decision tree is.
+For the technical reference see `MODEL.md`. For measured results and the evaluation protocol see `OVERVIEW.md`.
 
----
+## 1. Prediction target
 
-## 1. What the model predicts
-
-We do **not** predict demand directly. For each product we first compute its recent typical
-level, a 12-week average of sales. The model's only job is to predict a **multiplier**: for
-N weeks ahead, will demand be 1.0x that level, 1.1x, 0.8x? The forecast is:
+The model does not predict demand. It predicts a **multiplier** on each product's recent level.
 
 ```
 forecast = recent level  ×  predicted multiplier  ×  seasonal factor
 ```
 
-Why do it this way? Because it makes the model's contribution measurable. A model that
-learns *nothing* predicts a multiplier of exactly 1.0 and reproduces a plain moving average.
-That moving average is the floor (called the **structural baseline**). Every point of
-accuracy the model adds is clearly attributable to the model, not to the level or the
-season. This is the single most important design idea to understand.
+The recent level is a 12-week average of sales. The multiplier answers: for N weeks ahead, will demand be 1.0x that level, 1.1x, 0.8x?
 
----
+**Rationale.** A model that learns nothing predicts 1.0 and reproduces a plain moving average. That moving average is the floor, called the **structural baseline**. Accuracy above the floor is attributable to the model rather than to the level or the season. This is the most important design idea.
 
-## 2. What the model is: trees, then boosting
+## 2. Algorithm
 
-The model is **LightGBM**, which is a large collection of **decision trees**.
+LightGBM, a gradient-boosted collection of decision trees.
 
-A single decision tree is a flowchart of yes/no questions: "is recent growth above 1.2?
-yes → is the forecast more than 5 weeks out? yes → predict multiplier 1.15." One tree is
-weak and blocky.
-
-**Gradient boosting** builds hundreds of trees in sequence. Each new tree looks at the
-errors the previous trees left behind and tries to correct them. Add all the trees together
-and you get a flexible, accurate predictor. "Boosting" means many weak models stacked;
-"gradient" means each one is aimed at the leftover error of the ones before it.
-
-The model stops adding trees when a held-out slice of products stops improving (**early
-stopping**), so it does not keep fitting noise.
-
----
-
-## 3. What a feature is
-
-A **feature** is one column of numbers the trees are allowed to ask questions about. That is
-the whole definition. If you do not give the model a column, it literally cannot split on it;
-the information is invisible. "Adding a feature" means giving the trees a new question they
-can ask. The model then learns from the data whether that question helps.
-
-### The features in this model
-
-All are scale-free ratios, so a big product and a small product are described on the same
-scale, which is what lets one model serve the whole catalog.
-
-| Feature | What it tells the model |
+| Concept | Definition |
 |---|---|
-| **lead** | How many weeks ahead we are forecasting. Lets the model learn that demand drifts as the horizon lengthens. |
-| **ramp_4_12** | 4-week average / 12-week average. Is the product accelerating? High means growing lately. **Short-history products only.** |
-| **elev_long** | 4-week average / 52-week average. Is the product far above its yearly normal? High means running unsustainably hot, expect a drop. **Long-history products only.** |
-| **y_last_r, lag_1_r** | The last one or two weeks relative to the 12-week level. Fine-grained recent momentum. |
+| Decision tree | A flowchart of yes/no questions. "Is recent growth above 1.2? yes → is the forecast more than 5 weeks out? yes → predict 1.15." A single tree is weak |
+| Gradient boosting | Hundreds of trees built in sequence, each correcting the errors left by the previous ones. "Boosting" means weak models stacked; "gradient" means each targets the leftover error |
+| Early stopping | Tree-building halts when a held-out slice of products stops improving, which prevents fitting noise |
 
-`ramp` says "it went up, expect more." `elev_long` says "it went up a lot versus the whole
-year, expect it to come back down." A good forecaster needs both instincts, and the trees
-learn when to trust each.
+## 3. Features
 
----
+A feature is one column the trees may split on. A column the model is not given is invisible to it.
 
-## 4. How accuracy is measured
+All features are scale-free ratios, so large and small products are described on the same scale. This is what allows one model to serve the whole catalogue.
 
-### Pooled WAPE
+| Feature | Definition | Signal | Used by |
+|---|---|---|---|
+| `lead` | 1 to 13 | Weeks ahead. Lets demand drift with horizon length | Both models |
+| `ramp_4_12` | 4-week mean / 12-week mean | Product is accelerating | Short only |
+| `y_last_r` | Anchor week / 12-week mean | Recent position | Both models |
+| `lag_1_r` | Week before anchor / 12-week mean | Short-run direction, with `y_last_r` | Both models |
+| `elev_long` | 4-week mean / 52-week mean | Product is far above its yearly normal, so expect reversion | Long only |
 
-**WAPE** = total absolute error / total actual demand. We sum each product's forecast over
-the 10-week horizon, compare to its actual 10-week total, and pool across products so bigger
-products count more. Lower is better; 0.20 means 20% error.
+Four features per model, five distinct. `ramp_4_12` reads "it went up, expect more"; `elev_long` reads "it went up against the whole year, expect reversion". Additional lag features are a candidate in `FUTURE_IMPROVEMENTS.md` §2, not currently used.
 
-Two deliberate choices: we score **10-week totals** because that is how the forecast is used
-(stock is ordered for a horizon, not for each week separately), and we **weight by demand**
-because a 20% miss on a big seller costs more than on a tiny one.
+## 4. Accuracy measurement
 
-### The as-of rule
+Protocol and results: `OVERVIEW.md` §5 and §6.
 
-At any forecast point (the "cutoff"), the model may only use information that existed then.
-A product that is "established" today may have been "new" a year ago, so we recompute each
-product's category as of the cutoff. Using today's information to score the past is a subtle
-form of cheating that inflates results.
+| Concept | Definition |
+|---|---|
+| Pooled WAPE | Total absolute error / total actual demand. Lower is better; 0.20 means 20% error |
+| 10-week totals | The scoring unit, because stock is ordered for a horizon, not for each week separately |
+| Demand weighting | Larger products count more, because a 20% miss on a large seller costs more |
+| As-of rule | At any cutoff the model may use only information that existed then. Each product's category is recomputed as of the cutoff |
+| Development windows | Three past 10-week windows in different seasons, so no result hinges on one period |
+| Quarantined window | A fourth window, unexamined during development, used once as the final test |
+| Bootstrap | The product list is re-drawn at random thousands of times to measure how much an accuracy gap moves. A gap much larger than that movement is real |
+| Pre-registration | Success criteria are recorded before each experiment. Wins and rejections are both logged |
 
-### Three development windows plus one quarantined test
+## 5. Design decisions
 
-We evaluate on three past 10-week windows in different seasons (spring, post-holiday, Q4
-ramp), so a result never hinges on one lucky period. One further window is **quarantined**:
-it has never been looked at during development. It exists to be used **once**, at the very
-end, as the final go/no-go test. The reason: if you keep checking against the same test
-while tweaking, you eventually fit it by accident.
+**Deseasonalise before modelling.** Demand is divided by seasonal factors, the model fits the flattened series, and the season is multiplied back at the end. This removes the need to relearn "December is big" per product, which two years of data cannot support.
 
-### The bootstrap
+**Segment by history length.** Short is under about 50 weeks of sales, long is 50 weeks or more. Young products ramp; established products are steady and mean-reverting.
 
-When model A beats model B by a little, is that real or just which products happened to be
-in the segment? The **bootstrap** re-draws the product list at random thousands of times and
-measures how much the accuracy gap wobbles. If the gap is much bigger than the wobble, it is
-real. We only believe an improvement that passes this.
+**Two models, not one.** Short products use a model trained across the whole catalogue, benefiting from borrowed patterns. Long products use a dedicated model carrying `elev_long`.
 
-### Pre-registration
+Warning: any change aimed at long products inside a single shared model damaged short products, because all products share the same trees. Do not re-merge the models.
 
-Before each experiment we write down what would count as success. This stops the habit of
-running something, seeing a nice-looking number, and inventing a reason it matters. Both wins
-and rejections are recorded. Most versions were rejected, which is the evidence that the
-process is honest.
+## 6. Version history
 
----
+| Versions | Outcome |
+|---|---|
+| v0 to v3 | Built up incrementally: growth-drift correction, trajectory features, seasonal consistency. Strong except on established products after the holidays, which were over-forecast |
+| v4, v5, v7, v8 | Treated that cell as a segment-handling problem: segment flag, per-segment seasonal factors, per-segment training weights, separate models. Each improved established products and damaged newer ones |
+| v6, v9 | Located the defect. The holiday uplift was applied to late December, after demand had fallen. Correcting the window to late November through mid December gave a substantial gain |
+| v10 | Hyperparameter tuning produced no gain, ruling out configuration as the cause |
+| v11 | The post-holiday over-forecast was ramp extrapolation into a decline, with no feature able to detect the turn. `elev_long` supplies that signal. Placed in a dedicated long model so it cannot affect short products |
+| v12 to v18 | All rejected, confirming the ceiling of what sales history alone provides |
 
-## 5. The key design choices
-
-**Deseasonalize before modelling.** We divide demand by seasonal factors so the model learns
-on a flattened series, then multiply the season back in at the end. This stops the model from
-having to relearn "December is big" for every product. (With only two years of data, it
-cannot learn that reliably anyway.)
-
-**Segment by history length.** Products split into "short" (under ~50 weeks of sales) and
-"long" (50 weeks or more). They behave differently: young products genuinely ramp,
-established ones are steady and mean-reverting.
-
-**The hybrid: two models.** Short products use one shared model that learns across the whole
-catalog (they have little history, so they benefit from patterns borrowed from others). Long
-products use a dedicated model with the elevation feature. This came from discovering that
-any change aimed at long products, inside a single shared model, quietly damaged short
-products, because all the products share the same trees. Splitting the models removes that
-interference.
-
----
-
-## 6. The version story (v0 to v11)
-
-Read as a single arc, this shows the reasoning, not just the result.
-
-**v0-v3** built the model up one idea at a time: a growth-drift correction, then trajectory
-features, then making the whole path seasonally consistent. v3 was strong everywhere except
-one stubborn cell: established products after the holidays, which it over-forecast.
-
-**v4, v5, v7, v8** all tried to fix that cell by treating it as a segment-handling problem:
-a segment flag, per-segment seasonal factors, per-segment training weights, fully separate
-models. **Every one improved established products but damaged newer ones.** The repeated
-failure was the clue: the segments genuinely want opposite things from a shared model.
-
-**v6/v9** found the real bug. The holiday uplift was being applied to late December, when
-demand had actually already fallen. Fixing the calendar window to match the real promotional
-period (late Nov to mid-Dec) helped a lot.
-
-**v10** tried hyperparameter tuning and confirmed the remaining gap was *not* a tuning
-problem, ruling out a whole avenue.
-
-**v11** solved it. The post-holiday over-forecast was the model extrapolating a ramp into a
-decline, and it had no feature that could see the turn coming. The **elevation** feature is
-that missing signal. Putting it in a dedicated long-product model (so it cannot leak into
-short products) finally beat the moving-average floor in the cell that had blocked every
-version, while leaving short products untouched.
-
-**v12-v18** were all rejected, confirming the ceiling of what sales history can provide.
-
-The one-sentence version: *it was never a "which group" problem and never a tuning problem;
-it was a mis-specified seasonal calendar plus a missing turning-point signal.*
-
----
-
-## 7. Lessons that generalise
-
-1. **Trees interpolate well and extrapolate terribly.** A tree learns rules inside the range
-   of values it saw. Feed it a feature that only ever increases (product age, a date, a
-   running total) and at prediction time the value sits past everything in training; the tree
-   applies its last rule and runs off a cliff.
-2. **More features is not better.** Every feature is another way for the model to fit noise.
-   A feature that duplicates a signal already carried by another just adds noise to an
-   already-good segment.
-3. **Chase the mechanism, not the metric.** The breakthroughs came from asking *why* a cell
-   was wrong rather than trying random model tweaks. Diagnostics that decompose a single
-   number ("where exactly is the error?") were worth more than any tuning.
-4. **A model that ties a good simple baseline has learned nothing useful there.** By design,
-   predicting 1.0 reproduces the moving average, so a tie means the model added no value in
-   that cell; only a real, significant gain counts.
-5. **Guard the final test with your life.** The most common way to fool yourself is to keep
-   peeking at the same test data while tweaking. One quarantined window, used once, is the
-   defence.
-
----
+Summary: a mis-specified seasonal calendar plus a missing turning-point signal, not a segment-assignment or tuning problem.
 
 ## Glossary
 
 | Term | Meaning |
 |---|---|
-| **WAPE** | Weighted absolute percentage error; the accuracy metric, lower is better |
-| **Pooled** | Summed across products before dividing, so big products count more |
-| **Cutoff** | The "today" of a backtest; the model may use nothing after it |
-| **Segment** | Short (young) vs long (established) products |
-| **Structural baseline** | The moving-average floor; predicting multiplier 1.0 reproduces it |
-| **Prototype** | The older statistical system (statsforecast), the accuracy bar |
-| **V1** | The spreadsheet formula used before this project |
-| **Deseasonalize** | Divide out seasonal factors before modelling, multiply back after |
-| **Feature** | A column the trees can ask questions about |
-| **Elevation** | 4-week level vs the yearly level; the feature that solved the holiday cell |
-| **Bootstrap** | Resampling test to tell a real accuracy gap from luck |
-| **Pre-registration** | Writing down the success criteria before running an experiment |
-| **Quarantined test** | The held-out window, used once, never during development |
+| WAPE | Weighted absolute percentage error; the accuracy metric, lower is better |
+| Pooled | Summed across products before dividing, so large products count more |
+| Cutoff | The "today" of a backtest; the model may use nothing after it |
+| Segment | Short (young) vs long (established) products |
+| Structural baseline | The moving-average floor; predicting multiplier 1.0 reproduces it |
+| Prototype | The retired statistical system (statsforecast), the accuracy bar |
+| V1 | The spreadsheet formula used before this project |
+| Deseasonalise | Divide out seasonal factors before modelling, multiply back after |
+| Feature | A column the trees can ask questions about |
+| Elevation | 4-week level against the yearly level; the feature that solved the holiday cell |
+| Bootstrap | Resampling test distinguishing a real accuracy gap from chance |
+| Pre-registration | Writing down success criteria before running an experiment |
+| Quarantined test | The held-out window, used once, never during development |

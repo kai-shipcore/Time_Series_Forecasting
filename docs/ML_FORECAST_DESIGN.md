@@ -3,8 +3,8 @@
 **Status:** living document, updated with every design iteration.
 **Scope:** the machine-learning (LightGBM) forecasting track in `src/ml/` and `scripts/ml_*.py`.
 **Audience:** written to be readable without prior knowledge of the forecasting codebase.
-**Companion document:** `CODEBASE_GUIDE.md` explains the files and code that implement this
-design. This document covers decisions and rationale; the companion covers implementation.
+**Companion documents:** `MODEL.md` covers the architecture and how to run experiments.
+`DATA_AND_PIPELINE.md` covers data sources and the weekly pipeline.
 
 ---
 
@@ -501,7 +501,7 @@ Scope for new entries: design choices only, meaning a question that had alternat
 was settled by evidence or argument. Bugs, corrections, and infrastructure changes do not
 belong here even when they matter. A bug fix goes in `WORKLOG.md` and in a comment where
 the code was wrong; a change to how the project is built or stored goes in
-`CODEBASE_GUIDE.md`; a correction to a claim goes in the section making the claim. Entries
+`DATA_AND_PIPELINE.md`; a correction to a claim goes in the section making the claim. Entries
 should stay near 200 words; if one needs more, the material probably belongs in the
 section it concerns.
 
@@ -910,8 +910,8 @@ data left the pinned loader unmoved.
 ### 4.22 Moved: model-version preservation and the default-drift incident
 
 Recorded here in July 2026, then relocated: the tagged-commit scheme is documented in
-`CODEBASE_GUIDE.md` (file inventory) and the default-drift fix in `WORKLOG.md` and a
-comment in `scripts/ml_05_lgbm_v0.py`, per the scope rule above. The number is retained
+`MODEL.md` and the default-drift fix in `docs/archive/WORKLOG.md` and a comment in
+`scripts/ml_05_lgbm_v0.py`, per the scope rule above. The number is retained
 because the commit that introduced the entry cites it as 4.22.
 
 ### 4.23 Rejected: v4 segment indicator. The model trades short SKUs for long ones

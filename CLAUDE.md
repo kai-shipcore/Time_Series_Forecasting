@@ -30,8 +30,6 @@ obvious ideas are already there and several have a recorded reason they were rej
 - `docs/ML_FORECAST_DESIGN.md`: every design decision with its evidence (Section 4) and the
    model version log (Section 6). The source of truth for what was decided and why. Do not
    re-litigate settled decisions without new evidence; do not contradict them silently.
-- `docs/CODEBASE_GUIDE.md`: what every file does and how data flows from raw sales to a
-   scored forecast.
 - `docs/MODEL_PRIMER.md`: plain-language explainer for anyone without an ML background.
    Covers how trees work, what the features do, and the version narrative.
 - `docs/archive/BACKLOG.md`: item-by-item work log, including closed items with their
