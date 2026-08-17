@@ -4228,3 +4228,7 @@ the files and not knowing whether anyone had looked.
   to interview study notes. Deleted four fully superseded archive docs (HANDOVER, OPERATIONS,
   MODEL_GUIDE, FUTURE_WORK). Updated all cross-references in live documents. Marked stale
   accuracy report defect as fixed.
+
+- 2026-08-17: Added a root README in Korean that introduces the forecasting problem and
+  architecture, maps the repository structure, explains model and data concepts, and provides
+  verified local setup, API, validation, pipeline, deployment, and documentation entry points.
